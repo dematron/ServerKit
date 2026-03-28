@@ -457,13 +457,14 @@ cmd_update() {
     cp -r "$INSTALL_DIR/backend/templates/"*.yaml /etc/serverkit/templates/ 2>/dev/null || true
     cp -r "$INSTALL_DIR/backend/templates/"*.yml /etc/serverkit/templates/ 2>/dev/null || true
 
-    # Remove any nginx configs that use server_name _ besides serverkit.conf
+    # Remove any nginx configs that use server_name _ besides serverkit-managed ones
     mkdir -p /etc/nginx/serverkit-locations
     for conf in /etc/nginx/sites-enabled/*; do
         [ -f "$conf" ] || continue
         name=$(basename "$conf")
-        [ "$name" = "serverkit.conf" ] && continue
-        if grep -q 'server_name.*_' "$conf" 2>/dev/null; then
+        # Skip all ServerKit-managed configs
+        case "$name" in serverkit-*) continue ;; esac
+        if grep -Eq 'server_name[[:space:]]+_;' "$conf" 2>/dev/null; then
             print_warning "Removing conflicting catch-all config: $name"
             rm -f "/etc/nginx/sites-enabled/$name"
             rm -f "/etc/nginx/sites-available/$name"
@@ -939,6 +940,10 @@ cmd_doctor() {
     FIXED=0
     FIX_MODE="${1:-}"  # --fix to auto-fix
 
+    if [ "$FIX_MODE" = "--fix" ]; then
+        check_root
+    fi
+
     doctor_issue() {
         ISSUES=$((ISSUES + 1))
         print_error "$1"
@@ -986,38 +991,44 @@ cmd_doctor() {
     echo ""
 
     # ── 2. Frontend container ───────────────────────────────────
-    echo "Frontend"
-    echo "───────────────────────────────────────"
-
     FRONTEND_RUNNING=false
     FRONTEND_PORT=""
 
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$FRONTEND_CONTAINER"; then
-        FRONTEND_RUNNING=true
-        # Get the actual host port the container is mapped to
-        FRONTEND_PORT=$(docker port "$FRONTEND_CONTAINER" 80 2>/dev/null | head -1 | grep -oP ':\K[0-9]+' || echo "")
-        doctor_ok "Container running (port $FRONTEND_PORT)"
-    else
-        doctor_issue "Container '$FRONTEND_CONTAINER' is not running"
-        if [ "$FIX_MODE" = "--fix" ]; then
-            cd "$INSTALL_DIR"
-            docker compose up -d 2>/dev/null && {
-                sleep 3
-                FRONTEND_PORT=$(docker port "$FRONTEND_CONTAINER" 80 2>/dev/null | head -1 | grep -oP ':\K[0-9]+' || echo "")
-                FRONTEND_RUNNING=true
-                doctor_fixed "Started frontend container (port $FRONTEND_PORT)"
-            } || print_error "  Could not start container"
-        else
-            doctor_skip "docker compose up -d"
-        fi
-    fi
+    if command -v docker >/dev/null 2>&1; then
+        echo "Frontend"
+        echo "───────────────────────────────────────"
 
-    if [ "$FRONTEND_RUNNING" = true ] && [ -n "$FRONTEND_PORT" ]; then
-        if curl -sf "http://127.0.0.1:$FRONTEND_PORT" > /dev/null 2>&1; then
-            doctor_ok "Frontend responding on port $FRONTEND_PORT"
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$FRONTEND_CONTAINER"; then
+            FRONTEND_RUNNING=true
+            # Get the actual host port the container is mapped to
+            FRONTEND_PORT=$(docker port "$FRONTEND_CONTAINER" 80 2>/dev/null | head -1 | grep -oP ':\K[0-9]+' || echo "")
+            doctor_ok "Container running (port $FRONTEND_PORT)"
         else
-            doctor_issue "Container running but not responding on port $FRONTEND_PORT"
+            doctor_issue "Container '$FRONTEND_CONTAINER' is not running"
+            if [ "$FIX_MODE" = "--fix" ]; then
+                cd "$INSTALL_DIR"
+                docker compose up -d 2>/dev/null && {
+                    sleep 3
+                    FRONTEND_PORT=$(docker port "$FRONTEND_CONTAINER" 80 2>/dev/null | head -1 | grep -oP ':\K[0-9]+' || echo "")
+                    FRONTEND_RUNNING=true
+                    doctor_fixed "Started frontend container (port $FRONTEND_PORT)"
+                } || print_error "  Could not start container"
+            else
+                doctor_skip "docker compose up -d"
+            fi
         fi
+
+        if [ "$FRONTEND_RUNNING" = true ] && [ -n "$FRONTEND_PORT" ]; then
+            if curl -sf "http://127.0.0.1:$FRONTEND_PORT" > /dev/null 2>&1; then
+                doctor_ok "Frontend responding on port $FRONTEND_PORT"
+            else
+                doctor_issue "Container running but not responding on port $FRONTEND_PORT"
+            fi
+        fi
+    else
+        echo "Frontend"
+        echo "───────────────────────────────────────"
+        doctor_issue "Docker not installed or not in PATH; skipping frontend checks"
     fi
 
     echo ""
@@ -1049,9 +1060,10 @@ cmd_doctor() {
     for SITE_CONF in /etc/nginx/sites-enabled/*; do
         [ -f "$SITE_CONF" ] || continue
         SITE_NAME=$(basename "$SITE_CONF")
-        [ "$SITE_NAME" = "serverkit.conf" ] && continue
+        # Skip all ServerKit-managed configs
+        case "$SITE_NAME" in serverkit-*|serverkit.conf) continue ;; esac
 
-        if grep -q 'server_name\s*_' "$SITE_CONF" 2>/dev/null; then
+        if grep -Eq 'server_name[[:space:]]+_;' "$SITE_CONF" 2>/dev/null; then
             doctor_issue "'$SITE_NAME' uses server_name _ (conflicts with panel, can hijack all traffic)"
             if [ "$FIX_MODE" = "--fix" ]; then
                 rm -f "/etc/nginx/sites-enabled/$SITE_NAME"

@@ -402,13 +402,14 @@ if ! grep -q "sites-enabled" /etc/nginx/nginx.conf; then
     sed -i '/http {/a \    include /etc/nginx/sites-enabled/*;' /etc/nginx/nginx.conf
 fi
 
-# Remove any nginx configs that use server_name _ (catch-all) besides serverkit.conf
+# Remove any nginx configs that use server_name _ (catch-all) besides serverkit-managed ones
 # These conflict with the panel and can allow compromised apps to hijack all traffic
 for conf in /etc/nginx/sites-enabled/*; do
     [ -f "$conf" ] || continue
     name=$(basename "$conf")
-    [ "$name" = "serverkit.conf" ] && continue
-    if grep -q 'server_name.*_' "$conf" 2>/dev/null; then
+    # Skip all ServerKit-managed configs
+    case "$name" in serverkit-*|serverkit.conf) continue ;; esac
+    if grep -Eq 'server_name[[:space:]]+_;' "$conf" 2>/dev/null; then
         print_warning "Removing conflicting catch-all config: $name"
         rm -f "/etc/nginx/sites-enabled/$name"
         rm -f "/etc/nginx/sites-available/$name"

@@ -261,28 +261,11 @@ location = /wordpress {{
 # This file is auto-generated. Do not edit manually.
 # Generated at: {timestamp}
 
-server {{
-    listen 80;
-    listen [::]:80;
-
-    # Match requests to server IP for private URLs
-    # Note: Do NOT use default_server here - serverkit.conf handles that
-    server_name _;
-
-    access_log /var/log/nginx/private-urls.access.log;
-    error_log /var/log/nginx/private-urls.error.log;
-
 {locations}
 
-    # Fallback for unknown slugs under /p/
-    location /p/ {{
-        return 404;
-    }}
-
-    # Root location - return 404 for unmatched requests
-    location / {{
-        return 404;
-    }}
+# Fallback for unknown slugs under /p/
+location /p/ {{
+    return 404;
 }}
 '''
 
@@ -780,47 +763,33 @@ server {{
                 )
                 locations.append(location)
 
-            # Generate full config
+            # Generate full config (location-only snippet, included by serverkit.conf)
+            cls._ensure_locations_dir()
             if locations:
                 config = cls.PRIVATE_URL_MAIN_CONFIG.format(
                     timestamp=datetime.utcnow().isoformat(),
                     locations='\n'.join(locations)
                 )
             else:
-                # No private URLs - create minimal config
-                # Note: Do NOT use default_server here - serverkit.conf handles that
+                # No private URLs - create minimal fallback
                 config = f'''# ServerKit Private URL Routes
 # This file is auto-generated. Do not edit manually.
 # Generated at: {datetime.utcnow().isoformat()}
 # No private URLs configured
 
-server {{
-    listen 80;
-    listen [::]:80;
-    server_name _;
-
-    location /p/ {{
-        return 404;
-    }}
-
-    location / {{
-        return 404;
-    }}
+location /p/ {{
+    return 404;
 }}
 '''
 
-            # Write config file
-            config_path = os.path.join(cls.SITES_AVAILABLE, cls.PRIVATE_URL_CONFIG_NAME)
+            # Write location snippet to serverkit-locations dir
+            config_path = os.path.join(cls.LOCATIONS_DIR, f'{cls.PRIVATE_URL_CONFIG_NAME}.conf')
             process = run_privileged(['tee', config_path], input=config)
             if process.returncode != 0:
                 return {'success': False, 'error': f'Failed to write config: {process.stderr}'}
 
-            # Enable the site if not already enabled
-            enabled_path = os.path.join(cls.SITES_ENABLED, cls.PRIVATE_URL_CONFIG_NAME)
-            if not os.path.exists(enabled_path):
-                result = run_privileged(['ln', '-sf', config_path, enabled_path])
-                if result.returncode != 0:
-                    return {'success': False, 'error': f'Failed to enable config: {result.stderr}'}
+            # Clean up legacy separate server block if it exists
+            cls._remove_legacy_site(cls.PRIVATE_URL_CONFIG_NAME)
 
             # Reload Nginx
             reload_result = cls.reload()
@@ -844,9 +813,36 @@ server {{
         Returns:
             Dict with exists, enabled, content, and URL count
         """
-        return cls.get_site_config(cls.PRIVATE_URL_CONFIG_NAME)
+        return cls.get_location_config(cls.PRIVATE_URL_CONFIG_NAME)
 
     # ==================== GITEA CONFIGURATION ====================
+
+    @classmethod
+    def get_location_config(cls, name: str) -> Dict:
+        """Get a location snippet config from the serverkit-locations directory.
+
+        Args:
+            name: Config name (without .conf extension)
+
+        Returns:
+            Dict with exists, enabled, content, and path
+        """
+        config_path = os.path.join(cls.LOCATIONS_DIR, f'{name}.conf')
+        config = {
+            'exists': os.path.isfile(config_path),
+            'enabled': os.path.isfile(config_path),  # If it exists, it's included
+            'content': None,
+            'path': config_path
+        }
+
+        if config['exists']:
+            try:
+                with open(config_path, 'r') as f:
+                    config['content'] = f.read()
+            except Exception:
+                pass
+
+        return config
 
     @classmethod
     def _ensure_locations_dir(cls):
@@ -924,7 +920,7 @@ server {{
         Returns:
             Dict with exists, enabled, content, and path
         """
-        return cls.get_site_config(cls.GITEA_CONFIG_NAME)
+        return cls.get_location_config(cls.GITEA_CONFIG_NAME)
 
     # ==================== WORDPRESS CONFIGURATION ====================
 
@@ -1009,4 +1005,4 @@ server {{
         Returns:
             Dict with exists, enabled, content, and path
         """
-        return cls.get_site_config(cls.WORDPRESS_CONFIG_NAME)
+        return cls.get_location_config(cls.WORDPRESS_CONFIG_NAME)

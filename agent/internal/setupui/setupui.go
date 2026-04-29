@@ -20,10 +20,10 @@ import (
 	"github.com/serverkit/agent/internal/pairing"
 )
 
-// passphraseAlphabet excludes 0/O/1/I/L for readability — same convention as
-// the panel's pair codes — so an operator reading the value off one screen and
-// typing it into another doesn't mis-key.
-const passphraseAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+// passphraseAlphabet excludes confusable characters (0/o/1/i/l) for
+// readability. Lowercase so the operator's natural typing matches the
+// displayed value — no shift-dance, no caps-lock surprises.
+const passphraseAlphabet = "23456789abcdefghjkmnpqrstuvwxyz"
 
 // generatePassphrase returns a fresh 8-char passphrase for an enroll request.
 // 8 chars from this 30-char alphabet ≈ 39 bits of entropy, which is overkill

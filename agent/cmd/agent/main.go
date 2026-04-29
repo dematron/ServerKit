@@ -12,6 +12,7 @@ import (
 	"github.com/serverkit/agent/internal/agent"
 	"github.com/serverkit/agent/internal/config"
 	"github.com/serverkit/agent/internal/logger"
+	"github.com/serverkit/agent/internal/agentui"
 	"github.com/serverkit/agent/internal/setupui"
 	"github.com/serverkit/agent/internal/tray"
 	"github.com/serverkit/agent/internal/updater"
@@ -63,6 +64,7 @@ When run without a subcommand on Windows, opens the desktop application
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(trayCmd())
+	rootCmd.AddCommand(consoleCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -398,6 +400,64 @@ For headless servers, use 'serverkit-agent pair' instead.`,
 			return runSetup()
 		},
 	}
+}
+
+// consoleCmd opens the WebView2-based agent console window. Sibling to the
+// `setup` (pairing wizard) command — they coexist while the wizard is being
+// migrated to the same React app. Once the wizard lives inside the console,
+// `setup` becomes a thin alias that opens the console at the /pair route.
+func consoleCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "console",
+		Short: "Open the agent console window (status, logs, actions)",
+		Long: `Opens the desktop console for this agent. Shows pairing status,
+connection state, recent activity, raw logs, and service controls.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runConsole()
+		},
+	}
+}
+
+func runConsole() error {
+	dbg := openDesktopLog()
+	defer dbg.Close()
+	dbg.Logf("--- runConsole start, version=%s pid=%d ---", Version, os.Getpid())
+
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("ServerKit Agent console crashed:\n\n%v\n\nLog: %s", r, dbg.Path())
+			dbg.Logf("PANIC: %v", r)
+			showMessageBox("ServerKit Agent", msg, mbIconError)
+		}
+	}()
+
+	log := logger.New(config.LoggingConfig{Level: "info"})
+
+	configPath := cfgFile
+	if configPath == "" {
+		configPath = config.DefaultConfigPath()
+	}
+	dbg.Logf("configPath=%s", configPath)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	dbg.Logf("calling agentui.Run …")
+	err := agentui.Run(ctx, log, configPath)
+	dbg.Logf("agentui.Run returned: %v", err)
+	if err != nil {
+		showMessageBox("ServerKit Agent",
+			fmt.Sprintf("Couldn't open the agent console.\n\n%v\n\nLog: %s", err, dbg.Path()),
+			mbIconError)
+	}
+	return err
 }
 
 // runSetup shows the pairing wizard and exits when it closes.

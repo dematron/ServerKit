@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lxn/walk"
 	dec "github.com/lxn/walk/declarative"
@@ -97,9 +98,15 @@ type wizardUI struct {
 	// stage 2 widgets
 	codeLabel    *walk.Label
 	passLabel    *walk.Label
+	copyCodeBtn  *walk.PushButton
+	copyPassBtn  *walk.PushButton
 	statusLabel  *walk.Label
 	pairErrLabel *walk.Label
 	cancelBtn    *walk.PushButton
+
+	// raw values backing the copy buttons (codeLabel renders a spaced version)
+	rawCode string
+	rawPass string
 
 	// stage 3 widgets
 	doneTitle *walk.Label
@@ -310,6 +317,23 @@ func (w *wizardUI) show() error {
 									dec.HSpacer{},
 								},
 							},
+							dec.VSpacer{Size: 8},
+							dec.Composite{
+								Layout:     dec.HBox{MarginsZero: true},
+								Background: bgCardBrush,
+								Children: []dec.Widget{
+									dec.HSpacer{},
+									dec.PushButton{
+										AssignTo:  &w.copyCodeBtn,
+										Text:      "Copy",
+										MinSize:   dec.Size{Width: 90, Height: 26},
+										MaxSize:   dec.Size{Width: 90, Height: 26},
+										Font:      dec.Font{PointSize: smallSize, Family: "Segoe UI"},
+										OnClicked: w.copyCode,
+									},
+									dec.HSpacer{},
+								},
+							},
 							dec.VSpacer{Size: 18},
 							dec.Label{
 								Text:          "Passphrase",
@@ -331,6 +355,23 @@ func (w *wizardUI) show() error {
 										TextColor:     rgbHex(textPrimary),
 										Background:    bgCardBrush,
 										TextAlignment: dec.AlignCenter,
+									},
+									dec.HSpacer{},
+								},
+							},
+							dec.VSpacer{Size: 8},
+							dec.Composite{
+								Layout:     dec.HBox{MarginsZero: true},
+								Background: bgCardBrush,
+								Children: []dec.Widget{
+									dec.HSpacer{},
+									dec.PushButton{
+										AssignTo:  &w.copyPassBtn,
+										Text:      "Copy",
+										MinSize:   dec.Size{Width: 90, Height: 26},
+										MaxSize:   dec.Size{Width: 90, Height: 26},
+										Font:      dec.Font{PointSize: smallSize, Family: "Segoe UI"},
+										OnClicked: w.copyPass,
 									},
 									dec.HSpacer{},
 								},
@@ -460,6 +501,7 @@ func (w *wizardUI) handleConnect() {
 		w.formErr.SetText("Could not generate a passphrase: " + err.Error())
 		return
 	}
+	w.rawPass = pass
 	w.formErr.SetText("")
 	w.startBtn.SetEnabled(false)
 	w.startBtn.SetText("Connecting…")
@@ -472,6 +514,7 @@ func (w *wizardUI) handleConnect() {
 	cb := pairingCallbacks{
 		onEnrolled: func(code, formatted string) {
 			w.mw.Synchronize(func() {
+				w.rawCode = code
 				w.codeLabel.SetText(displayCode(code, formatted))
 				w.passLabel.SetText(pass)
 				w.showStage(stagePairing)
@@ -517,10 +560,39 @@ func (w *wizardUI) handleCancel() {
 	w.pairErrLabel.SetText("")
 	w.codeLabel.SetText("")
 	w.passLabel.SetText("")
+	w.copyCodeBtn.SetText("Copy")
+	w.copyPassBtn.SetText("Copy")
+	w.rawCode = ""
+	w.rawPass = ""
 	w.cancelBtn.SetText("Cancel")
 	w.startBtn.SetEnabled(true)
 	w.startBtn.SetText("Connect")
 	w.showStage(stageForm)
+}
+
+// copyCode / copyPass place the raw value on the clipboard and flash the
+// button label so the user has visual confirmation that the click landed.
+func (w *wizardUI) copyCode() { w.copyToClipboard(w.rawCode, w.copyCodeBtn) }
+func (w *wizardUI) copyPass() { w.copyToClipboard(w.rawPass, w.copyPassBtn) }
+
+func (w *wizardUI) copyToClipboard(value string, btn *walk.PushButton) {
+	if value == "" || btn == nil {
+		return
+	}
+	if cb := walk.Clipboard(); cb != nil {
+		_ = cb.SetText(value)
+	}
+	btn.SetText("Copied!")
+	time.AfterFunc(1500*time.Millisecond, func() {
+		if w.mw == nil {
+			return
+		}
+		w.mw.Synchronize(func() {
+			if btn != nil {
+				btn.SetText("Copy")
+			}
+		})
+	})
 }
 
 func (w *wizardUI) showStage(stage string) {

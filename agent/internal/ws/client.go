@@ -107,6 +107,11 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
+		// Defensive: don't negotiate permessage-deflate. Some intermediaries
+		// (notably free-tier ngrok) have been seen to corrupt compressed
+		// frames so a control frame arrives with RSV1 set, which gorilla
+		// rejects as "RSV1 set, FIN not set on control".
+		EnableCompression: false,
 	}
 
 	// Only allow insecure TLS when explicitly set via environment variable
@@ -119,6 +124,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	headers.Set("X-Agent-ID", c.auth.AgentID())
 	headers.Set("X-API-Key-Prefix", c.auth.GetAPIKeyPrefix())
 	headers.Set("User-Agent", fmt.Sprintf("ServerKit-Agent/%s", "dev"))
+	// Bypass ngrok's interstitial / browser-warning behaviour for free-tier
+	// tunnels. Harmless when the panel isn't behind ngrok.
+	headers.Set("ngrok-skip-browser-warning", "true")
 
 	c.log.Debug("Connecting to Socket.IO", "url", sioURL)
 

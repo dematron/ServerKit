@@ -127,7 +127,7 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\par
     Push-Location $buildDir
     try {
         Write-Host "Running WiX build..."
-        wix build -arch $Arch Product.wxs -o "$absOutputDir\serverkit-agent-$Version-$Arch.msi" -define Version=$Version
+        wix build -arch $Arch Product.wxs -ext WixToolset.Util.wixext -o "$absOutputDir\serverkit-agent-$Version-$Arch.msi" -define Version=$Version
     }
     finally {
         Pop-Location

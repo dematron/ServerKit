@@ -7,7 +7,8 @@
     1. Install WiX Toolset v4
     2. Run: wix build Product.wxs -o serverkit-agent.msi -define Version=1.0.0
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <!-- Product definition -->
   <Package
@@ -73,18 +74,34 @@
         <File Id="ServerKitAgentExe"
           Source="serverkit-agent.exe"
           KeyPath="yes" />
-        <!-- Windows Service -->
+        <!-- Windows Service. Start="auto" so the service auto-starts on
+             boot — once paired, the agent comes up automatically without
+             requiring the user to push "Start Agent" from the tray. Until
+             pairing, it loops in retry-without-config mode harmlessly. -->
         <ServiceInstall
           Id="ServiceInstall"
           Name="ServerKitAgent"
           DisplayName="ServerKit Agent"
           Description="ServerKit Agent - Remote server management service"
           Type="ownProcess"
-          Start="demand"
+          Start="auto"
           ErrorControl="normal"
-          Arguments="start" />
-        <!-- Do NOT start service on install: it has no config (token/server) yet.
-             The setup wizard / `register` command switches it to auto-start once configured. -->
+          Arguments="start">
+          <!-- Grant BUILTIN\Users start/stop/query rights on the service.
+               Without this the user-launched wizard and the user-context tray
+               can't issue `sc start ServerKitAgent` after pairing — every
+               post-pair start attempt would silently fail with access denied. -->
+          <util:PermissionEx
+            User="Users"
+            ServiceQueryStatus="yes"
+            ServiceQueryConfig="yes"
+            ServiceChangeConfig="yes"
+            ServiceStart="yes"
+            ServiceStop="yes"
+            ServiceInterrogate="yes"
+            ServiceUserDefinedControl="yes"
+            ServiceEnumerateDependents="yes" />
+        </ServiceInstall>
         <ServiceControl
           Id="ServiceControl"
           Name="ServerKitAgent"
@@ -94,11 +111,21 @@
       </Component>
     </ComponentGroup>
 
-    <!-- Configuration -->
+    <!-- Configuration. The wizard runs as the user (asInvoker) but writes
+         credentials, config, and the pairing key under ProgramData. Grant
+         BUILTIN\Users modify access on the dir + config file (additive ACL,
+         leaves SYSTEM/Administrators untouched) so the post-pairing save
+         doesn't fail with "Access is denied". -->
     <Component Id="ConfigComponent" Directory="AgentDataFolder" Guid="C3D4E5F6-A7B8-9012-CDEF-345678901234">
-      <File Id="ConfigYaml" Source="config.yaml" KeyPath="yes" />
+      <CreateFolder>
+        <util:PermissionEx User="Users" GenericAll="yes" />
+      </CreateFolder>
+      <File Id="ConfigYaml" Source="config.yaml" KeyPath="yes">
+        <util:PermissionEx User="Users" GenericAll="yes" />
+      </File>
       <RemoveFile Id="RemoveConfig" Name="config.yaml" On="uninstall" />
       <RemoveFile Id="RemoveKey" Name="agent.key" On="uninstall" />
+      <RemoveFile Id="RemovePairingKey" Name="pairing.key" On="uninstall" />
       <RemoveFolder Id="RemoveAgentDataFolder" On="uninstall" />
     </Component>
 

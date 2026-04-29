@@ -42,15 +42,30 @@ class ApiClient {
             const response = await fetch(url, config);
 
             if (response.status === 401) {
-                const refreshed = await this.refreshToken();
-                if (refreshed) {
-                    config.headers.Authorization = `Bearer ${this.getToken()}`;
-                    const retryResponse = await fetch(url, config);
-                    return this.handleResponse(retryResponse);
+                // flask-jwt-extended returns 401 with `{"msg": "..."}` when
+                // the token is the problem; domain endpoints (e.g. wrong
+                // pair-code passphrase) return `{"error": "..."}`. Only the
+                // former should trigger a token refresh — refreshing on a
+                // domain 401 wastes a backend round-trip and burns through
+                // rate limits twice as fast.
+                const probe = await response.clone().json().catch(() => ({}));
+                const isJwtIssue = probe && probe.msg && !probe.error;
+
+                if (isJwtIssue) {
+                    const refreshed = await this.refreshToken();
+                    if (refreshed) {
+                        config.headers.Authorization = `Bearer ${this.getToken()}`;
+                        const retryResponse = await fetch(url, config);
+                        return this.handleResponse(retryResponse);
+                    }
+                    this.clearTokens();
+                    window.location.href = '/login';
+                    const err = new Error('Session expired');
+                    err.status = 401;
+                    throw err;
                 }
-                this.clearTokens();
-                window.location.href = '/login';
-                throw new Error('Session expired');
+                // Domain 401 — fall through so handleResponse throws the
+                // server's error message verbatim, with status attached.
             }
 
             return this.handleResponse(response);
@@ -61,9 +76,12 @@ class ApiClient {
     }
 
     async handleResponse(response) {
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(data.error || 'Request failed');
+            const err = new Error(data.error || data.msg || 'Request failed');
+            err.status = response.status;
+            err.data = data;
+            throw err;
         }
         return data;
     }

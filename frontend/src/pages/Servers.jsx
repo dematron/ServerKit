@@ -612,7 +612,11 @@ const PairAgentForm = ({ groups, onClose, onClaimed }) => {
             .then((res) => {
                 if (cancelled) return;
                 setLookupResult(res);
-                const suggestedName = res.system_info?.hostname;
+                // Prefer the operator-set display name (entered in the agent's
+                // wizard) over the raw hostname. Falls back to hostname when
+                // the agent didn't supply one.
+                const suggestedName = res.system_info?.display_name
+                    || res.system_info?.hostname;
                 if (!name && suggestedName) setName(suggestedName);
             })
             .catch((err) => {
@@ -629,7 +633,10 @@ const PairAgentForm = ({ groups, onClose, onClaimed }) => {
     async function handleClaim(e) {
         e.preventDefault();
         setClaimError('');
-        if (!passphrase) {
+        // Trim before validating: copy/paste from the agent screen sometimes
+        // catches a trailing space, which used to silently fail the claim.
+        const cleanPass = passphrase.trim();
+        if (!cleanPass) {
             setClaimError('Passphrase is required');
             return;
         }
@@ -637,7 +644,7 @@ const PairAgentForm = ({ groups, onClose, onClaimed }) => {
         try {
             await api.claimPairedAgent({
                 pair_code: formattedCode,
-                passphrase,
+                passphrase: cleanPass,
                 name: name || undefined,
                 group_id: groupId || undefined,
                 trust_fingerprint: true
@@ -645,7 +652,14 @@ const PairAgentForm = ({ groups, onClose, onClaimed }) => {
             toast.success('Agent paired successfully');
             onClaimed();
         } catch (err) {
-            setClaimError(err.message || 'Failed to claim agent');
+            const status = err.status || err.response?.status;
+            if (status === 429) {
+                setClaimError('Too many attempts. Wait a few minutes, or re-open the agent wizard to start a new pairing.');
+            } else if (status === 401) {
+                setClaimError('Pair code or passphrase is wrong. Check both values exactly as shown on the agent screen.');
+            } else {
+                setClaimError(err.message || 'Failed to claim agent');
+            }
         } finally {
             setLoading(false);
         }
@@ -691,6 +705,9 @@ const PairAgentForm = ({ groups, onClose, onClaimed }) => {
                         <div>
                             <strong>Agent found</strong>
                             <p className="success-subtitle">
+                                {lookupResult.system_info?.display_name && (
+                                    <>Server: <code>{lookupResult.system_info.display_name}</code><br /></>
+                                )}
                                 Hostname: <code>{lookupResult.system_info?.hostname || 'unknown'}</code><br />
                                 Fingerprint: <code style={{ fontFamily: 'monospace' }}>{lookupResult.pubkey_fpr}</code>
                             </p>
@@ -704,11 +721,13 @@ const PairAgentForm = ({ groups, onClose, onClaimed }) => {
                 <div className="form-group">
                     <label>Passphrase *</label>
                     <Input
-                        type="password"
+                        type="text"
                         value={passphrase}
                         onChange={(e) => setPassphrase(e.target.value)}
                         placeholder="Shown on the agent's pairing screen"
-                        autoComplete="new-password"
+                        autoComplete="off"
+                        spellCheck={false}
+                        style={{ fontFamily: 'monospace', fontSize: '1.1rem', letterSpacing: '0.08em' }}
                         required
                     />
                 </div>

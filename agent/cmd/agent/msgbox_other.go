@@ -2,11 +2,9 @@
 
 package main
 
-import (
-	"fmt"
-	"os"
+const (
+	mbIconError = 0
+	mbIconInfo  = 0
 )
 
-func showFatalError(err error) {
-	fmt.Fprintln(os.Stderr, err)
-}
+func showMessageBox(_ string, _ string, _ uint32) {}

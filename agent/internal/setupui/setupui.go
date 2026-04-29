@@ -1,21 +1,15 @@
-// Package setupui implements a local-loopback HTTP wizard that walks an
-// operator through agent pairing without forcing them onto the CLI.
+// Package setupui shows a small native desktop wizard that walks an operator
+// through pairing the agent with a ServerKit panel. The pairing protocol
+// itself lives here; the platform-specific window code lives in window_*.go.
 package setupui
 
 import (
 	"context"
-	_ "embed"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/serverkit/agent/internal/config"
@@ -24,249 +18,49 @@ import (
 	"github.com/serverkit/agent/internal/pairing"
 )
 
-//go:embed wizard.html
-var wizardHTML []byte
-
-// errNoWebView2 signals that a native WebView2 window could not be opened
-// and the caller should fall back to the system browser.
-var errNoWebView2 = errors.New("native window unavailable")
-
-// Server hosts the local pairing wizard.
-type Server struct {
-	log        *logger.Logger
-	configPath string
-
-	mu       sync.RWMutex
-	state    *State
-	cancel   context.CancelFunc
-	doneCh   chan struct{}
-	listener net.Listener
+// Run shows the pairing wizard and blocks until the user closes it.
+// configPath may be empty to use the default location.
+func Run(ctx context.Context, log *logger.Logger, configPath string) error {
+	if configPath == "" {
+		configPath = config.DefaultConfigPath()
+	}
+	return runWindow(ctx, log.WithComponent("setupui"), configPath)
 }
 
-// State is the JSON shape returned by /api/status.
-type State struct {
-	Phase         string `json:"phase"` // idle | enrolling | waiting | claimed | error
-	PanelURL      string `json:"panel_url,omitempty"`
-	PairCode      string `json:"pair_code,omitempty"`
-	PairCodeShort string `json:"pair_code_short,omitempty"`
-	Fingerprint   string `json:"fingerprint,omitempty"`
-	ServerName    string `json:"server_name,omitempty"`
-	ErrorMessage  string `json:"error,omitempty"`
+// pairingCallbacks lets the platform-specific window observe state
+// transitions in the pairing driver. All callbacks fire on a background
+// goroutine; UI code is responsible for marshalling them onto its own thread.
+type pairingCallbacks struct {
+	onEnrolled func(code, formatted string)
+	onClaimed  func(serverName string)
+	onError    func(err error)
 }
 
-// New constructs a wizard server using the given config path for credential persistence.
-func New(log *logger.Logger, configPath string) *Server {
-	return &Server{
-		log:        log.WithComponent("setupui"),
-		configPath: configPath,
-		state:      &State{Phase: "idle"},
-	}
-}
-
-// Run starts the HTTP server, opens a browser and blocks until pairing
-// completes (success or user cancel) or ctx is cancelled.
-// Run starts the wizard. It returns when the user closes the window/browser
-// or when ctx is cancelled.
-//
-// On Windows the WebView2 window must be created on the *main* OS thread, so
-// the caller is expected to invoke Run from the program's main goroutine
-// (i.e. directly from cobra RunE, not from a background goroutine). The HTTP
-// server runs in a background goroutine.
-func (s *Server) Run(ctx context.Context) error {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
-	s.listener = ln
-
-	s.doneCh = make(chan struct{})
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/api/start", s.handleStart)
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/cancel", s.handleCancel)
-	mux.HandleFunc("/api/close", s.handleClose)
-
-	srv := &http.Server{
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	go func() {
-		_ = srv.Serve(ln)
-	}()
-
-	url := fmt.Sprintf("http://%s/", ln.Addr().String())
-	fmt.Printf("ServerKit Agent — pairing wizard:\n  %s\n\n", url)
-
-	// Try the native WebView2 window on the *main* goroutine. It blocks
-	// until the window is closed. If WebView2 isn't available we fall
-	// back to the system browser.
-	winErr := openInNativeWindow(url, "ServerKit Agent · Setup")
-	if winErr == nil {
-		// Window closed by the user — tear down.
-		s.signalDone()
-	} else {
-		fmt.Println("Opening in your default browser…")
-		fmt.Println("Leave this terminal open until pairing completes. Press Ctrl+C to cancel.")
-		if err := openBrowser(url); err != nil {
-			s.log.Warn("could not open browser automatically", "error", err)
-			fmt.Println("(Couldn't open browser automatically — copy the URL above into your browser.)")
-		}
-		// Wait for either context cancel or the user pressing "Done" in the wizard.
-		select {
-		case <-ctx.Done():
-		case <-s.doneCh:
-		}
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.state.Phase == "error" {
-		return fmt.Errorf("pairing failed: %s", s.state.ErrorMessage)
-	}
-	return nil
-}
-
-// ---- handlers ----
-
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(wizardHTML)
-}
-
-func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		PanelURL   string `json:"panel_url"`
-		Passphrase string `json:"passphrase"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
-	req.PanelURL = strings.TrimSpace(req.PanelURL)
-	req.Passphrase = strings.TrimSpace(req.Passphrase)
-	if req.PanelURL == "" || req.Passphrase == "" {
-		http.Error(w, "panel_url and passphrase are required", http.StatusBadRequest)
-		return
-	}
-	if len(req.Passphrase) < 4 {
-		http.Error(w, "passphrase must be at least 4 characters", http.StatusBadRequest)
-		return
-	}
-	if !strings.HasPrefix(req.PanelURL, "http://") && !strings.HasPrefix(req.PanelURL, "https://") {
-		req.PanelURL = "https://" + req.PanelURL
-	}
-
-	s.mu.Lock()
-	if s.state.Phase != "idle" && s.state.Phase != "error" && s.state.Phase != "claimed" {
-		s.mu.Unlock()
-		http.Error(w, "pairing already in progress", http.StatusConflict)
-		return
-	}
-	if s.cancel != nil {
-		s.cancel()
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
-	s.state = &State{Phase: "enrolling", PanelURL: req.PanelURL}
-	s.mu.Unlock()
-
-	go s.runPairing(ctx, req.PanelURL, req.Passphrase)
-
-	w.WriteHeader(http.StatusAccepted)
-	_, _ = w.Write([]byte(`{"ok":true}`))
-}
-
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	state := *s.state
-	s.mu.RUnlock()
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(state)
-}
-
-func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	if s.cancel != nil {
-		s.cancel()
-		s.cancel = nil
-	}
-	s.state = &State{Phase: "idle"}
-	s.mu.Unlock()
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.signalDone()
-	}()
-}
-
-func (s *Server) signalDone() {
-	select {
-	case <-s.doneCh:
-	default:
-		close(s.doneCh)
-	}
-}
-
-// ---- pairing driver ----
-
-func (s *Server) runPairing(ctx context.Context, panelURL, passphrase string) {
-	setErr := func(msg string) {
-		s.mu.Lock()
-		s.state.Phase = "error"
-		s.state.ErrorMessage = msg
-		s.mu.Unlock()
-	}
+// runPairing performs the full enroll → wait-for-claim → save-credentials flow.
+// It returns when pairing succeeds, the user cancels, or an error occurs.
+// All progress is reported via cb.
+func runPairing(
+	ctx context.Context,
+	log *logger.Logger,
+	configPath, panelURL, passphrase, displayName string,
+	cb pairingCallbacks,
+) {
+	panelURL = normalizePanelURL(panelURL)
 
 	kp, err := pairing.LoadOrCreate(pairing.DefaultKeyPath())
 	if err != nil {
-		setErr(fmt.Sprintf("could not load keypair: %v", err))
+		cb.onError(fmt.Errorf("load keypair: %w", err))
 		return
 	}
 
-	collector := metrics.NewCollector(config.MetricsConfig{}, s.log)
+	collector := metrics.NewCollector(config.MetricsConfig{}, log)
 	infoCtx, infoCancel := context.WithTimeout(ctx, 8*time.Second)
 	sysInfo, _ := collector.GetSystemInfo(infoCtx)
 	infoCancel()
-	sysMap := map[string]interface{}{}
-	if sysInfo != nil {
-		sysMap = map[string]interface{}{
-			"hostname":         sysInfo.Hostname,
-			"os":               sysInfo.OS,
-			"platform":         sysInfo.Platform,
-			"platform_version": sysInfo.PlatformVersion,
-			"architecture":     sysInfo.Architecture,
-			"cpu_cores":        sysInfo.CPUCores,
-			"total_memory":     sysInfo.TotalMemory,
-			"total_disk":       sysInfo.TotalDisk,
-		}
-	} else {
-		hostname, _ := os.Hostname()
-		sysMap["hostname"] = hostname
-		sysMap["os"] = runtime.GOOS
-		sysMap["architecture"] = runtime.GOARCH
-	}
 
-	client := pairing.NewClient(panelURL, s.log)
+	sysMap := buildSystemInfo(sysInfo, displayName)
+
+	client := pairing.NewClient(panelURL, log)
 	enrollCtx, enrollCancel := context.WithTimeout(ctx, 30*time.Second)
 	enrollResp, err := client.Enroll(enrollCtx, pairing.EnrollRequest{
 		Pubkey:     kp.PublicKeyHex(),
@@ -276,43 +70,61 @@ func (s *Server) runPairing(ctx context.Context, panelURL, passphrase string) {
 	})
 	enrollCancel()
 	if err != nil {
-		setErr(fmt.Sprintf("enroll: %v", err))
+		cb.onError(fmt.Errorf("enroll: %w", err))
 		return
 	}
 
-	s.mu.Lock()
-	s.state.Phase = "waiting"
-	s.state.PairCode = enrollResp.PairCode
-	s.state.PairCodeShort = enrollResp.PairCodeFormatted
-	s.state.Fingerprint = enrollResp.PubkeyFingerprint
-	s.mu.Unlock()
+	cb.onEnrolled(enrollResp.PairCode, enrollResp.PairCodeFormatted)
 
-	creds, err := client.WaitForClaim(ctx, func(code, formatted, expiresAt string) {
-		s.mu.Lock()
-		s.state.PairCode = code
-		s.state.PairCodeShort = formatted
-		s.mu.Unlock()
+	creds, err := client.WaitForClaim(ctx, func(code, formatted, _ string) {
+		cb.onEnrolled(code, formatted)
 	})
 	if err != nil {
 		if ctx.Err() != nil {
-			return
+			return // user cancelled
 		}
-		setErr(fmt.Sprintf("waiting for claim: %v", err))
+		cb.onError(fmt.Errorf("waiting for claim: %w", err))
 		return
 	}
 
-	if err := saveCredentials(s.configPath, panelURL, creds); err != nil {
-		setErr(fmt.Sprintf("save credentials: %v", err))
+	if err := saveCredentials(configPath, panelURL, creds); err != nil {
+		cb.onError(fmt.Errorf("save credentials: %w", err))
 		return
 	}
 
-	s.mu.Lock()
-	s.state.Phase = "claimed"
-	s.state.ServerName = creds.Name
-	s.mu.Unlock()
-
-	// On Windows, flip the service to auto-start and start it now that we have credentials.
 	startServiceIfInstalled()
+	cb.onClaimed(creds.Name)
+}
+
+func normalizePanelURL(u string) string {
+	u = strings.TrimSpace(u)
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		u = "https://" + u
+	}
+	return strings.TrimSuffix(u, "/")
+}
+
+func buildSystemInfo(sysInfo *metrics.SystemInfo, displayName string) map[string]interface{} {
+	m := map[string]interface{}{}
+	if sysInfo != nil {
+		m["hostname"] = sysInfo.Hostname
+		m["os"] = sysInfo.OS
+		m["platform"] = sysInfo.Platform
+		m["platform_version"] = sysInfo.PlatformVersion
+		m["architecture"] = sysInfo.Architecture
+		m["cpu_cores"] = sysInfo.CPUCores
+		m["total_memory"] = sysInfo.TotalMemory
+		m["total_disk"] = sysInfo.TotalDisk
+	} else {
+		hostname, _ := os.Hostname()
+		m["hostname"] = hostname
+		m["os"] = runtime.GOOS
+		m["architecture"] = runtime.GOARCH
+	}
+	if displayName = strings.TrimSpace(displayName); displayName != "" {
+		m["display_name"] = displayName
+	}
+	return m
 }
 
 func saveCredentials(configPath, panelURL string, creds *pairing.Credentials) error {
@@ -339,16 +151,4 @@ func saveCredentials(configPath, panelURL string, creds *pairing.Credentials) er
 		return err
 	}
 	return cfg.SaveCredentials()
-}
-
-// openBrowser opens the URL in the user's default browser.
-func openBrowser(url string) error {
-	switch runtime.GOOS {
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		return exec.Command("open", url).Start()
-	default:
-		return exec.Command("xdg-open", url).Start()
-	}
 }

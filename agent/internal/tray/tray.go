@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"fyne.io/systray"
+
+	"github.com/serverkit/agent/internal/config"
 )
 
 // AppConfig holds tray app configuration
@@ -18,6 +20,12 @@ type AppConfig struct {
 	ServerURL    string
 	DashboardURL string
 	LogFile      string
+	// NeedsSetup is set by runDesktop when the agent has no pairing config
+	// yet. The tray shows a prominent "Open setup wizard…" item in that case
+	// so the user can recover from a closed-without-pairing wizard window.
+	NeedsSetup     bool
+	OnOpenSetup    func()
+	OnOpenLogs     func()
 }
 
 // App is the system tray application
@@ -34,16 +42,17 @@ type App struct {
 	memPercent      float64
 
 	// Menu items
-	menuStatus      *systray.MenuItem
-	menuCPU         *systray.MenuItem
-	menuMem         *systray.MenuItem
-	menuStartAgent  *systray.MenuItem
-	menuStopAgent   *systray.MenuItem
+	menuSetup        *systray.MenuItem
+	menuStatus       *systray.MenuItem
+	menuCPU          *systray.MenuItem
+	menuMem          *systray.MenuItem
+	menuStartAgent   *systray.MenuItem
+	menuStopAgent    *systray.MenuItem
 	menuRestartAgent *systray.MenuItem
-	menuViewLogs    *systray.MenuItem
-	menuDashboard   *systray.MenuItem
-	menuAbout       *systray.MenuItem
-	menuQuit        *systray.MenuItem
+	menuViewLogs     *systray.MenuItem
+	menuDashboard    *systray.MenuItem
+	menuAbout        *systray.MenuItem
+	menuQuit         *systray.MenuItem
 
 	// Control channels
 	quitCh chan struct{}
@@ -73,7 +82,14 @@ func (a *App) onReady() {
 	// Set initial icon (gray/stopped)
 	systray.SetIcon(GetIcon(IconStateStopped))
 	systray.SetTitle("ServerKit")
-	systray.SetTooltip("ServerKit Agent - Checking...")
+	systray.SetTooltip("ServerKit Agent")
+
+	// Always create the setup item — its title flips between "Open setup
+	// wizard…" (unconfigured) and "Re-pair this server…" (configured) based
+	// on what refresh() observes. Putting it first means the user can always
+	// reach pairing from the tray, which is the user-visible recovery surface.
+	a.menuSetup = systray.AddMenuItem("Open setup wizard…", "Pair this server with a ServerKit panel")
+	systray.AddSeparator()
 
 	// Create menu items
 	a.menuStatus = systray.AddMenuItem("Status: Checking...", "Agent status")
@@ -135,6 +151,39 @@ func (a *App) refreshLoop() {
 }
 
 func (a *App) refresh() {
+	// Re-load config every refresh so the tray picks up freshly-saved
+	// credentials from a separate setup-wizard process the moment they
+	// land. Cheap; the file is tiny.
+	cfg, _ := config.Load("")
+	configured := cfg != nil && cfg.Agent.ID != ""
+
+	if a.menuSetup != nil {
+		if configured {
+			a.menuSetup.SetTitle("Re-pair this server…")
+			a.menuSetup.SetTooltip("Replace the current pairing with a fresh one")
+		} else {
+			a.menuSetup.SetTitle("Open setup wizard…")
+			a.menuSetup.SetTooltip("Pair this server with a ServerKit panel")
+		}
+	}
+
+	if !configured {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.agentRunning = false
+		a.connected = false
+		a.lastStatus = "Not configured"
+		systray.SetIcon(GetIcon(IconStateStopped))
+		systray.SetTooltip("ServerKit Agent - Setup required")
+		a.menuStatus.SetTitle("Status: Not configured")
+		a.menuCPU.SetTitle("CPU: --")
+		a.menuMem.SetTitle("Memory: --")
+		a.menuStartAgent.Disable()
+		a.menuStopAgent.Disable()
+		a.menuRestartAgent.Disable()
+		return
+	}
+
 	status, err := a.client.GetStatus()
 
 	a.mu.Lock()
@@ -199,6 +248,10 @@ func (a *App) handleMenuClicks() {
 		select {
 		case <-a.quitCh:
 			return
+		case <-a.menuSetup.ClickedCh:
+			if a.config.OnOpenSetup != nil {
+				a.config.OnOpenSetup()
+			}
 		case <-a.menuStartAgent.ClickedCh:
 			a.startAgent()
 		case <-a.menuStopAgent.ClickedCh:

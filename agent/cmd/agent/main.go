@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"syscall"
 
 	"github.com/serverkit/agent/internal/agent"
@@ -27,19 +27,31 @@ var (
 var (
 	cfgFile   string
 	debugMode bool
+	repair    bool
 )
 
 func main() {
+	attachParentConsole()
+
 	rootCmd := &cobra.Command{
 		Use:   "serverkit-agent",
 		Short: "ServerKit Agent - Remote server management agent",
 		Long: `ServerKit Agent connects your server to a ServerKit control plane,
-enabling remote Docker management, monitoring, and more.`,
+enabling remote Docker management, monitoring, and more.
+
+When run without a subcommand on Windows, opens the desktop application
+(pairing wizard if not configured, otherwise system tray).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDesktop()
+		},
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", false, "enable debug logging")
+	rootCmd.PersistentFlags().BoolVar(&repair, "repair", false, "force the pairing wizard even if a config already exists")
 
 	// Add commands
 	rootCmd.AddCommand(startCmd())
@@ -377,49 +389,40 @@ func showStatus() error {
 func setupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
-		Short: "Open a browser-based pairing wizard (recommended for desktops)",
-		Long: `Launches a small local web server on 127.0.0.1 and opens your default
-browser to a pairing wizard. You enter the panel URL and a passphrase, then
-type the displayed code into the panel UI to claim this server.
+		Short: "Open the pairing wizard",
+		Long: `Opens the native pairing wizard window. Enter the panel URL and a
+passphrase, then type the displayed code into the panel UI to claim this server.
 
-This is the easiest way to pair on Windows/macOS desktops. For headless
-servers, use 'serverkit-agent pair' instead.`,
+For headless servers, use 'serverkit-agent pair' instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetup()
 		},
 	}
 }
 
+// runSetup shows the pairing wizard and exits when it closes.
+// runDesktop runs the unified desktop app (wizard if needed, then tray).
+// The shared body lives in setupui.Run.
 func runSetup() error {
-	// WebView2 / OS UI must run on the main OS thread on Windows.
-	runtime.LockOSThread()
-
-	// Diagnostic file log — invaluable when launched from a Start Menu
-	// shortcut (no console) and the wizard "does nothing".
-	dbg := openSetupDebugLog()
+	dbg := openDesktopLog()
 	defer dbg.Close()
 	dbg.Logf("--- runSetup start, version=%s pid=%d ---", Version, os.Getpid())
 
-	// Catch panics so they end up in the log + a MessageBox instead of vanishing.
 	defer func() {
 		if r := recover(); r != nil {
-			msg := fmt.Sprintf("panic: %v", r)
-			dbg.Logf(msg)
-			showFatalError(fmt.Errorf("%s\n\nLog: %s", msg, dbg.Path()))
+			msg := fmt.Sprintf("ServerKit Agent setup crashed:\n\n%v\n\nLog: %s", r, dbg.Path())
+			dbg.Logf("PANIC: %v", r)
+			showMessageBox("ServerKit Agent", msg, mbIconError)
 		}
 	}()
 
 	log := logger.New(config.LoggingConfig{Level: "info"})
-	dbg.Logf("logger ready")
 
 	configPath := cfgFile
 	if configPath == "" {
 		configPath = config.DefaultConfigPath()
 	}
 	dbg.Logf("configPath=%s", configPath)
-
-	srv := setupui.New(log, configPath)
-	dbg.Logf("setupui.New OK")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -428,20 +431,101 @@ func runSetup() error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Println("\nCancelling…")
 		cancel()
 	}()
 
-	dbg.Logf("calling srv.Run …")
-	err := srv.Run(ctx)
-	dbg.Logf("srv.Run returned: %v", err)
+	dbg.Logf("calling setupui.Run …")
+	err := setupui.Run(ctx, log, configPath)
+	dbg.Logf("setupui.Run returned: %v", err)
 	if err != nil {
-		// We're built with -H windowsgui so there's no console. Surface
-		// failures via a MessageBox so the user isn't left staring at a
-		// shortcut that "does nothing".
-		showFatalError(fmt.Errorf("%w\n\nLog: %s", err, dbg.Path()))
+		showMessageBox("ServerKit Agent",
+			fmt.Sprintf("Couldn't open the pairing wizard.\n\n%v\n\nLog: %s", err, dbg.Path()),
+			mbIconError)
 	}
 	return err
+}
+
+// runDesktop is what `serverkit-agent` (no args) does on a desktop install.
+// First-run: shows the pairing wizard. Subsequent runs (config exists): goes
+// straight to tray. Either way the tray runs after pairing completes.
+// runDesktop is what `serverkit-agent` (no args) does on a desktop install.
+// Architecture: the tray always runs in this process and is the primary
+// entry point — the user-visible app. If the agent is unconfigured (or the
+// caller passed --repair) we spawn the pairing wizard as a *separate*
+// detached process so the tray is visible immediately and remains the
+// recovery surface even if the wizard fails to render.
+func runDesktop() error {
+	dbg := openDesktopLog()
+	defer dbg.Close()
+	dbg.Logf("--- runDesktop start, version=%s pid=%d ---", Version, os.Getpid())
+
+	// Single-instance: if a tray is already running for this user, just
+	// kick the wizard if needed and exit. Avoids the two-trays-in-one-bar
+	// problem when the autostart and a Start-menu click race.
+	if alreadyRunning, release := acquireSingleInstance(); alreadyRunning {
+		dbg.Logf("another instance is already running; not starting a second tray")
+		if repair {
+			spawnSetupWizard(dbg)
+		}
+		return nil
+	} else {
+		defer release()
+	}
+
+	cfg, cfgErr := config.Load(cfgFile)
+	dbg.Logf("config.Load err=%v", cfgErr)
+	if cfg != nil {
+		dbg.Logf("agent.id=%q server.url=%q", cfg.Agent.ID, cfg.Server.URL)
+	}
+
+	needsSetup := cfg == nil || cfg.Agent.ID == "" || repair
+	dbg.Logf("needsSetup=%v (repair=%v)", needsSetup, repair)
+
+	if needsSetup {
+		spawnSetupWizard(dbg)
+	}
+
+	dbg.Logf("→ launching tray (needsSetup=%v)", needsSetup)
+	return runTrayWithOpts(cfg, needsSetup)
+}
+
+func cfgName(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Agent.Name
+}
+
+// spawnSetupWizard launches `serverkit-agent setup` as a detached child so
+// the wizard runs in its own process and the parent (the tray) is unaffected
+// by what happens to the wizard's window. Used both at desktop boot when
+// pairing is needed and from the tray's "Open setup wizard…" menu.
+func spawnSetupWizard(dbg *desktopLog) {
+	exe, err := os.Executable()
+	if err != nil {
+		if dbg != nil {
+			dbg.Logf("spawn: os.Executable err=%v", err)
+		}
+		return
+	}
+	cmd := exec.Command(exe, "setup")
+	cmd.SysProcAttr = detachedProcessAttrs()
+	if err := cmd.Start(); err != nil {
+		if dbg != nil {
+			dbg.Logf("spawn: cmd.Start err=%v", err)
+		}
+		return
+	}
+	if dbg != nil {
+		dbg.Logf("spawn: wizard pid=%d started", cmd.Process.Pid)
+	}
+}
+
+// reopenSetupWizard is the OnOpenSetup callback the tray hands to its menu.
+// Same as spawnSetupWizard but without a debug log (the tray runs in the
+// long-lived parent process where re-opening logs would be noisy).
+func reopenSetupWizard() {
+	spawnSetupWizard(nil)
 }
 
 func trayCmd() *cobra.Command {
@@ -461,14 +545,18 @@ This is typically auto-started on Windows login when installed via MSI.`,
 }
 
 func runTray() error {
-	// Load agent config to get server URL and IPC settings
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
-		// Continue without config - tray can still show status
+		cfg = config.Default()
+	}
+	return runTrayWithOpts(cfg, cfg.Agent.ID == "")
+}
+
+func runTrayWithOpts(cfg *config.Config, needsSetup bool) error {
+	if cfg == nil {
 		cfg = config.Default()
 	}
 
-	// Create and run tray application
 	app := tray.NewApp(tray.AppConfig{
 		Version:      Version,
 		IPCAddress:   cfg.IPC.Address,
@@ -476,9 +564,10 @@ func runTray() error {
 		ServerURL:    cfg.Server.URL,
 		DashboardURL: getDashboardURL(cfg.Server.URL),
 		LogFile:      cfg.Logging.File,
+		NeedsSetup:   needsSetup,
+		OnOpenSetup:  reopenSetupWizard,
 	})
 
-	// Handle signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -487,7 +576,6 @@ func runTray() error {
 		app.Quit()
 	}()
 
-	// Run the tray app (blocking)
 	app.Run()
 	return nil
 }

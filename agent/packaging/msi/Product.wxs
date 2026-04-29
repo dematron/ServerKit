@@ -22,6 +22,11 @@
       Keywords="ServerKit,Agent,Docker,Management"
       Manufacturer="ServerKit" />
 
+    <!-- Branding: icon shown in Add/Remove Programs and on the install banner. -->
+    <Icon Id="ServerKitAgentIco" SourceFile="serverkit.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ServerKitAgentIco" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/jhd3197/ServerKit" />
+
     <!-- Upgrade handling -->
     <MajorUpgrade
       DowngradeErrorMessage="A newer version of [ProductName] is already installed."
@@ -95,33 +100,27 @@
       <RemoveFolder Id="RemoveAgentDataFolder" On="uninstall" />
     </Component>
 
-    <!-- Auto-start tray on user login (uses main binary with tray command) -->
+    <!-- Auto-start the desktop app on user login. With no args, the binary
+         opens the pairing wizard if not yet configured, otherwise just the tray. -->
     <Component Id="TrayAutoStart" Directory="INSTALLFOLDER" Guid="E5F6A7B8-C9D0-1234-EF01-567890123456">
       <RegistryValue
         Root="HKCU"
         Key="Software\Microsoft\Windows\CurrentVersion\Run"
-        Name="ServerKitTray"
+        Name="ServerKitAgent"
         Type="string"
-        Value="&quot;[INSTALLFOLDER]serverkit-agent.exe&quot; tray"
+        Value="&quot;[INSTALLFOLDER]serverkit-agent.exe&quot;"
         KeyPath="yes" />
     </Component>
 
-    <!-- Start Menu shortcuts -->
+    <!-- Start Menu shortcut: single entry that opens the desktop app. -->
     <Component Id="StartMenuShortcuts" Directory="ServerKitStartMenuFolder" Guid="B7C8D9E0-F1A2-3456-7890-ABCDEF123456">
-      <Shortcut Id="SetupShortcut"
-        Name="ServerKit Agent Setup"
-        Description="Pair this server with a ServerKit panel"
+      <Shortcut Id="AppShortcut"
+        Name="ServerKit Agent"
+        Description="Pair and manage this ServerKit Agent"
         Target="[INSTALLFOLDER]serverkit-agent.exe"
-        Arguments="setup"
         WorkingDirectory="INSTALLFOLDER"
-        Icon="ServerKitAgentIcon.exe"
+        Icon="ServerKitAgentIco"
         IconIndex="0" />
-      <Shortcut Id="StatusShortcut"
-        Name="ServerKit Agent Status"
-        Description="Show ServerKit Agent connection status"
-        Target="[INSTALLFOLDER]serverkit-agent.exe"
-        Arguments="status"
-        WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
       <RegistryValue
         Root="HKCU"
@@ -131,9 +130,22 @@
         Value="1"
         KeyPath="yes" />
     </Component>
+  </Fragment>
 
-    <!-- Icon used for shortcut (reuses the agent exe's embedded icon) -->
-    <Icon Id="ServerKitAgentIcon.exe" SourceFile="serverkit-agent.exe" />
+  <!-- Launch the desktop app at the end of installation so the user is taken
+       straight into the pairing wizard. Impersonate so it inherits the user's
+       session, not the elevated installer. -->
+  <Fragment>
+    <CustomAction Id="LaunchApp"
+      FileRef="ServerKitAgentExe"
+      ExeCommand=""
+      Impersonate="yes"
+      Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchApp" After="InstallFinalize"
+        Condition="NOT Installed AND NOT REMOVE" />
+    </InstallExecuteSequence>
   </Fragment>
 
 </Wix>

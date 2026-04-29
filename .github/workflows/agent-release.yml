@@ -31,6 +31,9 @@ jobs:
           - goos: windows
             goarch: amd64
             suffix: '.exe'
+          - goos: windows
+            goarch: arm64
+            suffix: '.exe'
 
     steps:
       - name: Checkout code
@@ -60,7 +63,15 @@ jobs:
           CGO_ENABLED: 0
         run: |
           cd agent
-          go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X github.com/serverkit/agent/internal/agent.Version=${{ steps.version.outputs.version }}" \
+          # Windows builds use -H windowsgui so Start-menu launches don't
+          # flash a console. attachParentConsole() in cmd/agent restores
+          # stdio when invoked from PowerShell/cmd for CLI subcommands.
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXTRA_LDFLAGS="-H=windowsgui"
+          else
+            EXTRA_LDFLAGS=""
+          fi
+          go build -ldflags="-s -w $EXTRA_LDFLAGS -X main.Version=${{ steps.version.outputs.version }} -X github.com/serverkit/agent/internal/agent.Version=${{ steps.version.outputs.version }}" \
             -o ../dist/serverkit-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} \
             ./cmd/agent
 
@@ -190,11 +201,19 @@ jobs:
           path: packages/*.rpm
           retention-days: 5
 
-  # Build Windows MSI
+  # Build Windows MSI installers (one per architecture)
   build-msi:
-    name: Build MSI Installer
+    name: Build MSI Installer (${{ matrix.arch }})
     runs-on: windows-latest
     needs: build
+
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            arch: x64
+          - goarch: arm64
+            arch: arm64
 
     steps:
       - name: Checkout code
@@ -218,25 +237,25 @@ jobs:
       - name: Download binary
         uses: actions/download-artifact@v4
         with:
-          name: serverkit-agent-windows-amd64
+          name: serverkit-agent-windows-${{ matrix.goarch }}
           path: dist/
 
       - name: Extract binary
         shell: bash
         run: |
           cd dist
-          unzip serverkit-agent-${{ steps.version.outputs.version }}-windows-amd64.zip
+          unzip serverkit-agent-${{ steps.version.outputs.version }}-windows-${{ matrix.goarch }}.zip
 
       - name: Build MSI
         shell: pwsh
         run: |
           cd agent/packaging/msi
-          .\build.ps1 -Version "${{ steps.version.outputs.version }}" -BinaryPath "..\..\..\dist\serverkit-agent-windows-amd64.exe" -OutputDir "..\..\..\packages"
+          .\build.ps1 -Version "${{ steps.version.outputs.version }}" -Arch "${{ matrix.arch }}" -BinaryPath "..\..\..\dist\serverkit-agent-windows-${{ matrix.goarch }}.exe" -OutputDir "..\..\..\packages"
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: serverkit-agent-msi
+          name: serverkit-agent-msi-${{ matrix.arch }}
           path: packages/*.msi
           retention-days: 5
 
@@ -352,6 +371,7 @@ jobs:
             | Linux | x64 (amd64) | `serverkit-agent-${{ steps.version.outputs.version }}-linux-amd64.tar.gz` |
             | Linux | ARM64 | `serverkit-agent-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` |
             | Windows | x64 (amd64) | `serverkit-agent-${{ steps.version.outputs.version }}-windows-amd64.zip` |
+            | Windows | ARM64 | `serverkit-agent-${{ steps.version.outputs.version }}-windows-arm64.zip` |
 
             #### Linux Packages
             | Format | Architecture | Download |
@@ -365,8 +385,9 @@ jobs:
             | Format | Architecture | Download |
             |--------|--------------|----------|
             | MSI | x64 | `serverkit-agent-${{ steps.version.outputs.version }}-x64.msi` |
+            | MSI | ARM64 | `serverkit-agent-${{ steps.version.outputs.version }}-arm64.msi` |
 
-            > **New:** Run `serverkit-agent tray` to launch the **System Tray Application** which provides a visual indicator that the agent is running, along with quick access to status, logs, and service controls. The MSI installer auto-starts the tray on Windows login.
+            > **New:** The Windows MSI now opens a native pairing wizard right after install — no browser, no WebView2 runtime needed. The Start-menu shortcut and login autostart both run the unified desktop app: pairing wizard if not yet configured, otherwise the system tray.
 
             #### Docker
             ```bash
@@ -458,6 +479,7 @@ jobs:
           echo "| RPM | x86_64 | ✅ Built |" >> $GITHUB_STEP_SUMMARY
           echo "| RPM | aarch64 | ✅ Built |" >> $GITHUB_STEP_SUMMARY
           echo "| MSI | x64 | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "| MSI | ARM64 | ✅ Built |" >> $GITHUB_STEP_SUMMARY
           echo "| Docker | multi-arch | ✅ Built |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Release" >> $GITHUB_STEP_SUMMARY

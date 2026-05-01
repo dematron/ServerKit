@@ -194,7 +194,10 @@ func (c *Collector) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		info.KernelVersion = hostInfo.KernelVersion
 	}
 
-	// CPU info
+	// CPU info — gopsutil's WMI/sysctl calls fail intermittently on
+	// some Windows service contexts, so fall back to runtime.NumCPU()
+	// for the count (always non-zero) and leave the model empty
+	// rather than reporting nonsense.
 	cpuInfo, err := cpu.InfoWithContext(ctx)
 	if err == nil && len(cpuInfo) > 0 {
 		info.CPUModel = cpuInfo[0].ModelName
@@ -209,6 +212,14 @@ func (c *Collector) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 	cores, err := cpu.CountsWithContext(ctx, false)
 	if err == nil {
 		info.CPUCores = cores
+	}
+	// Last-resort fallback: runtime.NumCPU is always >= 1 on a
+	// running process. Better than reporting 0 cores.
+	if info.CPUCores == 0 {
+		info.CPUCores = runtime.NumCPU()
+	}
+	if info.CPUThreads == 0 {
+		info.CPUThreads = runtime.NumCPU()
 	}
 
 	// Memory

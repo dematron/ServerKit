@@ -613,7 +613,9 @@ func (a *Agent) sendSystemInfo(ctx context.Context) {
 			Hostname:      info.Hostname,
 			OS:            info.OS,
 			OSVersion:     info.PlatformVersion,
+			Platform:      info.Platform,
 			Architecture:  info.Architecture,
+			CPUModel:      info.CPUModel,
 			CPUCores:      info.CPUThreads, // surface threads as "cores" — matches the panel's existing column
 			TotalMemory:   info.TotalMemory,
 			TotalDisk:     info.TotalDisk,

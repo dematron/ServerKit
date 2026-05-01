@@ -202,15 +202,17 @@ type CapabilitiesMessage struct {
 
 // SystemInfo contains detailed system information
 type SystemInfo struct {
-	Hostname     string `json:"hostname"`
-	OS           string `json:"os"`
-	OSVersion    string `json:"os_version"`
-	Architecture string `json:"architecture"`
-	CPUCores     int    `json:"cpu_cores"`
-	TotalMemory  uint64 `json:"total_memory"`
-	TotalDisk    uint64 `json:"total_disk"`
+	Hostname      string `json:"hostname"`
+	OS            string `json:"os"`
+	OSVersion     string `json:"os_version"`
+	Platform      string `json:"platform,omitempty"`
+	Architecture  string `json:"architecture"`
+	CPUModel      string `json:"cpu_model,omitempty"`
+	CPUCores      int    `json:"cpu_cores"`
+	TotalMemory   uint64 `json:"total_memory"`
+	TotalDisk     uint64 `json:"total_disk"`
 	DockerVersion string `json:"docker_version,omitempty"`
-	AgentVersion string `json:"agent_version"`
+	AgentVersion  string `json:"agent_version"`
 }
 
 // Command actions

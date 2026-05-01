@@ -297,6 +297,18 @@ class Server(db.Model):
                     return True
         return False
 
+    # Verb tokens that mean "read this thing, don't change it." When the
+    # last component of an action matches one of these, the expander
+    # adds a `<namespace>:read` candidate so a permissions list with
+    # only generic read grants doesn't 403 on a specific list/inspect
+    # call.
+    READ_ACTION_VERBS = {
+        'list', 'list_installed', 'list_units',
+        'read', 'get', 'inspect', 'status', 'info',
+        'search', 'logs', 'stats', 'available',
+        'installed', 'current', 'show',
+    }
+
     @classmethod
     def _expand_permission_scope(cls, scope):
         """Add profile and legacy aliases for an agent command scope."""
@@ -321,6 +333,22 @@ class Server(db.Model):
                 candidate_scopes.add(f'system:{action}:read')
                 candidate_scopes.add('system:metrics:read')
                 candidate_scopes.add('system:read')
+
+        # Generic read-action expansion for the namespaces we added in
+        # later phases (packages, systemd, runtimes, cloudflared, file,
+        # cron). When the leaf verb is a read (list/info/status/etc.),
+        # accept either an exact match, a `<ns>:read`, a `<ns>:*`, or
+        # any of the legacy `<ns>:<sub>:read` variants. Mutating verbs
+        # fall through to require explicit grants.
+        if scope_parts:
+            namespace = scope_parts[0]
+            tail = scope_parts[-1]
+            if tail in cls.READ_ACTION_VERBS:
+                candidate_scopes.add(f'{namespace}:read')
+                if len(scope_parts) >= 2:
+                    candidate_scopes.add(f'{namespace}:{scope_parts[1]}:read')
+            else:
+                candidate_scopes.add(f'{namespace}:write')
 
         return candidate_scopes
 

@@ -170,13 +170,26 @@ func probeRuntimes(ctx context.Context) map[string]string {
 var versionPattern = regexp.MustCompile(`(\d+\.\d+(?:\.\d+)?)`)
 
 func readVersion(ctx context.Context, bin string) string {
-	// java and a few others print version on stderr; capture both.
-	cmd := exec.CommandContext(ctx, bin, "--version")
-	out, err := cmd.CombinedOutput()
-	if err != nil || len(out) == 0 {
-		// Some binaries reject "--version" but accept "-version" (java).
-		cmd = exec.CommandContext(ctx, bin, "-version")
-		out, _ = cmd.CombinedOutput()
+	// Each runtime has its own way to print version. Try a small
+	// allow-list of forms in order; the first non-empty wins.
+	//   --version: python, node, php, ruby
+	//   -version:  java (legacy)
+	//   version:   go (subcommand, NOT a flag)
+	candidates := [][]string{{"--version"}, {"-version"}, {"version"}}
+	// Special-case go up front so we don't waste two failed forks on
+	// hosts where probing this matters.
+	base := strings.ToLower(filepathBase(bin))
+	if base == "go" || base == "go.exe" {
+		candidates = [][]string{{"version"}, {"--version"}}
+	}
+	var out []byte
+	for _, args := range candidates {
+		cmd := exec.CommandContext(ctx, bin, args...)
+		o, err := cmd.CombinedOutput()
+		if err == nil && len(o) > 0 {
+			out = o
+			break
+		}
 	}
 	if len(out) == 0 {
 		return ""
@@ -188,6 +201,16 @@ func readVersion(ctx context.Context, bin string) string {
 	// Fall through with the raw first line so the panel at least shows
 	// something rather than a blank.
 	return first
+}
+
+// filepathBase mirrors filepath.Base without pulling the import — this
+// file already has plenty.
+func filepathBase(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		p = p[i+1:]
+	}
+	return p
 }
 
 // probeCron — present if `crontab` is on PATH OR a cron daemon is

@@ -353,15 +353,20 @@ const OverviewTab = ({ server, metrics, systemInfo, onRefreshServer }) => {
                     <InfoList>
                         <InfoItem
                             label="Operating System"
-                            value={`${systemInfo?.os || server.os_type || 'Unknown'}${systemInfo?.os_version ? ` ${systemInfo.os_version}` : ''}`}
+                            value={`${systemInfo?.os || server.os_type || 'Unknown'}${systemInfo?.os_version || server.os_version ? ` ${systemInfo?.os_version || server.os_version}` : ''}`}
                         />
                         <InfoItem label="Architecture" value={systemInfo?.architecture || server.architecture || 'N/A'} />
                         <InfoItem
                             label="CPU"
-                            value={`${systemInfo?.cpu_model || 'N/A'}${systemInfo?.cpu_cores ? ` (${systemInfo.cpu_cores} cores)` : ''}`}
+                            value={
+                                ((systemInfo?.cpu_model || server.cpu_model) || 'N/A') +
+                                (systemInfo?.cpu_cores || server.cpu_cores
+                                    ? ` (${systemInfo?.cpu_cores || server.cpu_cores} cores)`
+                                    : '')
+                            }
                         />
-                        <InfoItem label="Total Memory" value={formatBytes(systemInfo?.total_memory)} />
-                        <InfoItem label="Total Disk" value={formatBytes(systemInfo?.total_disk)} />
+                        <InfoItem label="Total Memory" value={formatBytes(systemInfo?.total_memory || server.total_memory)} />
+                        <InfoItem label="Total Disk" value={formatBytes(systemInfo?.total_disk || server.total_disk)} />
                     </InfoList>
                 </div>
 

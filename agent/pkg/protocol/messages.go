@@ -241,6 +241,14 @@ const (
 
 	// Agent actions
 	ActionAgentUpdate = "agent:update"
+
+	// GUI / desktop capture actions. These are the agent-side primitives
+	// that panel extensions (e.g. serverkit-gui) call into. Implementation
+	// lives in agent/internal/gui — kept minimal so plugins composing
+	// remote-desktop / synthetic-UI features don't have to fork the
+	// agent.
+	ActionGUICapabilities = "gui:capabilities"
+	ActionGUIScreenshot   = "gui:screenshot"
 )
 
 // Stream channels

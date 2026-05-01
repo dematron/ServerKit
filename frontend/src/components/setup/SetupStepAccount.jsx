@@ -66,10 +66,8 @@ const SetupStepAccount = ({ onComplete }) => {
                     An admin account already exists. Sign in to continue setup.
                 </p>
 
-                <div className="wizard-info-banner">
-                    <div className="wizard-info-icon">
-                        <Info size={20} />
-                    </div>
+                <div className="alert alert-info">
+                    <Info size={20} />
                     <p>
                         It looks like an admin account was created via the CLI.
                         Sign in with those credentials to finish setting up your server.
@@ -124,10 +122,8 @@ const SetupStepAccount = ({ onComplete }) => {
                 Set up the administrator account for your server.
             </p>
 
-            <div className="wizard-info-banner">
-                <div className="wizard-info-icon">
-                    <Info size={20} />
-                </div>
+            <div className="alert alert-info">
+                <Info size={20} />
                 <p>
                     This is your first time using ServerKit. Create an administrator
                     account to get started. This account will have full access to

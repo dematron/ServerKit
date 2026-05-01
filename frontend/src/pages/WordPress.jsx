@@ -5,6 +5,8 @@ import { useToast } from '../contexts/ToastContext';
 import { useResourceTier } from '../contexts/ResourceTierContext';
 import ResourceGate from '../components/ResourceGate';
 import Spinner from '../components/Spinner';
+import EmptyState from '../components/EmptyState';
+import { Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -126,20 +128,17 @@ function WordPress() {
             </div>
 
             {sites.length === 0 ? (
-                <div className="empty-state-large">
-                    <div className="empty-icon">
-                        <svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" strokeWidth="1.5">
-                            <circle cx="12" cy="12" r="10"/>
-                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                            <path d="M2 12h20"/>
-                        </svg>
-                    </div>
-                    <h2>No WordPress Sites</h2>
-                    <p>Create your first WordPress site powered by Docker. Each site gets its own isolated environment with MySQL.</p>
-                    <Button onClick={() => setShowCreateModal(true)}>
-                        Create Site
-                    </Button>
-                </div>
+                <EmptyState
+                    size="lg"
+                    icon={Globe}
+                    title="No WordPress Sites"
+                    description="Create your first WordPress site powered by Docker. Each site gets its own isolated environment with MySQL."
+                    action={
+                        <Button onClick={() => setShowCreateModal(true)}>
+                            Create Site
+                        </Button>
+                    }
+                />
             ) : (
                 <div className="wp-sites-grid">
                     {sites.map(site => (

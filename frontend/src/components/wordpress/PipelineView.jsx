@@ -428,7 +428,7 @@ const PipelineCard = ({
             </div>
 
             {env.is_locked && env.locked_reason && (
-                <div className="pipeline-card-lock-banner">
+                <div className="alert alert-warning">
                     <Lock size={10} />
                     <span>{env.locked_reason}</span>
                 </div>
@@ -603,7 +603,7 @@ const MultidevCard = ({
                 </Button>
             </div>
             {env.is_locked && env.locked_reason && (
-                <div className="pipeline-card-lock-banner">
+                <div className="alert alert-warning">
                     <Lock size={10} />
                     <span>{env.locked_reason}</span>
                 </div>

@@ -351,7 +351,7 @@ const QueryRunner = ({ database, dbType, onClose }) => {
                         </div>
 
                         {error && (
-                            <div className="query-error">
+                            <div className="alert alert-danger">
                                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                                     <circle cx="12" cy="12" r="10"/>
                                     <line x1="15" y1="9" x2="9" y2="15"/>

@@ -71,11 +71,9 @@ const SetupStepTier = ({ useCases, onComplete }) => {
             </p>
 
             {showWarning && (
-                <div className="tier-warning">
-                    <div className="tier-warning-icon">
-                        <AlertTriangle size={20} />
-                    </div>
-                    <div className="tier-warning-text">
+                <div className="alert alert-warning">
+                    <AlertTriangle size={20} />
+                    <div>
                         Your server is in the <strong>Lite</strong> tier. WordPress site
                         creation requires at least the Standard tier (2+ cores, 2+ GB RAM).
                         You can still manage existing WordPress sites.

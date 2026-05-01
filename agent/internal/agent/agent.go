@@ -22,6 +22,7 @@ import (
 	"github.com/serverkit/agent/internal/config"
 	"github.com/serverkit/agent/internal/docker"
 	"github.com/serverkit/agent/internal/events"
+	"github.com/serverkit/agent/internal/gui"
 	"github.com/serverkit/agent/internal/ipc"
 	"github.com/serverkit/agent/internal/logger"
 	"github.com/serverkit/agent/internal/metrics"
@@ -48,6 +49,7 @@ type Agent struct {
 	ipc      *ipc.Server
 	sampler  *metricSampler
 	events   *events.Store
+	gui      *gui.SDK
 
 	// Active subscriptions
 	subscriptions map[string]context.CancelFunc
@@ -127,6 +129,7 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 		terminal:      termManager,
 		sampler:       newMetricSampler(300), // 5 min @ 1 Hz
 		events:        eventStore,
+		gui:           gui.New(log),
 		subscriptions: make(map[string]context.CancelFunc),
 		handlers:      make(map[string]CommandHandler),
 		startTime:     time.Now(),
@@ -217,6 +220,13 @@ func (a *Agent) registerHandlers() {
 
 	// Agent commands
 	a.handlers[protocol.ActionAgentUpdate] = a.handleAgentUpdate
+
+	// GUI SDK — primitives that panel extensions (serverkit-gui, etc.)
+	// compose into desktop-streaming or synthetic-UI features. Always
+	// registered; the SDK reports "none" capability on hosts that can't
+	// capture, so plugins can probe instead of failing.
+	a.handlers[protocol.ActionGUICapabilities] = a.gui.HandleCapabilities
+	a.handlers[protocol.ActionGUIScreenshot] = a.gui.HandleScreenshot
 }
 
 // Run starts the agent

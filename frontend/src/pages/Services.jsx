@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { Layers } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { getServiceType, getStatusConfig, formatRelativeTime } from '../utils/serviceTypes';
+import EmptyState from '../components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -281,22 +283,19 @@ const Services = () => {
             )}
 
             {filteredApps.length === 0 ? (
-                <div className="services-page__empty">
-                    <div className="services-page__empty-icon">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                        </svg>
-                    </div>
-                    <h3>No services found</h3>
-                    <p>{searchTerm || typeFilter !== 'all' || statusFilter !== 'all'
+                <EmptyState
+                    size="lg"
+                    icon={Layers}
+                    title="No services found"
+                    description={searchTerm || typeFilter !== 'all' || statusFilter !== 'all'
                         ? 'Try adjusting your filters'
-                        : 'Deploy your first service to get started'}</p>
-                    {!searchTerm && typeFilter === 'all' && statusFilter === 'all' && (
+                        : 'Deploy your first service to get started'}
+                    action={!searchTerm && typeFilter === 'all' && statusFilter === 'all' && (
                         <Button asChild>
                             <Link to="/templates">Create Service</Link>
                         </Button>
                     )}
-                </div>
+                />
             ) : (
                 <div className="services-page__list">
                     {/* List Header */}

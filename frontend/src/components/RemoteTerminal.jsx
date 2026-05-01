@@ -237,7 +237,7 @@ export default function RemoteTerminal({ serverId, onClose }) {
                 onClick={handleClick}
             />
             {error && (
-                <div className="terminal-error">
+                <div className="alert alert-danger">
                     {error}
                 </div>
             )}

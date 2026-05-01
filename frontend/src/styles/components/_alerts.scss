@@ -3,14 +3,19 @@
 // ============================================
 
 .alert {
-    position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: $space-2;
     padding: $space-3 $space-4;
     border-radius: $radius-md;
     font-size: $font-size-sm;
+    line-height: 1.5;
     margin-bottom: $space-4;
+
+    > svg {
+        flex-shrink: 0;
+        margin-top: 2px;
+    }
 
     &.alert-success,
     &.alert--success {
@@ -43,16 +48,16 @@
 }
 
 .alert-close {
-    position: absolute;
-    top: $space-2;
-    right: $space-3;
+    margin-left: auto;
     background: none;
     border: none;
     font-size: $font-size-lg;
     color: inherit;
     opacity: 0.6;
     cursor: pointer;
-    padding: 0;
+    padding: 0 $space-1;
+    line-height: 1;
+    flex-shrink: 0;
 
     &:hover {
         opacity: 1;

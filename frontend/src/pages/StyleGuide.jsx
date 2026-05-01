@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import useTabParam from '../hooks/useTabParam';
+import { useLogsDrawer } from '../contexts/LogsDrawerContext';
 import {
     Palette, Type, Box, Layout, Square, ToggleLeft, AlertTriangle,
     Info, CheckCircle, XCircle, Bell, Search, Plus, Trash2, Edit3,
@@ -53,6 +54,7 @@ const SECTION_IDS = SECTIONS.map(s => s.id);
 
 export default function StyleGuide() {
     const [activeSection, setActiveSection] = useTabParam('/style-guide', SECTION_IDS, 'colors');
+    const { openDrawer } = useLogsDrawer();
     const [modalOpen, setModalOpen] = useState(false);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [confirmVariant, setConfirmVariant] = useState('danger');
@@ -298,11 +300,11 @@ export default function StyleGuide() {
                             <Button className="w-full mb-4">Full Width Button</Button>
                             <div className="flex flex-wrap gap-3">
                                 <Button disabled>
-                                    <span className="spinner spinner-sm"><span className="spinner-ring"></span></span>
+                                    <Spinner size="sm" />
                                     Saving...
                                 </Button>
                                 <Button variant="outline" disabled>
-                                    <span className="spinner spinner-sm"><span className="spinner-ring"></span></span>
+                                    <Spinner size="sm" />
                                     Loading...
                                 </Button>
                             </div>
@@ -667,7 +669,7 @@ export default function StyleGuide() {
 
                         <SectionTitle title="Alert with Close Button" />
                         <div className="space-y-2">
-                            <div className="alert alert-danger" style={{ position: 'relative' }}>
+                            <div className="alert alert-danger">
                                 Something went wrong while saving.
                                 <button className="alert-close">&times;</button>
                             </div>
@@ -712,6 +714,14 @@ export default function StyleGuide() {
                                     <Input type="text" placeholder="Type something..." />
                                 </div>
                             </Modal>
+                        </div>
+
+                        <SectionTitle title="Logs Drawer (LogsDrawer)" />
+                        <p className="text-sm text-secondary mb-2">Global bottom-pinned drawer for streaming logs. Opens via the LogsDrawer context.</p>
+                        <div className="card" style={{ padding: 24 }}>
+                            <Button onClick={() => openDrawer({ name: 'sample-service', logPath: '/var/log/syslog', appType: 'logfile' })}>
+                                <FileText size={16} /> Open Logs Drawer
+                            </Button>
                         </div>
 
                         <SectionTitle title="Confirm Dialogs" />
@@ -1026,7 +1036,7 @@ export default function StyleGuide() {
 
                         <SectionTitle title="Error Banner at Page Level" />
                         <p className="text-sm text-secondary mb-2">Shown below page header when an API call fails.</p>
-                        <div className="alert alert-danger" style={{ position: 'relative' }}>
+                        <div className="alert alert-danger">
                             Failed to load services. Please try again.
                             <button className="alert-close">&times;</button>
                         </div>

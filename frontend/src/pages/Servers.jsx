@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { Server as ServerLucideIcon } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import EmptyState from '../components/EmptyState';
+import { StatCard, StatsGrid } from '../components/StatCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -210,24 +213,20 @@ const Servers = () => {
                 </div>
             </header>
 
-            <div className="servers-stats">
+            <StatsGrid>
                 {statCards.map(stat => (
-                    <button
+                    <StatCard
                         key={stat.key}
-                        type="button"
-                        className={`stat-card stat-card--${stat.key} ${selectedStatus === stat.key ? 'active' : ''}`}
+                        iconNode={stat.icon}
+                        iconVariant={stat.key}
+                        label={stat.label}
+                        value={stat.value}
+                        detail={stat.detail}
+                        active={selectedStatus === stat.key}
                         onClick={() => setSelectedStatus(stat.key)}
-                        aria-pressed={selectedStatus === stat.key}
-                    >
-                        <span className={`stat-icon ${stat.key}`}>{stat.icon}</span>
-                        <span className="stat-content">
-                            <span className="stat-label">{stat.label}</span>
-                            <span className="stat-value">{stat.value}</span>
-                            <span className="stat-detail">{stat.detail}</span>
-                        </span>
-                    </button>
+                    />
                 ))}
-            </div>
+            </StatsGrid>
 
             <div className="servers-command-bar">
                 <div className="servers-toolbar">
@@ -289,17 +288,14 @@ const Servers = () => {
             )}
 
             {filteredServers.length === 0 ? (
-                <div className="empty-state servers-empty-state">
-                    <div className="servers-empty-state__icon">
-                        <ServerIcon className="empty-icon" />
-                    </div>
-                    <h3>{servers.length === 0 ? 'No servers yet' : 'No servers match these filters'}</h3>
-                    <p>
-                        {servers.length === 0
-                            ? 'Install a ServerKit agent on a machine to start monitoring health and managing Docker remotely.'
-                            : 'Try a different status, group, or search term to bring machines back into view.'}
-                    </p>
-                    {servers.length === 0 ? (
+                <EmptyState
+                    size="lg"
+                    icon={ServerLucideIcon}
+                    title={servers.length === 0 ? 'No servers yet' : 'No servers match these filters'}
+                    description={servers.length === 0
+                        ? 'Install a ServerKit agent on a machine to start monitoring health and managing Docker remotely.'
+                        : 'Try a different status, group, or search term to bring machines back into view.'}
+                    action={servers.length === 0 ? (
                         <Button onClick={() => setShowAddModal(true)}>
                             <PlusIcon /> Add your first server
                         </Button>
@@ -316,7 +312,7 @@ const Servers = () => {
                             Clear filters
                         </Button>
                     )}
-                </div>
+                />
             ) : (
                 <div className="servers-table-wrap">
                     <table className="servers-table">

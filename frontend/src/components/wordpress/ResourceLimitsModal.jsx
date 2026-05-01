@@ -131,7 +131,7 @@ const ResourceLimitsModal = ({ environment, currentLimits, onClose, onApply }) =
                     </div>
                 </div>
 
-                <div className="resource-limits-warning">
+                <div className="alert alert-warning">
                     <AlertTriangle size={14} />
                     <span>Applying resource limits will restart the environment containers.</span>
                 </div>

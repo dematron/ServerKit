@@ -58,7 +58,7 @@ const CompareView = ({ projectId, envA, envB, onClose }) => {
                 )}
 
                 {error && (
-                    <div className="compare-error">
+                    <div className="alert alert-danger">
                         <p>{error}</p>
                         <Button size="sm" onClick={loadComparison}>
                             Retry

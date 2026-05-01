@@ -214,135 +214,27 @@
     flex: 1;
 }
 
-.servers-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: $space-3;
-    margin-bottom: $space-6;
+.servers-page {
+    .stat-icon {
+        &.all {
+            background: $accent-glow;
+            color: $accent-primary;
+        }
 
-    @media (max-width: $breakpoint-lg) {
-        grid-template-columns: repeat(2, 1fr);
-    }
+        &.online {
+            background: $success-bg;
+            color: $success;
+        }
 
-    @media (max-width: $breakpoint-sm) {
-        grid-template-columns: 1fr;
-    }
-}
+        &.offline {
+            background: $danger-bg;
+            color: $danger;
+        }
 
-.stat-card {
-    position: relative;
-    isolation: isolate;
-    appearance: none;
-    width: 100%;
-    text-align: left;
-    cursor: pointer;
-    background:
-        linear-gradient(135deg, $accent-glow, transparent 46%),
-        $bg-card;
-    border: 1px solid $border-subtle;
-    border-radius: $radius-xl;
-    padding: $space-4;
-    display: flex;
-    align-items: center;
-    gap: $space-3;
-    color: inherit;
-    transition: transform $transition-base, border-color $transition-base, box-shadow $transition-base, background $transition-base;
-
-    &::after {
-        content: '';
-        position: absolute;
-        inset: auto $space-4 0 $space-4;
-        height: 3px;
-        border-radius: $radius-full $radius-full 0 0;
-        background: transparent;
-        transition: background $transition-base;
-    }
-
-    &:hover,
-    &.active {
-        transform: translateY(-2px);
-        border-color: $border-active;
-        box-shadow: $shadow-md;
-    }
-
-    &.active::after {
-        background: $accent-primary;
-    }
-
-    &--online.active::after {
-        background: $success;
-    }
-
-    &--offline.active::after {
-        background: $danger;
-    }
-
-    &--connecting.active::after {
-        background: $warning;
-    }
-}
-
-.stat-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: $radius-xl;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-
-    svg {
-        width: 24px;
-        height: 24px;
-    }
-
-    &.all {
-        background: $accent-glow;
-        color: $accent-primary;
-    }
-
-    &.online {
-        background: $success-bg;
-        color: $success;
-    }
-
-    &.offline {
-        background: $danger-bg;
-        color: $danger;
-    }
-
-    &.connecting {
-        background: $warning-bg;
-        color: $warning;
-    }
-}
-
-.stat-content {
-    display: grid;
-    gap: 2px;
-
-    .stat-value {
-        grid-column: 2;
-        grid-row: 1 / span 2;
-        justify-self: end;
-        font-family: $font-mono;
-        font-size: $font-size-2xl;
-        font-weight: $font-weight-bold;
-        color: $text-primary;
-        line-height: 1;
-    }
-
-    .stat-label {
-        grid-column: 1;
-        grid-row: 1;
-        font-size: $font-size-sm;
-        color: $text-primary;
-        font-weight: $font-weight-semibold;
-    }
-
-    .stat-detail {
-        grid-column: 1 / -1;
-        font-size: $font-size-xs;
-        color: $text-tertiary;
+        &.connecting {
+            background: $warning-bg;
+            color: $warning;
+        }
     }
 }
 

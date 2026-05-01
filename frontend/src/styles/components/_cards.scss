@@ -168,6 +168,32 @@
     font-weight: $font-weight-normal;
 }
 
+.stat-detail {
+    font-size: $font-size-xs;
+    color: $text-tertiary;
+    margin-top: 2px;
+}
+
+// Clickable stat-card variant: behaves as a filter button
+.stat-card--clickable {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    transition: transform $transition-base, border-color $transition-base, box-shadow $transition-base;
+
+    &:hover,
+    &.active {
+        transform: translateY(-1px);
+        border-color: $border-active;
+    }
+
+    &.active {
+        border-color: $accent-primary;
+    }
+}
+
 // Progress bar
 .progress-bar {
     height: 4px;
@@ -206,6 +232,15 @@
     p {
         color: $text-secondary;
         margin-bottom: $space-6;
+    }
+
+    // When nested inside a card, drop the card-in-card double background.
+    .card &,
+    .card-body & {
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: $space-10 $space-5;
     }
 }
 

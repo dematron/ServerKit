@@ -41,28 +41,30 @@ export function ConfirmDialog({
     <AlertDialog open={isOpen} onOpenChange={(v) => !v && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <div className="flex flex-col items-center gap-3 text-center">
-            <div className={cn('mb-1', iconColor[variant] || 'text-destructive')}>
-              <Icon size={32} />
+          <div className="flex items-start gap-3">
+            <div className={cn('flex-shrink-0 mt-0.5', iconColor[variant] || 'text-destructive')}>
+              <Icon size={22} />
             </div>
-            <AlertDialogTitle>{title}</AlertDialogTitle>
-            {message && <AlertDialogDescription>{message}</AlertDialogDescription>}
-            {details && <p className="text-sm text-muted-foreground">{details}</p>}
-            {requireConfirmation && (
-              <div className="w-full text-left mt-2 space-y-1.5">
-                <Label className="text-muted-foreground">
-                  Type <strong className="text-foreground">{requireConfirmation}</strong> to confirm:
-                </Label>
-                <Input
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !isConfirmDisabled && onConfirm()}
-                  placeholder={confirmationPlaceholder || requireConfirmation}
-                  autoFocus
-                />
-              </div>
-            )}
+            <div className="flex-1 min-w-0">
+              <AlertDialogTitle>{title}</AlertDialogTitle>
+              {message && <AlertDialogDescription className="mt-1.5">{message}</AlertDialogDescription>}
+              {details && <p className="text-sm text-muted-foreground mt-1.5">{details}</p>}
+            </div>
           </div>
+          {requireConfirmation && (
+            <div className="space-y-1.5 mt-2">
+              <Label className="text-muted-foreground">
+                Type <strong className="text-foreground">{requireConfirmation}</strong> to confirm:
+              </Label>
+              <Input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !isConfirmDisabled && onConfirm()}
+                placeholder={confirmationPlaceholder || requireConfirmation}
+                autoFocus
+              />
+            </div>
+          )}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onCancel}>{cancelText}</AlertDialogCancel>

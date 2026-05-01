@@ -108,7 +108,7 @@ const BasicAuthModal = ({ environment, prodId, onClose, api }) => {
 
                         {credentials && (
                             <div className="basic-auth-credentials">
-                                <div className="basic-auth-credential-warning">
+                                <div className="alert alert-warning">
                                     <AlertTriangle size={14} />
                                     <span>Save these credentials now. The password will not be shown again.</span>
                                 </div>

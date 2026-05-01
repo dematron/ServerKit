@@ -2298,6 +2298,184 @@ def remote_cloudflared_delete(server_id, tunnel_ref):
     return _agent_result(result)
 
 
+# ==================== Remote Capability Refresh ====================
+#
+# Lets the panel ask the agent to re-run its capability probe on
+# demand — useful after the user installs a runtime, sudoers entry,
+# or new package manager and wants new tabs to light up without an
+# agent service restart. The agent's response is the freshly merged
+# capabilities map; the agent additionally pushes via the persistent
+# Capabilities message so all panel listeners stay in sync.
+
+@servers_bp.route('/<server_id>/refresh-capabilities', methods=['POST'])
+@jwt_required()
+def remote_refresh_capabilities(server_id):
+    user_id = get_jwt_identity()
+    result = agent_registry.send_command(
+        server_id=server_id, action='agent:recapabilities',
+        params={}, user_id=user_id, timeout=20.0,
+    )
+    return _agent_result(result)
+
+
+# ==================== Remote Packages ====================
+#
+# Exposes the agent's packages:* surface for the Packages tab.
+# Long-running operations (install/upgrade) return {job_id, channel};
+# the frontend subscribes to Socket.IO room
+# server_<id>_<channel> for live progress events.
+
+from app.services.remote_packages_service import RemotePackagesService
+
+
+@servers_bp.route('/<server_id>/packages', methods=['GET'])
+@jwt_required()
+def remote_packages_list(server_id):
+    user_id = get_jwt_identity()
+    result = RemotePackagesService.list_installed(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/search', methods=['GET'])
+@jwt_required()
+def remote_packages_search(server_id):
+    user_id = get_jwt_identity()
+    query = (request.args.get('q') or '').strip()
+    if not query:
+        return jsonify({'error': 'q is required'}), 400
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    result = RemotePackagesService.search(server_id, query, limit=limit, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/info/<name>', methods=['GET'])
+@jwt_required()
+def remote_packages_info(server_id, name):
+    user_id = get_jwt_identity()
+    result = RemotePackagesService.info(server_id, name, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/update-cache', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_update_cache(server_id):
+    user_id = get_jwt_identity()
+    result = RemotePackagesService.update_cache(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/install', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_install(server_id):
+    """Streaming install. Body: {names: ['nginx', 'redis-server']}.
+    Returns {job_id, channel} immediately; the panel subscribes to the
+    matching Socket.IO room for live install output."""
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    names = data.get('names') or []
+    if isinstance(names, str):
+        names = [names]
+    if not names:
+        return jsonify({'error': 'names is required'}), 400
+    result = RemotePackagesService.install_async(server_id, names, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/remove', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_remove(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name is required'}), 400
+    result = RemotePackagesService.remove(server_id, name, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/upgrade', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_upgrade(server_id):
+    """Streaming upgrade. Body: {all: bool, names?: [...]}. Returns
+    {job_id, channel}."""
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    names = data.get('names') or []
+    all_pkgs = bool(data.get('all', False))
+    if not all_pkgs and not names:
+        return jsonify({'error': 'either all=true or names=[...] required'}), 400
+    result = RemotePackagesService.upgrade(
+        server_id,
+        names=names if names else None,
+        all_packages=all_pkgs,
+        user_id=user_id,
+    )
+    return _agent_result(result)
+
+
+# ==================== Remote Services (systemd) ====================
+
+from app.services.remote_systemd_service import RemoteSystemdService
+
+
+@servers_bp.route('/<server_id>/services', methods=['GET'])
+@jwt_required()
+def remote_services_list(server_id):
+    user_id = get_jwt_identity()
+    state = request.args.get('state')
+    type_ = request.args.get('type', 'service')
+    result = RemoteSystemdService.list_units(server_id, state=state, type_=type_, user_id=user_id)
+    return _agent_result(result)
+
+
+# Static-suffix routes must come before the generic <unit>/<action>
+# route so Werkzeug picks the right matcher in registration order.
+
+@servers_bp.route('/<server_id>/services/daemon-reload', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_services_daemon_reload(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteSystemdService.daemon_reload(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/services/<unit>/logs', methods=['GET'])
+@jwt_required()
+def remote_services_logs(server_id, unit):
+    user_id = get_jwt_identity()
+    try:
+        lines = int(request.args.get('lines', 200))
+    except (TypeError, ValueError):
+        lines = 200
+    result = RemoteSystemdService.logs(server_id, unit, lines=lines, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/services/<unit>', methods=['GET'])
+@jwt_required()
+def remote_services_status(server_id, unit):
+    user_id = get_jwt_identity()
+    result = RemoteSystemdService.status(server_id, unit, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/services/<unit>/<action>', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_services_control(server_id, unit, action):
+    user_id = get_jwt_identity()
+    result = RemoteSystemdService.control(server_id, unit, action, user_id=user_id)
+    return _agent_result(result)
+
+
 # ==================== Remote File Operations ====================
 #
 # Endpoints under /servers/<id>/files/ proxy to the agent's file:*

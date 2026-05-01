@@ -11,8 +11,10 @@ import (
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	networktypes "github.com/docker/docker/api/types/network"
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 	"github.com/serverkit/agent/internal/config"
 	"github.com/serverkit/agent/internal/logger"
 )
@@ -438,6 +440,239 @@ func (c *Client) GetContainerCount(ctx context.Context) (total int, running int,
 // Close closes the Docker client
 func (c *Client) Close() error {
 	return c.cli.Close()
+}
+
+// ───── container:create / container:exec / image:build / network:create
+
+// ContainerCreateSpec is the curated input shape for CreateContainer.
+// We deliberately don't expose raw HostConfig — the panel sends the
+// fields a one-click template needs and we map them. Privileged /
+// CapAdd / Devices are intentionally absent in v1; if a user needs
+// them they should run `docker create` directly.
+type ContainerCreateSpec struct {
+	Image         string            `json:"image"`
+	Name          string            `json:"name,omitempty"`
+	Command       []string          `json:"command,omitempty"`
+	Env           []string          `json:"env,omitempty"` // KEY=VAL
+	Labels        map[string]string `json:"labels,omitempty"`
+	RestartPolicy string            `json:"restart_policy,omitempty"` // no, on-failure, always, unless-stopped
+	Network       string            `json:"network,omitempty"`
+	Ports         []ContainerPort   `json:"ports,omitempty"`
+	Volumes       []ContainerMount  `json:"volumes,omitempty"`
+	WorkingDir    string            `json:"working_dir,omitempty"`
+}
+
+type ContainerPort struct {
+	Host      uint16 `json:"host"`
+	Container uint16 `json:"container"`
+	Proto     string `json:"proto,omitempty"` // "tcp" (default) or "udp"
+}
+
+type ContainerMount struct {
+	Source string `json:"src"`
+	Target string `json:"dst"`
+	Mode   string `json:"mode,omitempty"` // "ro" or "" for rw
+}
+
+// CreateContainer wires a curated spec to the Docker SDK's
+// ContainerCreate. Returns the new container ID.
+func (c *Client) CreateContainer(ctx context.Context, spec ContainerCreateSpec) (string, error) {
+	if strings.TrimSpace(spec.Image) == "" {
+		return "", fmt.Errorf("image is required")
+	}
+
+	exposed := nat.PortSet{}
+	bindings := nat.PortMap{}
+	for _, p := range spec.Ports {
+		proto := p.Proto
+		if proto == "" {
+			proto = "tcp"
+		}
+		port, err := nat.NewPort(proto, fmt.Sprintf("%d", p.Container))
+		if err != nil {
+			return "", fmt.Errorf("invalid port %d/%s: %w", p.Container, proto, err)
+		}
+		exposed[port] = struct{}{}
+		bindings[port] = []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", p.Host)}}
+	}
+
+	binds := make([]string, 0, len(spec.Volumes))
+	for _, v := range spec.Volumes {
+		bind := v.Source + ":" + v.Target
+		if v.Mode != "" {
+			bind += ":" + v.Mode
+		}
+		binds = append(binds, bind)
+	}
+
+	cfg := &containertypes.Config{
+		Image:        spec.Image,
+		Cmd:          spec.Command,
+		Env:          spec.Env,
+		Labels:       spec.Labels,
+		WorkingDir:   spec.WorkingDir,
+		ExposedPorts: exposed,
+	}
+	hostCfg := &containertypes.HostConfig{
+		PortBindings: bindings,
+		Binds:        binds,
+		RestartPolicy: containertypes.RestartPolicy{
+			Name: spec.RestartPolicy,
+		},
+	}
+	var netCfg *networktypes.NetworkingConfig
+	if spec.Network != "" {
+		netCfg = &networktypes.NetworkingConfig{
+			EndpointsConfig: map[string]*networktypes.EndpointSettings{
+				spec.Network: {},
+			},
+		}
+	}
+	resp, err := c.cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, spec.Name)
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+// ContainerExecResult is the bounded result of an exec call.
+type ContainerExecResult struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
+// ExecContainer runs a command inside a running container, captures
+// stdout/stderr (capped to outputCap bytes), and returns the exit code.
+// User and WorkingDir are optional; pass an empty string to inherit.
+func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, user, workingDir string, outputCap int) (ContainerExecResult, error) {
+	if outputCap <= 0 {
+		outputCap = 1024 * 1024 // 1MB default
+	}
+	createResp, err := c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+		User:         user,
+		WorkingDir:   workingDir,
+	})
+	if err != nil {
+		return ContainerExecResult{}, err
+	}
+	hijack, err := c.cli.ContainerExecAttach(ctx, createResp.ID, types.ExecStartCheck{})
+	if err != nil {
+		return ContainerExecResult{}, err
+	}
+	defer hijack.Close()
+
+	// Read multiplexed stream: docker frames stdout/stderr together
+	// with an 8-byte header. stdcopy.StdCopy demultiplexes, but to
+	// avoid an extra import we use a bounded ReadAll and ship the raw
+	// stream — the panel only needs the combined output anyway.
+	buf := &boundedBuffer{cap: outputCap}
+	_, _ = io.Copy(buf, hijack.Reader)
+
+	insp, err := c.cli.ContainerExecInspect(ctx, createResp.ID)
+	if err != nil {
+		return ContainerExecResult{}, err
+	}
+	return ContainerExecResult{
+		Stdout:   buf.String(),
+		ExitCode: insp.ExitCode,
+	}, nil
+}
+
+// boundedBuffer is a tiny io.Writer that drops bytes past a cap. Used
+// instead of bytes.Buffer to keep exec output from blowing memory on a
+// chatty command like `find /`.
+type boundedBuffer struct {
+	cap  int
+	data []byte
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	remaining := b.cap - len(b.data)
+	if remaining <= 0 {
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		b.data = append(b.data, p[:remaining]...)
+		return len(p), nil
+	}
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string { return string(b.data) }
+
+// ImageBuildSpec carries the curated input for BuildImage.
+type ImageBuildSpec struct {
+	ContextPath string            `json:"context_path"`
+	Dockerfile  string            `json:"dockerfile,omitempty"`
+	Tag         string            `json:"tag"`
+	BuildArgs   map[string]string `json:"build_args,omitempty"`
+	NoCache     bool              `json:"no_cache,omitempty"`
+	Pull        bool              `json:"pull,omitempty"`
+}
+
+// BuildImageCmd builds the *exec.Cmd for a `docker build` invocation
+// based on spec. The caller streams stdout/stderr (we use the same
+// jobs streaming helper as packages). Returning a Cmd rather than a
+// reader keeps this file from importing the docker SDK's archive
+// package, which pulls in containerd/moby deps that aren't in our
+// go.mod.
+func (c *Client) BuildImageCmd(ctx context.Context, spec ImageBuildSpec) (*exec.Cmd, error) {
+	if strings.TrimSpace(spec.ContextPath) == "" {
+		return nil, fmt.Errorf("context_path is required")
+	}
+	if strings.TrimSpace(spec.Tag) == "" {
+		return nil, fmt.Errorf("tag is required")
+	}
+	args := []string{"build", "-t", spec.Tag}
+	if spec.Dockerfile != "" {
+		args = append(args, "-f", spec.Dockerfile)
+	}
+	for k, v := range spec.BuildArgs {
+		args = append(args, "--build-arg", k+"="+v)
+	}
+	if spec.NoCache {
+		args = append(args, "--no-cache")
+	}
+	if spec.Pull {
+		args = append(args, "--pull")
+	}
+	args = append(args, spec.ContextPath)
+	return exec.CommandContext(ctx, "docker", args...), nil
+}
+
+// NetworkCreateSpec carries curated input for CreateNetwork.
+type NetworkCreateSpec struct {
+	Name       string            `json:"name"`
+	Driver     string            `json:"driver,omitempty"` // bridge (default), overlay, host
+	Internal   bool              `json:"internal,omitempty"`
+	Attachable bool              `json:"attachable,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+// CreateNetwork creates a Docker network and returns its ID.
+func (c *Client) CreateNetwork(ctx context.Context, spec NetworkCreateSpec) (string, error) {
+	if strings.TrimSpace(spec.Name) == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	driver := spec.Driver
+	if driver == "" {
+		driver = "bridge"
+	}
+	resp, err := c.cli.NetworkCreate(ctx, spec.Name, types.NetworkCreate{
+		Driver:     driver,
+		Internal:   spec.Internal,
+		Attachable: spec.Attachable,
+		Labels:     spec.Labels,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
 }
 
 // calculateCPUPercent calculates CPU usage percentage

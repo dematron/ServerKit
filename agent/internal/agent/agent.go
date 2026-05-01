@@ -26,6 +26,7 @@ import (
 	"github.com/serverkit/agent/internal/events"
 	"github.com/serverkit/agent/internal/gui"
 	"github.com/serverkit/agent/internal/ipc"
+	"github.com/serverkit/agent/internal/jobs"
 	"github.com/serverkit/agent/internal/logger"
 	"github.com/serverkit/agent/internal/metrics"
 	"github.com/serverkit/agent/internal/terminal"
@@ -54,6 +55,13 @@ type Agent struct {
 	sampler  *metricSampler
 	events   *events.Store
 	gui      *gui.SDK
+	jobs     *jobs.Registry
+
+	// pkgLock serializes package-manager mutations (install / remove /
+	// upgrade / update_cache) inside a single agent so two concurrent
+	// requests don't race on dpkg/rpm locks. Reads (list_installed,
+	// search, info) don't take the lock.
+	pkgLock sync.Mutex
 
 	// Active subscriptions
 	subscriptions map[string]context.CancelFunc
@@ -62,10 +70,24 @@ type Agent struct {
 	// Command handlers
 	handlers map[string]CommandHandler
 
-	// Capabilities probed once at startup. Sent to the panel each time
-	// the transport reconnects (so a panel restart picks them up
-	// without waiting for the agent to also restart).
+	// Capabilities probed at startup, refreshable via
+	// agent:recapabilities. Sent to the panel each time the transport
+	// reconnects (so a panel restart picks them up without waiting for
+	// the agent to also restart). capMu guards reads/writes during a
+	// re-probe so we don't ship a half-mutated payload.
 	capabilities protocol.CapabilitiesMessage
+	capMu        sync.Mutex
+	reprobing    bool
+
+	// sudoMode is the agent's privilege-escalation mode (root /
+	// passwordless / unavailable). Probed once at startup; if the user
+	// adds sudoers config later, agent:recapabilities re-probes.
+	sudoMode SudoMode
+
+	// systemdJSON tracks whether `systemctl --output=json` is supported
+	// on this host (systemd >= 244). Probed lazily on first use.
+	systemdJSON     bool
+	systemdJSONOnce sync.Once
 
 	// Lifecycle tracking
 	startTime      time.Time
@@ -136,6 +158,7 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 		sampler:       newMetricSampler(300), // 5 min @ 1 Hz
 		events:        eventStore,
 		gui:           gui.New(log),
+		jobs:          jobs.NewRegistry(64),
 		subscriptions: make(map[string]context.CancelFunc),
 		handlers:      make(map[string]CommandHandler),
 		startTime:     time.Now(),
@@ -146,7 +169,7 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 	// every reconnect without re-probing. Docker availability is taken
 	// from whether NewClient succeeded above; the capability layer
 	// doesn't redo that work.
-	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	agent.capabilities = capabilities.Probe(
 		probeCtx,
 		log,
@@ -154,7 +177,11 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 		cfg.Features.FileAccess,
 		cfg.Security.AllowedPaths,
 	)
+	agent.sudoMode = probeSudoMode(probeCtx)
+	agent.capabilities.Sudo = string(agent.sudoMode)
+	agent.capabilities.ProbedAt = time.Now().UnixMilli()
 	probeCancel()
+	log.Info("Sudo probe complete", "mode", agent.sudoMode)
 
 	// Register command handlers
 	agent.registerHandlers()
@@ -178,24 +205,29 @@ func (a *Agent) registerHandlers() {
 	if a.docker != nil {
 		a.handlers[protocol.ActionDockerContainerList] = a.handleDockerContainerList
 		a.handlers[protocol.ActionDockerContainerInspect] = a.handleDockerContainerInspect
+		a.handlers[protocol.ActionDockerContainerCreate] = a.handleDockerContainerCreate
 		a.handlers[protocol.ActionDockerContainerStart] = a.handleDockerContainerStart
 		a.handlers[protocol.ActionDockerContainerStop] = a.handleDockerContainerStop
 		a.handlers[protocol.ActionDockerContainerRestart] = a.handleDockerContainerRestart
 		a.handlers[protocol.ActionDockerContainerRemove] = a.handleDockerContainerRemove
 		a.handlers[protocol.ActionDockerContainerStats] = a.handleDockerContainerStats
 		a.handlers[protocol.ActionDockerContainerLogs] = a.handleDockerContainerLogs
+		a.handlers[protocol.ActionDockerContainerExec] = a.handleDockerContainerExec
 
 		// Docker image commands
 		a.handlers[protocol.ActionDockerImageList] = a.handleDockerImageList
 		a.handlers[protocol.ActionDockerImagePull] = a.handleDockerImagePull
 		a.handlers[protocol.ActionDockerImageRemove] = a.handleDockerImageRemove
+		a.handlers[protocol.ActionDockerImageBuild] = a.handleDockerImageBuild
 
 		// Docker volume commands
 		a.handlers[protocol.ActionDockerVolumeList] = a.handleDockerVolumeList
+		a.handlers[protocol.ActionDockerVolumeCreate] = a.handleDockerVolumeCreate
 		a.handlers[protocol.ActionDockerVolumeRemove] = a.handleDockerVolumeRemove
 
 		// Docker network commands
 		a.handlers[protocol.ActionDockerNetworkList] = a.handleDockerNetworkList
+		a.handlers[protocol.ActionDockerNetworkCreate] = a.handleDockerNetworkCreate
 		a.handlers[protocol.ActionDockerNetworkRemove] = a.handleDockerNetworkRemove
 
 		// Docker compose commands
@@ -256,16 +288,26 @@ func (a *Agent) registerHandlers() {
 	a.handlers[protocol.ActionPackagesInstall] = a.handlePackagesInstall
 	a.handlers[protocol.ActionPackagesRemove] = a.handlePackagesRemove
 	a.handlers[protocol.ActionPackagesListInstalled] = a.handlePackagesListInstalled
+	a.handlers[protocol.ActionPackagesUpdateCache] = a.handlePackagesUpdateCache
+	a.handlers[protocol.ActionPackagesInstallAsync] = a.handlePackagesInstallAsync
+	a.handlers[protocol.ActionPackagesUpgrade] = a.handlePackagesUpgrade
+	a.handlers[protocol.ActionPackagesSearch] = a.handlePackagesSearch
+	a.handlers[protocol.ActionPackagesInfo] = a.handlePackagesInfo
 	a.handlers[protocol.ActionSystemdStatus] = a.handleSystemdStatus
 	a.handlers[protocol.ActionSystemdStart] = a.handleSystemdStart
 	a.handlers[protocol.ActionSystemdStop] = a.handleSystemdStop
 	a.handlers[protocol.ActionSystemdRestart] = a.handleSystemdRestart
 	a.handlers[protocol.ActionSystemdEnable] = a.handleSystemdEnable
 	a.handlers[protocol.ActionSystemdDisable] = a.handleSystemdDisable
+	a.handlers[protocol.ActionSystemdDaemonReload] = a.handleSystemdDaemonReload
+	a.handlers[protocol.ActionSystemdListUnits] = a.handleSystemdListUnits
+	a.handlers[protocol.ActionSystemdLogs] = a.handleSystemdLogs
+	a.handlers[protocol.ActionSystemdLogsFollow] = a.handleSystemdLogsFollow
 	a.handlers[protocol.ActionSystemExec] = a.handleSystemExec
 
 	// Agent commands
 	a.handlers[protocol.ActionAgentUpdate] = a.handleAgentUpdate
+	a.handlers[protocol.ActionAgentRecapabilities] = a.handleAgentRecapabilities
 
 	// GUI SDK — primitives that panel extensions (serverkit-gui, etc.)
 	// compose into desktop-streaming or synthetic-UI features. Always
@@ -490,22 +532,30 @@ func (a *Agent) connectionWatcher(ctx context.Context) {
 // metadata; missing ones just mean an agent doesn't show up in feature
 // pickers until the next reconnect.
 func (a *Agent) sendCapabilities() {
+	a.capMu.Lock()
+	caps := a.capabilities
+	a.capMu.Unlock()
 	msg := protocol.CapabilitiesMessage{
-		Message:       protocol.NewMessage(protocol.TypeCapabilities, auth.GenerateNonce()),
-		Capabilities:  a.capabilities.Capabilities,
-		Platform:      a.capabilities.Platform,
-		Distro:        a.capabilities.Distro,
-		DistroVersion: a.capabilities.DistroVersion,
-		Runtimes:      a.capabilities.Runtimes,
-		AllowedPaths:  a.capabilities.AllowedPaths,
+		Message:         protocol.NewMessage(protocol.TypeCapabilities, auth.GenerateNonce()),
+		Capabilities:    caps.Capabilities,
+		Platform:        caps.Platform,
+		Distro:          caps.Distro,
+		DistroVersion:   caps.DistroVersion,
+		Runtimes:        caps.Runtimes,
+		AllowedPaths:    caps.AllowedPaths,
+		Sudo:            caps.Sudo,
+		RuntimeManagers: caps.RuntimeManagers,
+		SystemdJSON:     caps.SystemdJSON,
+		ProbedAt:        caps.ProbedAt,
 	}
 	if err := a.ws.Send(msg); err != nil {
 		a.log.Warn("Failed to send capabilities", "error", err)
 		return
 	}
 	a.log.Debug("Sent capabilities to panel",
-		"platform", a.capabilities.Platform,
-		"distro", a.capabilities.Distro,
+		"platform", caps.Platform,
+		"distro", caps.Distro,
+		"sudo", caps.Sudo,
 	)
 }
 
@@ -638,6 +688,20 @@ func (a *Agent) handleSubscribe(data []byte) {
 	}
 
 	a.log.Info("Subscribing to channel", "channel", sub.Channel)
+
+	// Replay any buffered events for job channels so a panel that
+	// subscribed mid-flight (or just after the job finished) still sees
+	// the full progress history. Replay before installing the
+	// subscription record so a brand-new "live" event can't get
+	// interleaved before the replay.
+	if job := a.jobs.LookupByChannel(sub.Channel); job != nil {
+		for _, ev := range job.Replay() {
+			if err := a.ws.SendStream(sub.Channel, ev); err != nil {
+				a.log.Warn("Failed to replay job event", "channel", sub.Channel, "error", err)
+				break
+			}
+		}
+	}
 
 	// Create cancellable context for this subscription
 	ctx, cancel := context.WithCancel(context.Background())

@@ -179,6 +179,25 @@ type CapabilitiesMessage struct {
 	// panel's file manager can render the available browse roots without
 	// guessing. Empty/missing => the panel must hide remote file features.
 	AllowedPaths []string `json:"allowed_paths,omitempty"`
+	// Sudo describes how the agent escalates privileges for handlers
+	// that need root (systemd, packages). Values: "root" (already root),
+	// "passwordless" (sudo -n works), "unavailable" (no escalation —
+	// privileged handlers will fail). Empty/missing means the panel
+	// should treat it as "unavailable" for safety.
+	Sudo string `json:"sudo,omitempty"`
+	// RuntimeManagers reports which version manager (if any) is
+	// installed for each runtime, e.g. {"python": "pyenv"} on Linux or
+	// {"python": "pyenv-win"} on Windows. Empty/missing key means no
+	// manager installed; the panel can offer the bootstrap action.
+	RuntimeManagers map[string]string `json:"runtime_managers,omitempty"`
+	// SystemdJSON indicates whether `systemctl --output=json` is
+	// supported (systemd >= 244). When false, list_units falls back to
+	// parsing the plain --no-legend table.
+	SystemdJSON bool `json:"systemd_json,omitempty"`
+	// ProbedAt is the unix milliseconds timestamp when the capabilities
+	// payload was computed. Lets the panel distinguish a fresh re-probe
+	// from a cached set replayed on reconnect.
+	ProbedAt int64 `json:"probed_at,omitempty"`
 }
 
 // SystemInfo contains detailed system information
@@ -244,18 +263,50 @@ const (
 	// Linux-only; the agent picks the right manager (apt/dnf/apk/…)
 	// based on what's on PATH. Calls are idempotent — installing an
 	// already-installed package is a no-op success.
+	//
+	// Install/Upgrade are long-running and stream progress on the
+	// returned job channel ("job:<id>") rather than blocking — the
+	// command result returns {job_id, channel} immediately.
 	ActionPackagesInstall       = "packages:install"
 	ActionPackagesRemove        = "packages:remove"
 	ActionPackagesListInstalled = "packages:list_installed"
+	ActionPackagesUpdateCache   = "packages:update_cache"
+	// ActionPackagesInstallAsync is the streaming variant of
+	// ActionPackagesInstall: takes names[] (and/or a single name),
+	// returns {job_id, channel} immediately, and emits per-line install
+	// progress on the channel. Use this for the Packages tab UI; the
+	// synchronous variant is retained for the workflow engine's
+	// agent_command nodes which expect a structured result.
+	ActionPackagesInstallAsync = "packages:install_async"
+	ActionPackagesUpgrade      = "packages:upgrade"
+	ActionPackagesSearch       = "packages:search"
+	ActionPackagesInfo         = "packages:info"
 
 	// Systemd unit actions. Linux-only and require systemd as PID 1
 	// (the capability probe already gates this).
-	ActionSystemdStatus  = "systemd:status"
-	ActionSystemdStart   = "systemd:start"
-	ActionSystemdStop    = "systemd:stop"
-	ActionSystemdRestart = "systemd:restart"
-	ActionSystemdEnable  = "systemd:enable"
-	ActionSystemdDisable = "systemd:disable"
+	ActionSystemdStatus       = "systemd:status"
+	ActionSystemdStart        = "systemd:start"
+	ActionSystemdStop         = "systemd:stop"
+	ActionSystemdRestart      = "systemd:restart"
+	ActionSystemdEnable       = "systemd:enable"
+	ActionSystemdDisable      = "systemd:disable"
+	ActionSystemdDaemonReload = "systemd:daemon_reload"
+	ActionSystemdListUnits    = "systemd:list_units"
+	ActionSystemdLogs         = "systemd:logs"
+	ActionSystemdLogsFollow   = "systemd:logs_follow"
+
+	// Runtime version managers (Phase 5). Currently scoped to Python
+	// via pyenv on Linux and pyenv-win on Windows. Install/Bootstrap
+	// stream on a job channel like packages.
+	ActionRuntimesList            = "runtimes:list"
+	ActionRuntimesPyenvBootstrap  = "runtimes:pyenv:bootstrap"
+	ActionRuntimesPythonInstalled = "runtimes:python:installed"
+	ActionRuntimesPythonAvailable = "runtimes:python:available"
+	ActionRuntimesPythonInstall   = "runtimes:python:install"
+	ActionRuntimesPythonUninstall = "runtimes:python:uninstall"
+	ActionRuntimesPythonSetGlobal = "runtimes:python:set_global"
+	ActionRuntimesPythonSetLocal  = "runtimes:python:set_local"
+	ActionRuntimesPythonCurrent   = "runtimes:python:current"
 
 	// Cron actions — manage entries in the agent host's user crontab.
 	// Linux-only; non-Linux agents return an "unsupported" error.
@@ -288,7 +339,8 @@ const (
 	ActionTerminalClose  = "terminal:close"
 
 	// Agent actions
-	ActionAgentUpdate = "agent:update"
+	ActionAgentUpdate         = "agent:update"
+	ActionAgentRecapabilities = "agent:recapabilities"
 
 	// GUI / desktop capture actions. These are the agent-side primitives
 	// that panel extensions (e.g. serverkit-gui) call into. Implementation
@@ -305,6 +357,15 @@ const (
 	ChannelContainerLogs  = "container:%s:logs"
 	ChannelContainerStats = "container:%s:stats"
 	ChannelTerminal       = "terminal:%s"
+	// ChannelSystemdLogs streams journalctl -fu <unit> events. Lifecycle
+	// mirrors ChannelContainerLogs: subscribe starts the follow, unsubscribe
+	// (or socket close) stops it.
+	ChannelSystemdLogs = "systemd:%s:logs"
+	// ChannelJob is used for long-running operations (package install,
+	// image build, pyenv install) that return {job_id, channel} from
+	// their command result and stream progress events on the channel.
+	// Late subscribers receive a replay of the last N buffered events.
+	ChannelJob = "job:%s"
 )
 
 // CredentialUpdateMessage is sent by server to rotate credentials

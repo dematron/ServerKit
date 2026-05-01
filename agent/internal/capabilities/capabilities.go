@@ -283,3 +283,14 @@ func hasOnPath(name string) bool {
 }
 
 var pathCache sync.Map
+
+// ClearPathCache empties the binary-on-PATH cache. Called by agent:
+// recapabilities so a binary that was installed since the last probe
+// (e.g. the user just ran apt install nginx) is detected fresh
+// instead of returning the stale "not found" result.
+func ClearPathCache() {
+	pathCache.Range(func(k, _ interface{}) bool {
+		pathCache.Delete(k)
+		return true
+	})
+}

@@ -270,6 +270,12 @@ func (a *Agent) handleSystemdStatus(ctx context.Context, params json.RawMessage)
 	}, nil
 }
 
+// systemdMutateTimeout is the per-action timeout for state-changing
+// systemctl calls (start/stop/restart/enable/disable). Cold service
+// starts (postgresql, mongodb) routinely take 30-90s, so the original
+// 30s ceiling was too tight; bump to 2 minutes.
+const systemdMutateTimeout = 2 * time.Minute
+
 func (a *Agent) handleSystemdStart(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	if err := systemctlAvailable(); err != nil {
 		return nil, err
@@ -278,7 +284,10 @@ func (a *Agent) handleSystemdStart(ctx context.Context, params json.RawMessage) 
 	if err != nil {
 		return nil, err
 	}
-	if out, err := runSystemctl(ctx, "start", unit); err != nil {
+	if out, err := a.runSystemctlPrivileged(ctx, systemdMutateTimeout, "start", unit); err != nil {
+		if classifySudoError(out) {
+			return nil, fmt.Errorf("sudo refused: %w", errSudoRequired)
+		}
 		return nil, fmt.Errorf("systemctl start %s: %w (%s)", unit, err, out)
 	}
 	return map[string]interface{}{"unit": unit, "action": "started"}, nil
@@ -292,7 +301,10 @@ func (a *Agent) handleSystemdStop(ctx context.Context, params json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
-	if out, err := runSystemctl(ctx, "stop", unit); err != nil {
+	if out, err := a.runSystemctlPrivileged(ctx, systemdMutateTimeout, "stop", unit); err != nil {
+		if classifySudoError(out) {
+			return nil, fmt.Errorf("sudo refused: %w", errSudoRequired)
+		}
 		return nil, fmt.Errorf("systemctl stop %s: %w (%s)", unit, err, out)
 	}
 	return map[string]interface{}{"unit": unit, "action": "stopped"}, nil
@@ -306,7 +318,10 @@ func (a *Agent) handleSystemdRestart(ctx context.Context, params json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	if out, err := runSystemctl(ctx, "restart", unit); err != nil {
+	if out, err := a.runSystemctlPrivileged(ctx, systemdMutateTimeout, "restart", unit); err != nil {
+		if classifySudoError(out) {
+			return nil, fmt.Errorf("sudo refused: %w", errSudoRequired)
+		}
 		return nil, fmt.Errorf("systemctl restart %s: %w (%s)", unit, err, out)
 	}
 	return map[string]interface{}{"unit": unit, "action": "restarted"}, nil
@@ -320,7 +335,10 @@ func (a *Agent) handleSystemdEnable(ctx context.Context, params json.RawMessage)
 	if err != nil {
 		return nil, err
 	}
-	if out, err := runSystemctl(ctx, "enable", unit); err != nil {
+	if out, err := a.runSystemctlPrivileged(ctx, systemdMutateTimeout, "enable", unit); err != nil {
+		if classifySudoError(out) {
+			return nil, fmt.Errorf("sudo refused: %w", errSudoRequired)
+		}
 		return nil, fmt.Errorf("systemctl enable %s: %w (%s)", unit, err, out)
 	}
 	return map[string]interface{}{"unit": unit, "action": "enabled"}, nil
@@ -334,7 +352,10 @@ func (a *Agent) handleSystemdDisable(ctx context.Context, params json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	if out, err := runSystemctl(ctx, "disable", unit); err != nil {
+	if out, err := a.runSystemctlPrivileged(ctx, systemdMutateTimeout, "disable", unit); err != nil {
+		if classifySudoError(out) {
+			return nil, fmt.Errorf("sudo refused: %w", errSudoRequired)
+		}
 		return nil, fmt.Errorf("systemctl disable %s: %w (%s)", unit, err, out)
 	}
 	return map[string]interface{}{"unit": unit, "action": "disabled"}, nil

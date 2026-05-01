@@ -887,44 +887,36 @@ function Git() {
                                                 </div>
                                             </div>
 
-                                            <div className="repo-detail-tabs">
-                                                <button
-                                                    className={`tab ${repoDetailTab === 'files' ? 'active' : ''}`}
-                                                    onClick={() => setRepoDetailTab('files')}
-                                                >
-                                                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
-                                                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                                                    </svg>
-                                                    Files
-                                                </button>
-                                                <button
-                                                    className={`tab ${repoDetailTab === 'commits' ? 'active' : ''}`}
-                                                    onClick={() => setRepoDetailTab('commits')}
-                                                >
-                                                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
-                                                        <circle cx="12" cy="12" r="4"/>
-                                                        <line x1="1.05" y1="12" x2="7" y2="12"/>
-                                                        <line x1="17.01" y1="12" x2="22.96" y2="12"/>
-                                                    </svg>
-                                                    Commits ({commits.length})
-                                                </button>
-                                                <button
-                                                    className={`tab ${repoDetailTab === 'branches' ? 'active' : ''}`}
-                                                    onClick={() => setRepoDetailTab('branches')}
-                                                >
-                                                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
-                                                        <line x1="6" y1="3" x2="6" y2="15"/>
-                                                        <circle cx="18" cy="6" r="3"/>
-                                                        <circle cx="6" cy="18" r="3"/>
-                                                        <path d="M18 9a9 9 0 0 1-9 9"/>
-                                                    </svg>
-                                                    Branches ({branches.length})
-                                                </button>
-                                            </div>
+                                            <Tabs value={repoDetailTab} onValueChange={setRepoDetailTab}>
+                                                <TabsList>
+                                                    <TabsTrigger value="files">
+                                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                                                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                                                        </svg>
+                                                        Files
+                                                    </TabsTrigger>
+                                                    <TabsTrigger value="commits">
+                                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                                                            <circle cx="12" cy="12" r="4"/>
+                                                            <line x1="1.05" y1="12" x2="7" y2="12"/>
+                                                            <line x1="17.01" y1="12" x2="22.96" y2="12"/>
+                                                        </svg>
+                                                        Commits ({commits.length})
+                                                    </TabsTrigger>
+                                                    <TabsTrigger value="branches">
+                                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                                                            <line x1="6" y1="3" x2="6" y2="15"/>
+                                                            <circle cx="18" cy="6" r="3"/>
+                                                            <circle cx="6" cy="18" r="3"/>
+                                                            <path d="M18 9a9 9 0 0 1-9 9"/>
+                                                        </svg>
+                                                        Branches ({branches.length})
+                                                    </TabsTrigger>
+                                                </TabsList>
 
-                                            <div className="repo-detail-content">
-                                                {repoDetailTab === 'files' && (
-                                                    <div className="files-browser">
+                                                <div className="repo-detail-content">
+                                                    <TabsContent value="files">
+                                                        <div className="files-browser">
                                                         {currentPath && (
                                                             <div className="breadcrumb">
                                                                 <button onClick={() => navigateToPath('')}>
@@ -984,11 +976,11 @@ function Git() {
                                                                     </div>
                                                                 ))}
                                                         </div>
-                                                    </div>
-                                                )}
+                                                        </div>
+                                                    </TabsContent>
 
-                                                {repoDetailTab === 'commits' && (
-                                                    <div className="commits-list">
+                                                    <TabsContent value="commits">
+                                                        <div className="commits-list">
                                                         {commits.map((commit) => (
                                                             <div key={commit.sha} className="commit-item">
                                                                 <div className="commit-info">
@@ -1014,11 +1006,11 @@ function Git() {
                                                                 Load More
                                                             </Button>
                                                         )}
-                                                    </div>
-                                                )}
+                                                        </div>
+                                                    </TabsContent>
 
-                                                {repoDetailTab === 'branches' && (
-                                                    <div className="branches-list">
+                                                    <TabsContent value="branches">
+                                                        <div className="branches-list">
                                                         {branches.map((branch) => (
                                                             <div
                                                                 key={branch.name}
@@ -1058,9 +1050,10 @@ function Git() {
                                                                 </Button>
                                                             </div>
                                                         ))}
-                                                    </div>
-                                                )}
-                                            </div>
+                                                        </div>
+                                                    </TabsContent>
+                                                </div>
+                                            </Tabs>
                                         </div>
                                     )}
                                 </div>

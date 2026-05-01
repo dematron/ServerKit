@@ -66,6 +66,55 @@
     min-height: 400px;
 }
 
+// Overflow popover (added when tab strip can't fit)
+.tabs-overflow-trigger {
+    padding-left: $space-3;
+    padding-right: $space-3;
+    flex-shrink: 0;
+
+    &[data-state="open"] {
+        color: $accent-primary;
+    }
+}
+
+.tabs-overflow-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tabs-overflow-item {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    padding: $space-2 $space-3;
+    background: none;
+    border: none;
+    color: $text-secondary;
+    font-size: $font-size-base;
+    font-weight: $font-weight-medium;
+    text-align: left;
+    cursor: pointer;
+    border-radius: $radius-sm;
+    width: 100%;
+    @include transition();
+
+    &:hover {
+        background: $bg-hover;
+        color: $text-primary;
+    }
+
+    &[data-state="active"] {
+        color: $accent-primary;
+        background: $bg-hover;
+    }
+
+    &:focus-visible {
+        outline: 2px solid $accent-primary;
+        outline-offset: -2px;
+    }
+}
+
 // tabs-nav variant (used by Servers, Domains, etc.)
 .tabs-nav {
     display: flex;

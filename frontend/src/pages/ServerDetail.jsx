@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 const ServerDetail = () => {
     const { id, tab } = useParams();
@@ -24,7 +25,7 @@ const ServerDetail = () => {
     const [showTokenModal, setShowTokenModal] = useState(false);
     const toast = useToast();
 
-    const validTabs = ['overview', 'docker', 'metrics', 'settings'];
+    const validTabs = ['overview', 'docker', 'cron', 'metrics', 'settings'];
     const activeTab = validTabs.includes(tab) ? tab : 'overview';
 
     const loadServer = useCallback(async () => {
@@ -158,9 +159,14 @@ const ServerDetail = () => {
         );
     }
 
+    // Show the cron tab only when the agent reported the capability.
+    // Older agents (pre-1.6.16) and Windows hosts won't have it set —
+    // hiding the tab matches the rest of the panel's "don't expose what
+    // the host can't do" behaviour.
     const tabs = [
         { id: 'overview', label: 'Overview' },
         { id: 'docker', label: 'Docker' },
+        ...(server.capabilities?.cron ? [{ id: 'cron', label: 'Cron' }] : []),
         { id: 'metrics', label: 'Metrics' },
         { id: 'settings', label: 'Settings' }
     ];
@@ -225,41 +231,47 @@ const ServerDetail = () => {
                 </div>
             </header>
 
-            <div className="server-detail-tabs">
-                {tabs.map(t => (
-                    <button
-                        key={t.id}
-                        className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
-                        onClick={() => navigate(t.id === 'overview' ? `/servers/${id}` : `/servers/${id}/${t.id}`, { replace: true })}
-                    >
-                        {t.label}
-                    </button>
-                ))}
-            </div>
+            <Tabs
+                value={activeTab}
+                onValueChange={(value) =>
+                    navigate(value === 'overview' ? `/servers/${id}` : `/servers/${id}/${value}`, { replace: true })
+                }
+            >
+                <TabsList>
+                    {tabs.map(t => (
+                        <TabsTrigger key={t.id} value={t.id}>{t.label}</TabsTrigger>
+                    ))}
+                </TabsList>
 
-            <div className="server-detail-content">
-                {activeTab === 'overview' && (
-                    <OverviewTab
-                        server={server}
-                        metrics={metrics}
-                        systemInfo={systemInfo}
-                    />
-                )}
-                {activeTab === 'docker' && (
-                    <DockerTab serverId={id} serverStatus={server.status} />
-                )}
-                {activeTab === 'metrics' && (
-                    <MetricsTab serverId={id} metrics={metrics} />
-                )}
-                {activeTab === 'settings' && (
-                    <SettingsTab
-                        server={server}
-                        onUpdate={loadServer}
-                        onRegenerateToken={handleRegenerateToken}
-                        onDelete={handleDeleteServer}
-                    />
-                )}
-            </div>
+                <div className="server-detail-content">
+                    <TabsContent value="overview">
+                        <OverviewTab
+                            server={server}
+                            metrics={metrics}
+                            systemInfo={systemInfo}
+                        />
+                    </TabsContent>
+                    <TabsContent value="docker">
+                        <DockerTab serverId={id} serverStatus={server.status} />
+                    </TabsContent>
+                    {server.capabilities?.cron && (
+                        <TabsContent value="cron">
+                            <CronTab serverId={id} serverStatus={server.status} />
+                        </TabsContent>
+                    )}
+                    <TabsContent value="metrics">
+                        <MetricsTab serverId={id} metrics={metrics} />
+                    </TabsContent>
+                    <TabsContent value="settings">
+                        <SettingsTab
+                            server={server}
+                            onUpdate={loadServer}
+                            onRegenerateToken={handleRegenerateToken}
+                            onDelete={handleDeleteServer}
+                        />
+                    </TabsContent>
+                </div>
+            </Tabs>
 
             {showTokenModal && server && (
                 <TokenModal
@@ -598,6 +610,293 @@ const DockerTab = ({ serverId, serverStatus }) => {
                 variant={confirmDockerState.variant}
                 onConfirm={handleDockerConfirm}
                 onCancel={handleDockerCancel}
+            />
+        </div>
+    );
+};
+
+const PRESET_LABELS = {
+    '* * * * *': 'Every minute',
+    '*/5 * * * *': 'Every 5 minutes',
+    '*/15 * * * *': 'Every 15 minutes',
+    '*/30 * * * *': 'Every 30 minutes',
+    '0 * * * *': 'Hourly',
+    '0 0 * * *': 'Daily at midnight',
+    '0 12 * * *': 'Daily at noon',
+    '0 0 * * 0': 'Weekly (Sunday)',
+    '0 0 1 * *': 'Monthly (1st)',
+};
+
+const CronTab = ({ serverId, serverStatus }) => {
+    const toast = useToast();
+    const { confirm: confirmCron, confirmState: confirmCronState, handleConfirm: handleCronConfirm, handleCancel: handleCronCancel } = useConfirm();
+    const [status, setStatus] = useState(null);
+    const [jobs, setJobs] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const [showAddModal, setShowAddModal] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
+    const [form, setForm] = useState({
+        name: '',
+        schedule: '0 * * * *',
+        command: '',
+    });
+
+    const loadJobs = useCallback(async () => {
+        try {
+            const data = await api.getRemoteCronJobs(serverId);
+            setJobs(data?.jobs || []);
+            setError(null);
+        } catch (err) {
+            setError(err.message || 'Failed to load cron jobs');
+        }
+    }, [serverId]);
+
+    const loadStatus = useCallback(async () => {
+        try {
+            const s = await api.getRemoteCronStatus(serverId);
+            setStatus(s);
+        } catch (err) {
+            // Non-critical — log but don't block the table.
+            console.error('Failed to load cron status:', err);
+        }
+    }, [serverId]);
+
+    useEffect(() => {
+        if (serverStatus !== 'online') {
+            setLoading(false);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            await Promise.all([loadJobs(), loadStatus()]);
+            if (!cancelled) setLoading(false);
+        })();
+        return () => { cancelled = true; };
+    }, [serverStatus, loadJobs, loadStatus]);
+
+    async function handleToggle(job) {
+        try {
+            await api.toggleRemoteCronJob(serverId, job.id, !job.enabled);
+            toast.success(`Job ${!job.enabled ? 'enabled' : 'disabled'}`);
+            loadJobs();
+        } catch (err) {
+            toast.error(err.message || 'Failed to toggle job');
+        }
+    }
+
+    async function handleRemove(job) {
+        const ok = await confirmCron({
+            title: 'Remove Cron Job',
+            message: `Remove this entry from the host crontab?\n\n${job.schedule} ${job.command}`,
+            variant: 'danger',
+        });
+        if (!ok) return;
+        try {
+            await api.removeRemoteCronJob(serverId, job.id);
+            toast.success('Cron job removed');
+            loadJobs();
+        } catch (err) {
+            toast.error(err.message || 'Failed to remove job');
+        }
+    }
+
+    async function handleSubmit(e) {
+        e.preventDefault();
+        if (!form.command.trim()) {
+            toast.error('Command is required');
+            return;
+        }
+        if (!form.schedule.trim()) {
+            toast.error('Schedule is required');
+            return;
+        }
+        setSubmitting(true);
+        try {
+            await api.addRemoteCronJob(serverId, {
+                name: form.name.trim(),
+                schedule: form.schedule.trim(),
+                command: form.command.trim(),
+            });
+            toast.success('Cron job added');
+            setShowAddModal(false);
+            setForm({ name: '', schedule: '0 * * * *', command: '' });
+            loadJobs();
+        } catch (err) {
+            toast.error(err.message || 'Failed to add cron job');
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    if (serverStatus !== 'online') {
+        return (
+            <div className="offline-notice">
+                <OfflineIcon />
+                <h4>Server Offline</h4>
+                <p>Cron management requires the server to be online.</p>
+            </div>
+        );
+    }
+
+    if (loading) {
+        return <div className="loading">Loading cron jobs...</div>;
+    }
+
+    return (
+        <div className="cron-tab">
+            <div className="cron-tab__header">
+                <div className="cron-tab__status">
+                    {status?.available === false ? (
+                        <Badge variant="warning">cron not available: {status.reason || 'unknown'}</Badge>
+                    ) : status?.running === false ? (
+                        <Badge variant="warning">cron daemon not running</Badge>
+                    ) : (
+                        <Badge variant="success">cron daemon active{status?.daemon ? ` (${status.daemon})` : ''}</Badge>
+                    )}
+                    <span className="cron-tab__count">{jobs.length} job{jobs.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="cron-tab__actions">
+                    <Button variant="outline" onClick={loadJobs}>Refresh</Button>
+                    <Button onClick={() => setShowAddModal(true)} disabled={status?.available === false}>
+                        Add Job
+                    </Button>
+                </div>
+            </div>
+
+            {error && (
+                <div className="alert alert-danger">{error}</div>
+            )}
+
+            {jobs.length === 0 ? (
+                <div className="empty-list">
+                    No cron jobs on this server. Click &quot;Add Job&quot; to schedule one.
+                </div>
+            ) : (
+                <table className="data-table">
+                    <thead>
+                        <tr>
+                            <th>Schedule</th>
+                            <th>Command</th>
+                            <th>Status</th>
+                            <th className="actions-cell">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {jobs.map(job => (
+                            <tr key={job.id} className={!job.enabled ? 'row-disabled' : ''}>
+                                <td>
+                                    <span className="mono" title={job.schedule}>{job.schedule}</span>
+                                    {job.description && job.description !== job.schedule && (
+                                        <div className="cron-tab__description">{job.description}</div>
+                                    )}
+                                </td>
+                                <td>
+                                    {job.name && <div className="cron-tab__name">{job.name}</div>}
+                                    <code className="cron-tab__command">{job.command}</code>
+                                </td>
+                                <td>
+                                    <span className={`status-pill ${job.enabled ? 'running' : 'stopped'}`}>
+                                        {job.enabled ? 'enabled' : 'disabled'}
+                                    </span>
+                                </td>
+                                <td className="actions-cell">
+                                    <button
+                                        className="btn-icon"
+                                        onClick={() => handleToggle(job)}
+                                        title={job.enabled ? 'Disable' : 'Enable'}
+                                    >
+                                        {job.enabled ? <StopIcon /> : <PlayIcon />}
+                                    </button>
+                                    <button
+                                        className="btn-icon danger"
+                                        onClick={() => handleRemove(job)}
+                                        title="Remove"
+                                    >
+                                        <TrashIcon />
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+
+            {showAddModal && (
+                <div className="modal-overlay" onClick={() => !submitting && setShowAddModal(false)}>
+                    <div className="modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>Add Cron Job</h3>
+                            <button className="modal-close" onClick={() => setShowAddModal(false)} disabled={submitting}>×</button>
+                        </div>
+                        <form onSubmit={handleSubmit}>
+                            <div className="modal-body">
+                                <div className="form-group">
+                                    <label htmlFor="cron-name">Name (optional)</label>
+                                    <Input
+                                        id="cron-name"
+                                        value={form.name}
+                                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                                        placeholder="Backup database"
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="cron-schedule">Schedule</label>
+                                    <select
+                                        className="form-control"
+                                        value={Object.keys(PRESET_LABELS).includes(form.schedule) ? form.schedule : 'custom'}
+                                        onChange={(e) => {
+                                            if (e.target.value === 'custom') return;
+                                            setForm({ ...form, schedule: e.target.value });
+                                        }}
+                                    >
+                                        {Object.entries(PRESET_LABELS).map(([cron, label]) => (
+                                            <option key={cron} value={cron}>{label} — {cron}</option>
+                                        ))}
+                                        <option value="custom">Custom…</option>
+                                    </select>
+                                    <Input
+                                        id="cron-schedule"
+                                        className="cron-tab__custom-schedule"
+                                        value={form.schedule}
+                                        onChange={(e) => setForm({ ...form, schedule: e.target.value })}
+                                        placeholder="* * * * *"
+                                    />
+                                    <p className="form-hint">5 fields: minute, hour, day, month, weekday.</p>
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="cron-command">Command</label>
+                                    <Textarea
+                                        id="cron-command"
+                                        rows={3}
+                                        value={form.command}
+                                        onChange={(e) => setForm({ ...form, command: e.target.value })}
+                                        placeholder="/usr/local/bin/my-script.sh"
+                                        required
+                                    />
+                                    <p className="form-hint">Absolute path. Shell operators (;, &&, |, $(), &gt;, &lt;) are not allowed.</p>
+                                </div>
+                            </div>
+                            <div className="modal-footer">
+                                <Button type="button" variant="outline" onClick={() => setShowAddModal(false)} disabled={submitting}>Cancel</Button>
+                                <Button type="submit" disabled={submitting}>{submitting ? 'Adding…' : 'Add Job'}</Button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            <ConfirmDialog
+                isOpen={confirmCronState.isOpen}
+                title={confirmCronState.title}
+                message={confirmCronState.message}
+                confirmText={confirmCronState.confirmText}
+                cancelText={confirmCronState.cancelText}
+                variant={confirmCronState.variant}
+                onConfirm={handleCronConfirm}
+                onCancel={handleCronCancel}
             />
         </div>
     );

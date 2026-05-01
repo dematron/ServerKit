@@ -228,6 +228,14 @@ const (
 	ActionSystemProcesses = "system:processes"
 	ActionSystemExec      = "system:exec"
 
+	// Cron actions — manage entries in the agent host's user crontab.
+	// Linux-only; non-Linux agents return an "unsupported" error.
+	ActionCronStatus = "cron:status"
+	ActionCronList   = "cron:list"
+	ActionCronAdd    = "cron:add"
+	ActionCronRemove = "cron:remove"
+	ActionCronToggle = "cron:toggle"
+
 	// File actions
 	ActionFileRead  = "file:read"
 	ActionFileWrite = "file:write"

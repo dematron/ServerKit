@@ -1212,6 +1212,81 @@
     overflow: hidden;
 }
 
+// Cron Tab — same shell as docker, with a header row for status + add.
+.cron-tab {
+    background: $bg-card;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-lg;
+    overflow: hidden;
+
+    &__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-4;
+        padding: $space-3 $space-4;
+        border-bottom: 1px solid $border-subtle;
+    }
+
+    &__status {
+        display: flex;
+        align-items: center;
+        gap: $space-3;
+    }
+
+    &__count {
+        color: $text-tertiary;
+        font-size: $font-size-sm;
+    }
+
+    &__actions {
+        display: flex;
+        gap: $space-2;
+    }
+
+    &__name {
+        color: $text-primary;
+        font-weight: $font-weight-medium;
+        margin-bottom: 2px;
+    }
+
+    &__command {
+        font-size: $font-size-xs;
+        color: $text-secondary;
+        word-break: break-all;
+    }
+
+    &__description {
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+        margin-top: 2px;
+    }
+
+    &__custom-schedule {
+        margin-top: $space-2;
+        font-family: $font-mono;
+    }
+
+    .data-table {
+        // Pull the table out of card padding — header row already
+        // anchors the visual edge on its own.
+        td, th {
+            padding-left: $space-4;
+            padding-right: $space-4;
+        }
+
+        .row-disabled td {
+            opacity: 0.6;
+        }
+    }
+
+    .empty-list {
+        padding: $space-6;
+        text-align: center;
+        color: $text-tertiary;
+    }
+}
+
 .docker-sub-tabs {
     display: flex;
     border-bottom: 1px solid $border-subtle;

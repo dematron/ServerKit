@@ -170,6 +170,35 @@ export async function getRemoteSystemInfo(serverId) {
     return this.request(`/servers/${serverId}/system/info`);
 }
 
+// Remote Cron Operations (via agent)
+export async function getRemoteCronStatus(serverId) {
+    return this.request(`/servers/${serverId}/cron/status`);
+}
+
+export async function getRemoteCronJobs(serverId) {
+    return this.request(`/servers/${serverId}/cron/jobs`);
+}
+
+export async function addRemoteCronJob(serverId, body) {
+    return this.request(`/servers/${serverId}/cron/jobs`, {
+        method: 'POST',
+        body
+    });
+}
+
+export async function removeRemoteCronJob(serverId, jobId) {
+    return this.request(`/servers/${serverId}/cron/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'DELETE'
+    });
+}
+
+export async function toggleRemoteCronJob(serverId, jobId, enabled) {
+    return this.request(`/servers/${serverId}/cron/jobs/${encodeURIComponent(jobId)}/toggle`, {
+        method: 'POST',
+        body: { enabled }
+    });
+}
+
 // Get available servers for Docker operations
 export async function getAvailableServers() {
     return this.request('/servers/available');

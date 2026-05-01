@@ -20,6 +20,7 @@ import (
 	"github.com/serverkit/agent/internal/auth"
 	"github.com/serverkit/agent/internal/capabilities"
 	"github.com/serverkit/agent/internal/config"
+	"github.com/serverkit/agent/internal/cron"
 	"github.com/serverkit/agent/internal/docker"
 	"github.com/serverkit/agent/internal/events"
 	"github.com/serverkit/agent/internal/gui"
@@ -46,6 +47,7 @@ type Agent struct {
 	docker   *docker.Client
 	metrics  *metrics.Collector
 	terminal *terminal.Manager
+	cron     cron.Manager
 	ipc      *ipc.Server
 	sampler  *metricSampler
 	events   *events.Store
@@ -127,6 +129,7 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 		docker:        dockerClient,
 		metrics:       metricsCollector,
 		terminal:      termManager,
+		cron:          cron.New(),
 		sampler:       newMetricSampler(300), // 5 min @ 1 Hz
 		events:        eventStore,
 		gui:           gui.New(log),
@@ -217,6 +220,15 @@ func (a *Agent) registerHandlers() {
 		a.handlers[protocol.ActionTerminalResize] = a.handleTerminalResize
 		a.handlers[protocol.ActionTerminalClose] = a.handleTerminalClose
 	}
+
+	// Cron commands — Linux-only, but registered unconditionally so a
+	// stub returns a clear error on Windows/macOS instead of "unknown
+	// action".
+	a.handlers[protocol.ActionCronStatus] = a.handleCronStatus
+	a.handlers[protocol.ActionCronList] = a.handleCronList
+	a.handlers[protocol.ActionCronAdd] = a.handleCronAdd
+	a.handlers[protocol.ActionCronRemove] = a.handleCronRemove
+	a.handlers[protocol.ActionCronToggle] = a.handleCronToggle
 
 	// Agent commands
 	a.handlers[protocol.ActionAgentUpdate] = a.handleAgentUpdate

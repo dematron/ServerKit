@@ -2139,3 +2139,89 @@ def get_server_diagnostics(server_id):
     if 'error' in diagnostics:
         return jsonify(diagnostics), 404
     return jsonify(diagnostics)
+
+
+# ==================== Remote Cron Operations ====================
+#
+# Endpoints under /servers/<id>/cron/ proxy to the agent's cron:*
+# command handlers. They mirror the panel-local /api/v1/cron/* surface
+# (CronService) but target a remote host. The agent owns validation and
+# crontab IO; this layer is just transport.
+
+from app.services.remote_cron_service import RemoteCronService
+
+
+def _agent_result(result, ok_status=200, missing_status=503):
+    """Translate an agent_registry.send_command result into an HTTP
+    response. AGENT_OFFLINE → 503; other failures → 500; success → ok."""
+    if not result.get('success'):
+        code = 500
+        if result.get('code') == 'AGENT_OFFLINE':
+            code = missing_status
+        elif result.get('code') == 'PERMISSION_DENIED':
+            code = 403
+        return jsonify(result), code
+    # Unwrap the agent's data payload so callers see the same shape as
+    # the local CronService responses.
+    data = result.get('data')
+    if isinstance(data, dict):
+        return jsonify(data), ok_status
+    return jsonify({'data': data, 'success': True}), ok_status
+
+
+@servers_bp.route('/<server_id>/cron/status', methods=['GET'])
+@jwt_required()
+def remote_cron_status(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteCronService.status(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cron/jobs', methods=['GET'])
+@jwt_required()
+def remote_cron_list(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteCronService.list_jobs(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cron/jobs', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_cron_add(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    schedule = (data.get('schedule') or '').strip()
+    command = (data.get('command') or '').strip()
+    if not schedule:
+        return jsonify({'error': 'schedule is required'}), 400
+    if not command:
+        return jsonify({'error': 'command is required'}), 400
+
+    result = RemoteCronService.add_job(
+        server_id, schedule, command,
+        name=data.get('name'),
+        description=data.get('description'),
+        user_id=user_id,
+    )
+    return _agent_result(result, ok_status=201)
+
+
+@servers_bp.route('/<server_id>/cron/jobs/<job_id>', methods=['DELETE'])
+@jwt_required()
+@developer_required
+def remote_cron_remove(server_id, job_id):
+    user_id = get_jwt_identity()
+    result = RemoteCronService.remove_job(server_id, job_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cron/jobs/<job_id>/toggle', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_cron_toggle(server_id, job_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get('enabled', True))
+    result = RemoteCronService.toggle_job(server_id, job_id, enabled, user_id=user_id)
+    return _agent_result(result)

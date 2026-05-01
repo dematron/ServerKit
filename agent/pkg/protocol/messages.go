@@ -33,6 +33,11 @@ const (
 	// System
 	TypeSystemInfo MessageType = "system_info"
 
+	// Capabilities — agent reports which feature surfaces it can drive
+	// (cron, docker, systemd, …) so the panel can gate target pickers
+	// without round-tripping each click.
+	TypeCapabilities MessageType = "capabilities"
+
 	// Discovery
 	TypeDiscovery        MessageType = "discovery"
 	TypeDiscoveryRequest MessageType = "discovery_request"
@@ -143,6 +148,26 @@ type ErrorMessage struct {
 type SystemInfoMessage struct {
 	Message
 	Info SystemInfo `json:"info"`
+}
+
+// Capabilities is a flat dict of feature → bool reported by the agent on
+// connect. The panel uses this to gate target pickers: an agent shows up
+// in the Cron page's picker only if Capabilities["cron"] is true.
+//
+// Format is intentionally a map[string]bool rather than a struct so new
+// keys can be added on the agent side and ignored by older panels (and
+// vice versa) without protocol breakage.
+type Capabilities map[string]bool
+
+// CapabilitiesMessage is sent by the agent to advertise which feature
+// surfaces it can drive. Panel echo-saves this on the in-memory
+// ConnectedAgent record.
+type CapabilitiesMessage struct {
+	Message
+	Capabilities  Capabilities `json:"capabilities"`
+	Platform      string       `json:"platform"`                 // "linux", "windows", "darwin"
+	Distro        string       `json:"distro,omitempty"`         // "ubuntu", "debian", "rhel", ...
+	DistroVersion string       `json:"distro_version,omitempty"` // "22.04"
 }
 
 // SystemInfo contains detailed system information

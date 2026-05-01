@@ -53,6 +53,10 @@ type Client struct {
 	hbMetrics *protocol.HeartbeatMetrics
 	// One-shot system info, sent on the first /poll after it's queued.
 	sysInfo  map[string]interface{}
+	// One-shot capabilities, sent on the first /poll after it's queued.
+	// Re-queued on every reconnect by agent.connectionWatcher so the
+	// panel's record stays current after a panel restart.
+	caps map[string]interface{}
 
 	baseURL string
 }
@@ -233,6 +237,10 @@ func (c *Client) pollOnce(ctx context.Context) error {
 		body["system_info"] = c.sysInfo
 		c.sysInfo = nil
 	}
+	if c.caps != nil {
+		body["capabilities"] = c.caps
+		c.caps = nil
+	}
 	c.hbMu.Unlock()
 
 	var resp struct {
@@ -319,6 +327,30 @@ func (c *Client) Send(msg interface{}) error {
 			c.hbMu.Unlock()
 			return nil
 		}
+	}
+	// Capabilities arrive as a typed struct (CapabilitiesMessage), not
+	// a map — round-trip through JSON to lift the inner fields out
+	// without growing this layer a Go-typed dependency on the
+	// protocol message shape.
+	if cm, ok := msg.(protocol.CapabilitiesMessage); ok {
+		buf, err := json.Marshal(cm)
+		if err != nil {
+			return err
+		}
+		var raw map[string]interface{}
+		if err := json.Unmarshal(buf, &raw); err != nil {
+			return err
+		}
+		// Strip the envelope (type/id/timestamp/signature) — the panel
+		// poll endpoint cares about the inner payload.
+		delete(raw, "type")
+		delete(raw, "id")
+		delete(raw, "timestamp")
+		delete(raw, "signature")
+		c.hbMu.Lock()
+		c.caps = raw
+		c.hbMu.Unlock()
+		return nil
 	}
 	c.log.Debug("Dropping unsupported Send in poll mode")
 	return nil

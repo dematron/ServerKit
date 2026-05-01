@@ -44,6 +44,15 @@ class ConnectedAgent:
     outbound_queue: Queue = field(default_factory=Queue)
     # Pending commands waiting for response
     pending_commands: Dict[str, 'PendingCommand'] = field(default_factory=dict)
+    # Feature surfaces the agent reported it can drive (cron, docker,
+    # systemd, …). Empty until the agent sends a `capabilities` event;
+    # older agents that don't speak the protocol leave this empty so
+    # they only show up as default-local in target pickers. The dict is
+    # forward-compatible: unknown keys are passed through verbatim.
+    capabilities: Dict[str, bool] = field(default_factory=dict)
+    platform: Optional[str] = None
+    distro: Optional[str] = None
+    distro_version: Optional[str] = None
 
 
 @dataclass
@@ -710,6 +719,67 @@ class AgentRegistry:
         # agent (Go) and backend sides.
 
         return server
+
+    # ==================== Capabilities ====================
+
+    def update_capabilities(self, server_id: str, payload: dict):
+        """Stash the capability map an agent reported on connect.
+
+        payload shape mirrors protocol.CapabilitiesMessage minus the
+        envelope:
+
+            {
+              "capabilities": {"docker": true, "cron": true, ...},
+              "platform": "linux",
+              "distro": "ubuntu",
+              "distro_version": "22.04"
+            }
+
+        Stored only on the in-memory ConnectedAgent — capabilities are
+        re-shipped on every reconnect, so persisting across panel
+        restarts isn't necessary. An older agent that never sends this
+        message simply has an empty capabilities dict and never shows
+        up in feature-gated target pickers.
+        """
+        if not isinstance(payload, dict):
+            return
+        caps = payload.get('capabilities') or {}
+        # Coerce values to bool — agents are trusted but defensive
+        # casting protects the API consumer (UI) from malformed types.
+        clean_caps = {str(k): bool(v) for k, v in caps.items() if isinstance(k, str)}
+
+        with self._lock:
+            agent = self._agents.get(server_id)
+            if not agent:
+                return
+            agent.capabilities = clean_caps
+            agent.platform = payload.get('platform') or None
+            agent.distro = payload.get('distro') or None
+            agent.distro_version = payload.get('distro_version') or None
+
+        logger.info(
+            "Capabilities updated for server %s: %s",
+            server_id,
+            sorted(k for k, v in clean_caps.items() if v),
+        )
+
+    def get_capabilities(self, server_id: str) -> Optional[Dict[str, bool]]:
+        """Return the capability map for a connected agent, or None if
+        the agent is not connected. Returns an empty dict if the agent
+        is connected but hasn't (yet) reported capabilities — that's a
+        valid state for older agents."""
+        with self._lock:
+            agent = self._agents.get(server_id)
+            if not agent:
+                return None
+            return dict(agent.capabilities)
+
+    def has_capability(self, server_id: str, feature: str) -> bool:
+        """Convenience: is the given feature reported as available?"""
+        caps = self.get_capabilities(server_id)
+        if not caps:
+            return False
+        return bool(caps.get(feature))
 
     # ==================== System Info ====================
 

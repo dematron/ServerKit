@@ -239,6 +239,10 @@ def create_app(config_name=None):
     from app.api.fleet_monitor import fleet_monitor_bp
     app.register_blueprint(fleet_monitor_bp, url_prefix='/api/v1/fleet-monitor')
 
+    # Register blueprints - Fleet (target picker, capability discovery)
+    from app.api.fleet import fleet_bp
+    app.register_blueprint(fleet_bp, url_prefix='/api/v1/fleet')
+
     # Register blueprints - Agent Plugins
     from app.api.agent_plugins import agent_plugins_bp
     app.register_blueprint(agent_plugins_bp, url_prefix='/api/v1/agent-plugins')

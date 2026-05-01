@@ -286,6 +286,14 @@ def get_server(server_id):
     agent = agent_registry.get_agent(server.id)
     result['is_connected'] = agent is not None
     result['transport'] = agent.transport if agent else None
+    # Capability map the agent advertised on connect; empty for older
+    # agents that don't speak the protocol yet. Consumers (UI target
+    # pickers, etc.) should treat missing keys as false.
+    result['capabilities'] = dict(agent.capabilities) if agent else {}
+    if agent:
+        result['platform'] = agent.platform
+        result['distro'] = agent.distro
+        result['distro_version'] = agent.distro_version
 
     return jsonify(result)
 

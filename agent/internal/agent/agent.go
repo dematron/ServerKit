@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/serverkit/agent/internal/auth"
+	"github.com/serverkit/agent/internal/capabilities"
 	"github.com/serverkit/agent/internal/config"
 	"github.com/serverkit/agent/internal/docker"
 	"github.com/serverkit/agent/internal/events"
@@ -54,6 +55,11 @@ type Agent struct {
 
 	// Command handlers
 	handlers map[string]CommandHandler
+
+	// Capabilities probed once at startup. Sent to the panel each time
+	// the transport reconnects (so a panel restart picks them up
+	// without waiting for the agent to also restart).
+	capabilities protocol.CapabilitiesMessage
 
 	// Lifecycle tracking
 	startTime      time.Time
@@ -126,6 +132,14 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 		startTime:     time.Now(),
 		restartCh:     make(chan struct{}),
 	}
+
+	// Probe capabilities up-front so connectionWatcher can ship them on
+	// every reconnect without re-probing. Docker availability is taken
+	// from whether NewClient succeeded above; the capability layer
+	// doesn't redo that work.
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	agent.capabilities = capabilities.Probe(probeCtx, log, dockerClient != nil)
+	probeCancel()
 
 	// Register command handlers
 	agent.registerHandlers()
@@ -378,6 +392,10 @@ func abs(x int64) int64 {
 // connectionWatcher polls the WS connection flag and emits Activity events
 // on each transition. Avoids dragging events.Store into the ws package or
 // adding a new callback API for one consumer.
+//
+// Also doubles as the "send capabilities on connect" hook: each time the
+// transport flips from down→up, we re-ship the capability map so the
+// panel's record stays current after a panel restart.
 func (a *Agent) connectionWatcher(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -398,6 +416,7 @@ func (a *Agent) connectionWatcher(ctx context.Context) {
 				a.events.Append(events.KindWSConnected, events.SeverityInfo,
 					"Connected to panel",
 					map[string]interface{}{"url": a.cfg.Server.URL})
+				a.sendCapabilities()
 			} else if prev {
 				// Only log disconnect after we'd previously been up — avoids
 				// a spurious "lost connection" on cold-start before the
@@ -408,6 +427,28 @@ func (a *Agent) connectionWatcher(ctx context.Context) {
 			prev = now
 		}
 	}
+}
+
+// sendCapabilities ships the cached capability probe to the panel.
+// Failures are logged and ignored — capabilities are best-effort
+// metadata; missing ones just mean an agent doesn't show up in feature
+// pickers until the next reconnect.
+func (a *Agent) sendCapabilities() {
+	msg := protocol.CapabilitiesMessage{
+		Message:       protocol.NewMessage(protocol.TypeCapabilities, auth.GenerateNonce()),
+		Capabilities:  a.capabilities.Capabilities,
+		Platform:      a.capabilities.Platform,
+		Distro:        a.capabilities.Distro,
+		DistroVersion: a.capabilities.DistroVersion,
+	}
+	if err := a.ws.Send(msg); err != nil {
+		a.log.Warn("Failed to send capabilities", "error", err)
+		return
+	}
+	a.log.Debug("Sent capabilities to panel",
+		"platform", a.capabilities.Platform,
+		"distro", a.capabilities.Distro,
+	)
 }
 
 // heartbeatLoop sends periodic heartbeats

@@ -228,6 +228,37 @@ class AgentNamespace(Namespace):
         info = data.get('info', {})
         agent_registry.update_system_info(agent.server_id, info)
 
+    def on_capabilities(self, data):
+        """
+        Handle agent capability advertisement.
+
+        Sent by the agent right after auth succeeds (and on every
+        reconnect). The payload tells the panel which feature surfaces
+        this agent can drive — cron, docker, systemd, etc. — and is
+        used to filter target pickers in the UI.
+
+        Expected data:
+        {
+            "type": "capabilities",
+            "capabilities": {"docker": true, "cron": true, ...},
+            "platform": "linux",
+            "distro": "ubuntu",
+            "distro_version": "22.04"
+        }
+        """
+        sid = request.sid
+        agent = agent_registry.get_agent_by_socket(sid)
+
+        if not agent:
+            emit('error', {
+                'type': 'error',
+                'code': 'NOT_AUTHENTICATED',
+                'message': 'Not authenticated'
+            })
+            return
+
+        agent_registry.update_capabilities(agent.server_id, data or {})
+
     def on_stream(self, data):
         """
         Handle streaming data from agent (logs, metrics).

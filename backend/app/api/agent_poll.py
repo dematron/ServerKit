@@ -104,10 +104,13 @@ def poll():
     body = request.get_json(silent=True) or {}
     metrics = body.get('metrics') or {}
     sysinfo = body.get('system_info')
+    caps = body.get('capabilities')
 
     agent_registry.update_heartbeat(agent.server_id, metrics)
     if sysinfo:
         agent_registry.update_system_info(agent.server_id, sysinfo)
+    if caps:
+        agent_registry.update_capabilities(agent.server_id, caps)
 
     # Long-poll up to 25s for any queued command. Below the typical
     # tunnel idle-timeout (Cloudflare ~100s, ngrok ~60s) so we never

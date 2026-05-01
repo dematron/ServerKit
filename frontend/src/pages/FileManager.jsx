@@ -1,36 +1,78 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { api } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import Spinner from '../components/Spinner';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { ProgressBar } from '../components/ProgressBar';
 import {
-    Folder, File, FileCode, FileText, FileImage, FileVideo, FileAudio,
-    FileArchive, Database, Terminal, Upload, FolderPlus, FilePlus,
-    ArrowLeft, Search, X, RefreshCw, Eye, EyeOff, Download, Edit3,
-    Trash2, Lock, BarChart3, ChevronDown, ChevronRight, HardDrive,
-    PieChart, Clock, PanelRightClose, PanelRightOpen
+    Folder, File, Upload, FolderPlus, FilePlus,
+    ArrowLeft, ArrowRight, ArrowUp, Search, X, RefreshCw, Eye, EyeOff,
+    Download, Edit3, Trash2, BarChart3, ChevronDown, ChevronRight,
+    HardDrive, PieChart, Clock, PanelLeftClose, PanelLeftOpen,
+    LayoutGrid, List, Home, CloudUpload, Star, StarOff,
+    Check, Copy, ArrowUpDown, ZoomIn, ZoomOut, Code2, FileJson,
+    Image as ImageIcon, Film, Music, Archive, FileType, FileText,
+    FolderTree as FolderTreeIcon, MousePointer2,
 } from 'lucide-react';
-import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-// LocalStorage keys
-const SIDEBAR_VISIBLE_KEY = 'serverkit-fm-sidebar';
-const DISK_COLLAPSED_KEY = 'serverkit-fm-disk-collapsed';
+import FolderTree from '../components/file-manager/FolderTree';
+import FileCard from '../components/file-manager/FileCard';
+import FileRow from '../components/file-manager/FileRow';
+import PreviewDrawer from '../components/file-manager/PreviewDrawer';
+import ContextMenu from '../components/file-manager/ContextMenu';
+import { TREE_ROOTS, DEFAULT_PINNED, getFileType, formatBytes } from '../components/file-manager/fileTypes';
+
+const STORAGE = {
+    sidebar: 'serverkit-fm-sidebar',
+    treeCollapsed: 'serverkit-fm-tree-collapsed',
+    quickCollapsed: 'serverkit-fm-quick-collapsed',
+    diskCollapsed: 'serverkit-fm-disk-collapsed',
+    expanded: 'serverkit-fm-tree-expanded',
+    viewMode: 'serverkit-fm-view-mode',
+    gridSize: 'serverkit-fm-grid-size',
+    sortBy: 'serverkit-fm-sort-by',
+    sortDir: 'serverkit-fm-sort-dir',
+    pinned: 'serverkit-fm-pinned',
+};
+
+const FILTER_CHIPS = [
+    { id: 'all', label: 'All', icon: FileType },
+    { id: 'folder', label: 'Folders', icon: Folder },
+    { id: 'image', label: 'Images', icon: ImageIcon },
+    { id: 'code', label: 'Code', icon: Code2 },
+    { id: 'text', label: 'Documents', icon: FileText },
+    { id: 'data', label: 'Data', icon: FileJson },
+    { id: 'video', label: 'Videos', icon: Film },
+    { id: 'audio', label: 'Audio', icon: Music },
+    { id: 'archive', label: 'Archives', icon: Archive },
+];
 
 function FileManager() {
+    // ─── core ────────────────────────────────────────────
     const [currentPath, setCurrentPath] = useState('/home');
     const [entries, setEntries] = useState([]);
     const [parentPath, setParentPath] = useState(null);
     const [loading, setLoading] = useState(true);
     const [showHidden, setShowHidden] = useState(false);
+
+    // ─── search ──────────────────────────────────────────
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState(null);
-    const [selectedFile, setSelectedFile] = useState(null);
+
+    // ─── selection ───────────────────────────────────────
+    const [selectedPaths, setSelectedPaths] = useState(new Set());
+    const [lastClickedPath, setLastClickedPath] = useState(null);
+    const [selectMode, setSelectMode] = useState(false);
+
+    // ─── preview ─────────────────────────────────────────
+    const [previewFile, setPreviewFile] = useState(null);
     const [fileContent, setFileContent] = useState('');
-    const [editingFile, setEditingFile] = useState(null);
+    const [editing, setEditing] = useState(false);
+
+    // ─── modals ──────────────────────────────────────────
     const [showNewFileModal, setShowNewFileModal] = useState(false);
     const [showNewFolderModal, setShowNewFolderModal] = useState(false);
     const [showRenameModal, setShowRenameModal] = useState(false);
@@ -41,48 +83,91 @@ function FileManager() {
     const [newName, setNewName] = useState('');
     const [permissionsTarget, setPermissionsTarget] = useState(null);
     const [newPermissions, setNewPermissions] = useState('');
-    const [uploadProgress, setUploadProgress] = useState(null);
     const [confirmDialog, setConfirmDialog] = useState(null);
-    const fileInputRef = useRef(null);
-    const toast = useToast();
 
-    // Sidebar and disk usage state
+    // ─── upload ──────────────────────────────────────────
+    const [uploads, setUploads] = useState([]);
+    const [dragActive, setDragActive] = useState(false);
+    const fileInputRef = useRef(null);
+    const dragCounter = useRef(0);
+
+    // ─── view prefs ──────────────────────────────────────
+    const [viewMode, setViewMode] = useState(() => localStorage.getItem(STORAGE.viewMode) || 'grid');
+    const [gridSize, setGridSize] = useState(() => localStorage.getItem(STORAGE.gridSize) || 'lg');
+    const [sortBy, setSortBy] = useState(() => localStorage.getItem(STORAGE.sortBy) || 'name');
+    const [sortDir, setSortDir] = useState(() => localStorage.getItem(STORAGE.sortDir) || 'asc');
+    const [activeFilter, setActiveFilter] = useState('all');
+    const [sortOpen, setSortOpen] = useState(false);
+
+    // ─── left sidebar ────────────────────────────────────
     const [sidebarVisible, setSidebarVisible] = useState(() => {
-        const saved = localStorage.getItem(SIDEBAR_VISIBLE_KEY);
-        return saved !== null ? saved === 'true' : true;
+        const v = localStorage.getItem(STORAGE.sidebar);
+        return v !== null ? v === 'true' : true;
     });
-    const [diskCollapsed, setDiskCollapsed] = useState(() => {
-        const saved = localStorage.getItem(DISK_COLLAPSED_KEY);
-        return saved !== null ? saved === 'true' : false;
+    const [treeCollapsed, setTreeCollapsed] = useState(() => localStorage.getItem(STORAGE.treeCollapsed) === 'true');
+    const [quickCollapsed, setQuickCollapsed] = useState(() => localStorage.getItem(STORAGE.quickCollapsed) === 'true');
+    const [diskCollapsed, setDiskCollapsed] = useState(() => localStorage.getItem(STORAGE.diskCollapsed) === 'true');
+
+    // ─── folder tree state ───────────────────────────────
+    const [treeExpanded, setTreeExpanded] = useState(() => {
+        try {
+            const stored = localStorage.getItem(STORAGE.expanded);
+            return stored ? new Set(JSON.parse(stored)) : new Set();
+        } catch { return new Set(); }
     });
+    const [treeCache, setTreeCache] = useState(new Map());
+    const [treeLoading, setTreeLoading] = useState(new Set());
+
+    // ─── disk ────────────────────────────────────────────
     const [diskMounts, setDiskMounts] = useState([]);
     const [diskLastUpdated, setDiskLastUpdated] = useState(null);
     const [diskLoading, setDiskLoading] = useState(false);
 
-    // Analysis state
+    // ─── pinned ──────────────────────────────────────────
+    const [pinned, setPinned] = useState(() => {
+        try {
+            const stored = localStorage.getItem(STORAGE.pinned);
+            return stored ? JSON.parse(stored) : DEFAULT_PINNED;
+        } catch { return DEFAULT_PINNED; }
+    });
+
+    // ─── analysis ────────────────────────────────────────
     const [analysisLoading, setAnalysisLoading] = useState(false);
     const [directoryAnalysis, setDirectoryAnalysis] = useState(null);
     const [typeBreakdown, setTypeBreakdown] = useState(null);
-    const [analysisView, setAnalysisView] = useState('directories'); // 'directories' | 'files'
+    const [analysisView, setAnalysisView] = useState('directories');
 
+    // ─── history ─────────────────────────────────────────
+    const [history, setHistory] = useState(['/home']);
+    const [historyIdx, setHistoryIdx] = useState(0);
+    const navByHistory = useRef(false);
+
+    // ─── context menu ────────────────────────────────────
+    const [contextMenu, setContextMenu] = useState(null);
+
+    const toast = useToast();
+
+    // ─── persistence ─────────────────────────────────────
+    useEffect(() => { localStorage.setItem(STORAGE.sidebar, sidebarVisible); }, [sidebarVisible]);
+    useEffect(() => { localStorage.setItem(STORAGE.treeCollapsed, treeCollapsed); }, [treeCollapsed]);
+    useEffect(() => { localStorage.setItem(STORAGE.quickCollapsed, quickCollapsed); }, [quickCollapsed]);
+    useEffect(() => { localStorage.setItem(STORAGE.diskCollapsed, diskCollapsed); }, [diskCollapsed]);
+    useEffect(() => { localStorage.setItem(STORAGE.viewMode, viewMode); }, [viewMode]);
+    useEffect(() => { localStorage.setItem(STORAGE.gridSize, gridSize); }, [gridSize]);
+    useEffect(() => { localStorage.setItem(STORAGE.sortBy, sortBy); }, [sortBy]);
+    useEffect(() => { localStorage.setItem(STORAGE.sortDir, sortDir); }, [sortDir]);
+    useEffect(() => { localStorage.setItem(STORAGE.pinned, JSON.stringify(pinned)); }, [pinned]);
     useEffect(() => {
-        loadDirectory(currentPath);
-        loadDiskMounts();
-    }, [currentPath, showHidden]);
+        localStorage.setItem(STORAGE.expanded, JSON.stringify([...treeExpanded]));
+    }, [treeExpanded]);
 
-    useEffect(() => {
-        localStorage.setItem(SIDEBAR_VISIBLE_KEY, sidebarVisible);
-    }, [sidebarVisible]);
-
-    useEffect(() => {
-        localStorage.setItem(DISK_COLLAPSED_KEY, diskCollapsed);
-    }, [diskCollapsed]);
-
-    const loadDirectory = async (path) => {
+    // ─── load directory ──────────────────────────────────
+    const loadDirectory = useCallback(async (path) => {
         setLoading(true);
         setSearchResults(null);
         setDirectoryAnalysis(null);
         setTypeBreakdown(null);
+        setSelectedPaths(new Set());
         try {
             const data = await api.browseFiles(path, showHidden);
             setEntries(data.entries || []);
@@ -93,30 +178,55 @@ function FileManager() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [showHidden, toast]);
 
+    useEffect(() => {
+        loadDirectory(currentPath);
+    }, [currentPath, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        loadDiskMounts();
+    }, []);
+
+    // history tracking
+    useEffect(() => {
+        if (navByHistory.current) {
+            navByHistory.current = false;
+            return;
+        }
+        setHistory((h) => {
+            const trimmed = h.slice(0, historyIdx + 1);
+            if (trimmed[trimmed.length - 1] === currentPath) return h;
+            return [...trimmed, currentPath];
+        });
+        setHistoryIdx((i) => (history[i] === currentPath ? i : i + 1));
+    }, [currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── disk mounts ─────────────────────────────────────
     const loadDiskMounts = async () => {
         setDiskLoading(true);
         try {
             const data = await api.getAllDiskMounts();
             setDiskMounts(data.mounts || []);
             setDiskLastUpdated(new Date());
-        } catch (error) {
-            console.error('Failed to load disk mounts:', error);
+        } catch (e) {
+            console.error('Failed to load disk mounts:', e);
         } finally {
             setDiskLoading(false);
         }
     };
 
+    // ─── analysis ────────────────────────────────────────
     const analyzeDirectory = async () => {
         setAnalysisLoading(true);
         try {
             const [analysisData, breakdownData] = await Promise.all([
                 api.analyzeDirectory(currentPath, 2, 15),
-                api.getFileTypeBreakdown(currentPath, 3)
+                api.getFileTypeBreakdown(currentPath, 3),
             ]);
             setDirectoryAnalysis(analysisData);
             setTypeBreakdown(breakdownData);
+            if (!sidebarVisible) setSidebarVisible(true);
         } catch (error) {
             toast.error(`Analysis failed: ${error.message}`);
         } finally {
@@ -124,16 +234,52 @@ function FileManager() {
         }
     };
 
-    const closeAnalysis = () => {
-        setDirectoryAnalysis(null);
-        setTypeBreakdown(null);
-    };
-
-    const handleSearch = async () => {
-        if (!searchQuery.trim()) {
-            setSearchResults(null);
+    // ─── tree expand/collapse ────────────────────────────
+    const toggleTreeExpand = useCallback(async (path) => {
+        if (treeExpanded.has(path)) {
+            const next = new Set(treeExpanded);
+            next.delete(path);
+            setTreeExpanded(next);
             return;
         }
+        if (!treeCache.has(path)) {
+            setTreeLoading((s) => { const n = new Set(s); n.add(path); return n; });
+            try {
+                const data = await api.browseFiles(path, false);
+                const folders = (data.entries || []).filter((e) => e.is_dir).map((e) => ({
+                    path: e.path,
+                    name: e.name,
+                }));
+                setTreeCache((c) => { const n = new Map(c); n.set(path, folders); return n; });
+            } catch {
+                setTreeCache((c) => { const n = new Map(c); n.set(path, []); return n; });
+            } finally {
+                setTreeLoading((s) => { const n = new Set(s); n.delete(path); return n; });
+            }
+        }
+        setTreeExpanded((s) => { const n = new Set(s); n.add(path); return n; });
+    }, [treeExpanded, treeCache]);
+
+    // Auto-expand the tree along the current path so the active row is visible.
+    useEffect(() => {
+        const parts = currentPath.split('/').filter(Boolean);
+        const ancestors = [];
+        let acc = '';
+        for (const p of parts) {
+            acc += '/' + p;
+            ancestors.push(acc);
+        }
+        ancestors.forEach((a) => {
+            const isUnderRoot = TREE_ROOTS.some((r) => a === r.path || a.startsWith(r.path + '/') || r.path.startsWith(a + '/'));
+            if (isUnderRoot && !treeExpanded.has(a) && a !== currentPath) {
+                toggleTreeExpand(a);
+            }
+        });
+    }, [currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── search ──────────────────────────────────────────
+    const handleSearch = async () => {
+        if (!searchQuery.trim()) { setSearchResults(null); return; }
         setLoading(true);
         try {
             const data = await api.searchFiles(currentPath, searchQuery);
@@ -145,52 +291,86 @@ function FileManager() {
         }
     };
 
-    const handleNavigate = (entry) => {
-        if (entry.is_dir) {
-            setCurrentPath(entry.path);
-            setSelectedFile(null);
-            setEditingFile(null);
-        } else {
-            handleFileClick(entry);
-        }
+    // ─── navigation ──────────────────────────────────────
+    const navigateTo = (path) => {
+        setPreviewFile(null);
+        setEditing(false);
+        setCurrentPath(path);
     };
 
-    const handleFileClick = async (entry) => {
-        setSelectedFile(entry);
-        if (entry.is_editable) {
-            try {
-                const data = await api.readFile(entry.path);
-                setFileContent(data.content);
-            } catch (error) {
-                toast.error(`Failed to read file: ${error.message}`);
+    const goBack = () => {
+        if (historyIdx > 0) {
+            navByHistory.current = true;
+            setHistoryIdx(historyIdx - 1);
+            setCurrentPath(history[historyIdx - 1]);
+        }
+    };
+    const goForward = () => {
+        if (historyIdx < history.length - 1) {
+            navByHistory.current = true;
+            setHistoryIdx(historyIdx + 1);
+            setCurrentPath(history[historyIdx + 1]);
+        }
+    };
+    const goUp = () => parentPath && navigateTo(parentPath);
+
+    const handleOpen = async (entry) => {
+        if (entry.is_dir) {
+            navigateTo(entry.path);
+        } else {
+            setPreviewFile(entry);
+            setEditing(false);
+            if (entry.is_editable) {
+                try {
+                    const data = await api.readFile(entry.path);
+                    setFileContent(data.content);
+                } catch (error) {
+                    toast.error(`Failed to read file: ${error.message}`);
+                }
             }
         }
     };
 
-    const handleEditFile = () => {
-        if (selectedFile && selectedFile.is_editable) {
-            setEditingFile(selectedFile);
+    // ─── selection ───────────────────────────────────────
+    const handleToggleSelect = (entry, e) => {
+        const path = entry.path;
+        if (e?.shiftKey && lastClickedPath) {
+            const list = sortedFiltered;
+            const a = list.findIndex((x) => x.path === lastClickedPath);
+            const b = list.findIndex((x) => x.path === path);
+            if (a >= 0 && b >= 0) {
+                const [from, to] = [Math.min(a, b), Math.max(a, b)];
+                const rangePaths = list.slice(from, to + 1).map((x) => x.path);
+                setSelectedPaths(new Set([...selectedPaths, ...rangePaths]));
+            }
+        } else {
+            const next = new Set(selectedPaths);
+            if (next.has(path)) next.delete(path); else next.add(path);
+            setSelectedPaths(next);
+            setLastClickedPath(path);
         }
     };
 
+    const clearSelection = () => setSelectedPaths(new Set());
+
+    // ─── ops ─────────────────────────────────────────────
     const handleSaveFile = async () => {
-        if (!editingFile) return;
+        if (!previewFile) return;
         try {
-            await api.writeFile(editingFile.path, fileContent);
-            toast.success('File saved successfully');
-            setEditingFile(null);
+            await api.writeFile(previewFile.path, fileContent);
+            toast.success('File saved');
+            setEditing(false);
             loadDirectory(currentPath);
         } catch (error) {
-            toast.error(`Failed to save file: ${error.message}`);
+            toast.error(`Failed to save: ${error.message}`);
         }
     };
 
     const handleCreateFile = async () => {
         if (!newFileName.trim()) return;
-        const filePath = `${currentPath}/${newFileName}`;
         try {
-            await api.createFile(filePath);
-            toast.success('File created successfully');
+            await api.createFile(`${currentPath}/${newFileName}`);
+            toast.success('File created');
             setShowNewFileModal(false);
             setNewFileName('');
             loadDirectory(currentPath);
@@ -201,36 +381,54 @@ function FileManager() {
 
     const handleCreateFolder = async () => {
         if (!newFolderName.trim()) return;
-        const folderPath = `${currentPath}/${newFolderName}`;
         try {
-            await api.createDirectory(folderPath);
-            toast.success('Folder created successfully');
+            await api.createDirectory(`${currentPath}/${newFolderName}`);
+            toast.success('Folder created');
             setShowNewFolderModal(false);
             setNewFolderName('');
             loadDirectory(currentPath);
+            // Refresh tree cache for parent so the new folder appears in the tree
+            const parent = currentPath;
+            if (treeCache.has(parent)) {
+                try {
+                    const data = await api.browseFiles(parent, false);
+                    const folders = (data.entries || []).filter((e) => e.is_dir).map((e) => ({ path: e.path, name: e.name }));
+                    setTreeCache((c) => { const n = new Map(c); n.set(parent, folders); return n; });
+                } catch { /* ignore */ }
+            }
         } catch (error) {
             toast.error(`Failed to create folder: ${error.message}`);
         }
     };
 
-    const handleDelete = async (entry) => {
+    const handleDelete = (target) => {
+        const items = Array.isArray(target) ? target : [target];
+        if (items.length === 0) return;
+        const message = items.length === 1
+            ? `Delete "${items[0].name}"?${items[0].is_dir ? ' All contents inside will be removed.' : ''}`
+            : `Delete ${items.length} items? This cannot be undone.`;
         setConfirmDialog({
             title: 'Delete Confirmation',
-            message: `Are you sure you want to delete "${entry.name}"? ${entry.is_dir ? 'This will delete all contents inside.' : ''}`,
+            message,
             confirmText: 'Delete',
             variant: 'danger',
             onConfirm: async () => {
-                try {
-                    await api.deleteFile(entry.path);
-                    toast.success(`${entry.is_dir ? 'Folder' : 'File'} deleted successfully`);
-                    setSelectedFile(null);
-                    loadDirectory(currentPath);
-                } catch (error) {
-                    toast.error(`Failed to delete: ${error.message}`);
+                const failures = [];
+                for (const it of items) {
+                    try {
+                        await api.deleteFile(it.path);
+                    } catch (error) {
+                        failures.push(`${it.name}: ${error.message}`);
+                    }
                 }
+                if (failures.length === 0) toast.success(`Deleted ${items.length} item${items.length > 1 ? 's' : ''}`);
+                else toast.error(`Failed: ${failures.join(', ')}`);
+                if (previewFile && items.some((i) => i.path === previewFile.path)) setPreviewFile(null);
+                clearSelection();
+                loadDirectory(currentPath);
                 setConfirmDialog(null);
             },
-            onCancel: () => setConfirmDialog(null)
+            onCancel: () => setConfirmDialog(null),
         });
     };
 
@@ -238,7 +436,7 @@ function FileManager() {
         if (!renameTarget || !newName.trim()) return;
         try {
             await api.renameFile(renameTarget.path, newName);
-            toast.success('Renamed successfully');
+            toast.success('Renamed');
             setShowRenameModal(false);
             setRenameTarget(null);
             setNewName('');
@@ -252,38 +450,14 @@ function FileManager() {
         if (!permissionsTarget || !newPermissions.trim()) return;
         try {
             await api.changeFilePermissions(permissionsTarget.path, newPermissions);
-            toast.success('Permissions changed successfully');
+            toast.success('Permissions updated');
             setShowPermissionsModal(false);
             setPermissionsTarget(null);
             setNewPermissions('');
             loadDirectory(currentPath);
         } catch (error) {
-            toast.error(`Failed to change permissions: ${error.message}`);
+            toast.error(`Failed: ${error.message}`);
         }
-    };
-
-    const handleUpload = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        try {
-            await api.uploadFile(currentPath, file, (progress) => {
-                setUploadProgress(progress);
-            });
-            toast.success('File uploaded successfully');
-            loadDirectory(currentPath);
-        } catch (error) {
-            toast.error(`Upload failed: ${error.message}`);
-        } finally {
-            setUploadProgress(null);
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
-        }
-    };
-
-    const handleDownload = (entry) => {
-        api.downloadFile(entry.path);
     };
 
     const openRenameModal = (entry) => {
@@ -291,35 +465,186 @@ function FileManager() {
         setNewName(entry.name);
         setShowRenameModal(true);
     };
-
     const openPermissionsModal = (entry) => {
         setPermissionsTarget(entry);
         setNewPermissions(entry.permissions_octal || '755');
         setShowPermissionsModal(true);
     };
 
-    const getFileIcon = (entry) => {
-        if (entry.is_dir) return <Folder size={18} className="file-icon-svg folder" />;
+    // ─── upload ──────────────────────────────────────────
+    const uploadFiles = async (files) => {
+        const fileList = Array.from(files);
+        if (fileList.length === 0) return;
+        const queue = fileList.map((f, i) => ({
+            id: `${Date.now()}-${i}`,
+            name: f.name,
+            size: f.size,
+            progress: 0,
+            status: 'pending',
+        }));
+        setUploads((p) => [...p, ...queue]);
 
-        const ext = entry.name.split('.').pop().toLowerCase();
-        const codeExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'rb', 'php', 'java', 'c', 'cpp', 'h', 'go', 'rs'];
-        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico'];
-        const videoExts = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'webm'];
-        const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma'];
-        const archiveExts = ['zip', 'tar', 'gz', 'rar', '7z', 'bz2'];
-        const dataExts = ['json', 'xml', 'yaml', 'yml', 'csv', 'db', 'sqlite', 'sql'];
-        const textExts = ['txt', 'md', 'log', 'ini', 'conf', 'cfg'];
+        let succeeded = 0;
+        for (let i = 0; i < fileList.length; i++) {
+            const file = fileList[i];
+            const itemId = queue[i].id;
+            try {
+                setUploads((p) => p.map((u) => u.id === itemId ? { ...u, status: 'uploading' } : u));
+                await api.uploadFile(currentPath, file, (progress) => {
+                    setUploads((p) => p.map((u) => u.id === itemId ? { ...u, progress } : u));
+                });
+                setUploads((p) => p.map((u) => u.id === itemId ? { ...u, status: 'done', progress: 100 } : u));
+                succeeded++;
+            } catch (error) {
+                setUploads((p) => p.map((u) => u.id === itemId ? { ...u, status: 'error', error: error.message } : u));
+            }
+        }
+        if (succeeded > 0) toast.success(`Uploaded ${succeeded} of ${fileList.length} file${fileList.length > 1 ? 's' : ''}`);
+        loadDirectory(currentPath);
+        setTimeout(() => {
+            setUploads((p) => p.filter((u) => u.status === 'uploading' || u.status === 'pending'));
+        }, 4000);
+    };
 
-        if (codeExts.includes(ext)) return <FileCode size={18} className="file-icon-svg code" />;
-        if (imageExts.includes(ext)) return <FileImage size={18} className="file-icon-svg image" />;
-        if (videoExts.includes(ext)) return <FileVideo size={18} className="file-icon-svg video" />;
-        if (audioExts.includes(ext)) return <FileAudio size={18} className="file-icon-svg audio" />;
-        if (archiveExts.includes(ext)) return <FileArchive size={18} className="file-icon-svg archive" />;
-        if (dataExts.includes(ext)) return <Database size={18} className="file-icon-svg data" />;
-        if (textExts.includes(ext)) return <FileText size={18} className="file-icon-svg text" />;
-        if (['sh', 'bash', 'zsh'].includes(ext)) return <Terminal size={18} className="file-icon-svg terminal" />;
+    const handleUploadInput = (e) => {
+        if (e.target.files) uploadFiles(e.target.files);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
 
-        return <File size={18} className="file-icon-svg" />;
+    const handleDragEnter = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dragCounter.current += 1;
+        if (e.dataTransfer.items?.length > 0) setDragActive(true);
+    };
+    const handleDragLeave = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dragCounter.current -= 1;
+        if (dragCounter.current === 0) setDragActive(false);
+    };
+    const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
+    const handleDrop = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dragCounter.current = 0;
+        setDragActive(false);
+        if (e.dataTransfer.files?.length > 0) uploadFiles(e.dataTransfer.files);
+    };
+
+    // ─── pinned ──────────────────────────────────────────
+    const isPinned = useCallback((path) => pinned.some((p) => p.path === path), [pinned]);
+    const togglePin = useCallback((target) => {
+        const path = typeof target === 'string' ? target : target.path;
+        const name = typeof target === 'string' ? path.split('/').pop() || path : (target.name || target.path.split('/').pop());
+        if (isPinned(path)) {
+            setPinned((p) => p.filter((x) => x.path !== path));
+        } else {
+            setPinned((p) => [...p, { path, name }]);
+        }
+    }, [isPinned]);
+
+    // ─── derived ─────────────────────────────────────────
+    const breadcrumbs = useMemo(() => {
+        const parts = currentPath.split('/').filter(Boolean);
+        const crumbs = [{ name: '/', path: '/' }];
+        let acc = '';
+        parts.forEach((p) => { acc += '/' + p; crumbs.push({ name: p, path: acc }); });
+        return crumbs;
+    }, [currentPath]);
+
+    const sortedFiltered = useMemo(() => {
+        let list = [...(searchResults || entries)];
+        if (activeFilter !== 'all') list = list.filter((e) => getFileType(e) === activeFilter);
+        const dir = sortDir === 'asc' ? 1 : -1;
+        list.sort((a, b) => {
+            if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+            switch (sortBy) {
+                case 'size': return ((a.size || 0) - (b.size || 0)) * dir;
+                case 'modified': return (new Date(a.modified) - new Date(b.modified)) * dir;
+                case 'type': return getFileType(a).localeCompare(getFileType(b)) * dir;
+                case 'name':
+                default: return a.name.localeCompare(b.name) * dir;
+            }
+        });
+        return list;
+    }, [entries, searchResults, sortBy, sortDir, activeFilter]);
+
+    const filterCounts = useMemo(() => {
+        const counts = { all: entries.length };
+        FILTER_CHIPS.forEach((c) => { if (c.id !== 'all') counts[c.id] = 0; });
+        entries.forEach((e) => { const t = getFileType(e); if (counts[t] !== undefined) counts[t]++; });
+        return counts;
+    }, [entries]);
+
+    const stats = useMemo(() => {
+        const list = sortedFiltered;
+        const folders = list.filter((e) => e.is_dir).length;
+        const files = list.length - folders;
+        const totalBytes = list.reduce((s, e) => s + (e.size || 0), 0);
+        const selectedList = list.filter((e) => selectedPaths.has(e.path));
+        const selectedBytes = selectedList.reduce((s, e) => s + (e.size || 0), 0);
+        return { folders, files, totalBytes, total: list.length, selectedCount: selectedList.length, selectedBytes };
+    }, [sortedFiltered, selectedPaths]);
+
+    const activeUploads = uploads.filter((u) => u.status === 'uploading' || u.status === 'pending');
+    const totalUploadProgress = activeUploads.length > 0
+        ? activeUploads.reduce((s, u) => s + u.progress, 0) / activeUploads.length
+        : 0;
+
+    const selectedEntries = useMemo(
+        () => sortedFiltered.filter((e) => selectedPaths.has(e.path)),
+        [sortedFiltered, selectedPaths],
+    );
+
+    // ─── shortcuts ───────────────────────────────────────
+    useEffect(() => {
+        const handler = (e) => {
+            const inInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+            if (inInput) return;
+            if (e.key === 'Escape') {
+                if (contextMenu) setContextMenu(null);
+                else if (sortOpen) setSortOpen(false);
+                else if (previewFile) setPreviewFile(null);
+                else if (selectedPaths.size > 0) clearSelection();
+            }
+            if ((e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) && selectedEntries.length > 0) {
+                e.preventDefault();
+                handleDelete(selectedEntries);
+            }
+            if (e.key === 'F2' && selectedEntries.length === 1) openRenameModal(selectedEntries[0]);
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                setSelectedPaths(new Set(sortedFiltered.map((x) => x.path)));
+            }
+            if (e.key === 'Backspace' && !e.metaKey && parentPath) { e.preventDefault(); goUp(); }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [selectedEntries, sortedFiltered, contextMenu, sortOpen, previewFile, parentPath, selectedPaths]); // eslint-disable-line
+
+    // ─── close popovers ──────────────────────────────────
+    useEffect(() => {
+        if (!contextMenu && !sortOpen) return;
+        const close = () => { setContextMenu(null); setSortOpen(false); };
+        document.addEventListener('click', close);
+        return () => document.removeEventListener('click', close);
+    }, [contextMenu, sortOpen]);
+
+    const openContextMenu = (e, entry) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!selectedPaths.has(entry.path)) {
+            setSelectedPaths(new Set([entry.path]));
+            setLastClickedPath(entry.path);
+        }
+        setContextMenu({ x: e.clientX, y: e.clientY, entry });
+    };
+
+    const copyPathToClipboard = async (path) => {
+        try { await navigator.clipboard.writeText(path); toast.success('Path copied'); }
+        catch { toast.error('Could not copy path'); }
+    };
+
+    const downloadSelected = () => {
+        selectedEntries.filter((e) => !e.is_dir).forEach((e) => api.downloadFile(e.path));
     };
 
     const getDiskColor = (percent) => {
@@ -328,10 +653,15 @@ function FileManager() {
         return 'healthy';
     };
 
-    const displayedEntries = searchResults || entries;
-
+    // ─── render ──────────────────────────────────────────
     return (
-        <div className={`page-container file-manager-page file-manager ${sidebarVisible ? 'sidebar-open' : ''}`}>
+        <div
+            className={`page-container file-manager-page file-manager ${sidebarVisible ? 'sidebar-open' : ''} view-${viewMode} grid-${gridSize} ${selectMode ? 'select-mode' : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+        >
             <div className="page-header">
                 <div className="page-header-content">
                     <h1>File Manager</h1>
@@ -339,247 +669,356 @@ function FileManager() {
                 </div>
                 <div className="page-header-actions">
                     <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-                        <Upload size={16} />
-                        Upload
+                        <Upload size={16} /> Upload
                     </Button>
                     <Button variant="outline" onClick={() => setShowNewFolderModal(true)}>
-                        <FolderPlus size={16} />
-                        New Folder
+                        <FolderPlus size={16} /> New Folder
                     </Button>
                     <Button onClick={() => setShowNewFileModal(true)}>
-                        <FilePlus size={16} />
-                        New File
+                        <FilePlus size={16} /> New File
                     </Button>
                     <input
                         type="file"
                         ref={fileInputRef}
+                        multiple
                         style={{ display: 'none' }}
-                        onChange={handleUpload}
+                        onChange={handleUploadInput}
                     />
                 </div>
             </div>
 
-            {uploadProgress !== null && (
-                <div className="upload-progress">
-                    <ProgressBar percent={uploadProgress} />
-                    <span>{Math.round(uploadProgress)}%</span>
+            {uploads.length > 0 && (
+                <div className="upload-tray">
+                    <div className="upload-tray-header">
+                        <CloudUpload size={16} />
+                        <span>
+                            {activeUploads.length > 0
+                                ? `Uploading ${activeUploads.length} file${activeUploads.length > 1 ? 's' : ''}…`
+                                : 'Uploads complete'}
+                        </span>
+                        {activeUploads.length > 0 && (
+                            <span className="upload-tray-percent">{Math.round(totalUploadProgress)}%</span>
+                        )}
+                        <button className="toolbar-icon-btn small" onClick={() => setUploads([])} title="Clear">
+                            <X size={14} />
+                        </button>
+                    </div>
+                    <div className="upload-tray-list">
+                        {uploads.map((u) => (
+                            <div key={u.id} className={`upload-tray-item status-${u.status}`}>
+                                <span className="upload-name">{u.name}</span>
+                                <div className="upload-bar">
+                                    <div className="upload-bar-fill" style={{ width: `${u.progress}%` }} />
+                                </div>
+                                <span className="upload-status">
+                                    {u.status === 'done' ? 'Done' : u.status === 'error' ? 'Failed' : `${Math.round(u.progress)}%`}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
             <div className="file-manager-toolbar">
-                <div className="path-breadcrumb">
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => parentPath && setCurrentPath(parentPath)}
-                        disabled={!parentPath}
+                <div className="toolbar-left">
+                    <button
+                        className="toolbar-icon-btn"
+                        onClick={() => setSidebarVisible(!sidebarVisible)}
+                        title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
                     >
-                        <ArrowLeft size={16} />
-                    </Button>
-                    <span className="current-path">{currentPath}</span>
+                        {sidebarVisible ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+                    </button>
+                    <div className="nav-buttons">
+                        <button className="nav-btn" onClick={goBack} disabled={historyIdx === 0} title="Back">
+                            <ArrowLeft size={14} />
+                        </button>
+                        <button className="nav-btn" onClick={goForward} disabled={historyIdx >= history.length - 1} title="Forward">
+                            <ArrowRight size={14} />
+                        </button>
+                        <button className="nav-btn" onClick={goUp} disabled={!parentPath} title="Up">
+                            <ArrowUp size={14} />
+                        </button>
+                        <button className="nav-btn" onClick={() => navigateTo('/home')} title="Home">
+                            <Home size={14} />
+                        </button>
+                    </div>
+                    <div className="path-breadcrumb">
+                        {breadcrumbs.map((crumb, idx) => (
+                            <span key={crumb.path + idx} className="crumb-segment">
+                                {idx > 0 && <ChevronRight size={12} className="crumb-separator" />}
+                                <button
+                                    className={`crumb ${idx === breadcrumbs.length - 1 ? 'crumb-active' : ''}`}
+                                    onClick={() => navigateTo(crumb.path)}
+                                >
+                                    {crumb.name}
+                                </button>
+                            </span>
+                        ))}
+                        <button
+                            className={`crumb-pin ${isPinned(currentPath) ? 'pinned' : ''}`}
+                            onClick={() => togglePin(currentPath)}
+                            title={isPinned(currentPath) ? 'Unpin' : 'Pin to Quick Access'}
+                        >
+                            {isPinned(currentPath) ? <Star size={12} fill="currentColor" /> : <StarOff size={12} />}
+                        </button>
+                    </div>
                 </div>
-                <div className="toolbar-actions">
-                    <div className="search-box">
-                        <Search size={16} className="search-icon" />
+                <div className="toolbar-right">
+                    <div className="search-field">
+                        <Search size={14} className="search-field-icon" />
                         <input
                             type="text"
-                            placeholder="Search files..."
+                            placeholder="Search files…"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                         />
-                        {searchResults && (
-                            <Button variant="ghost" size="icon" className="btn-sm" onClick={() => setSearchResults(null)}>
-                                <X size={14} />
-                            </Button>
+                        {(searchResults || searchQuery) && (
+                            <button
+                                className="search-field-clear"
+                                onClick={() => { setSearchResults(null); setSearchQuery(''); }}
+                                title="Clear"
+                            >
+                                <X size={12} />
+                            </button>
                         )}
                     </div>
-                    <Button
-                        variant="outline"
-                        size="sm"
+                    <div className="sort-control" onClick={(e) => e.stopPropagation()}>
+                        <button className="toolbar-chip" onClick={() => setSortOpen(!sortOpen)} title="Sort">
+                            <ArrowUpDown size={14} />
+                            <span>Sort</span>
+                        </button>
+                        {sortOpen && (
+                            <div className="sort-popover">
+                                <div className="sort-popover-label">Sort by</div>
+                                {[
+                                    { id: 'name', label: 'Name' },
+                                    { id: 'size', label: 'Size' },
+                                    { id: 'modified', label: 'Modified' },
+                                    { id: 'type', label: 'Type' },
+                                ].map((opt) => (
+                                    <button
+                                        key={opt.id}
+                                        className={`sort-popover-item ${sortBy === opt.id ? 'active' : ''}`}
+                                        onClick={() => { setSortBy(opt.id); setSortOpen(false); }}
+                                    >
+                                        {sortBy === opt.id && <Check size={12} />}
+                                        <span>{opt.label}</span>
+                                    </button>
+                                ))}
+                                <div className="sort-popover-divider" />
+                                <button
+                                    className={`sort-popover-item ${sortDir === 'asc' ? 'active' : ''}`}
+                                    onClick={() => { setSortDir('asc'); setSortOpen(false); }}
+                                >
+                                    {sortDir === 'asc' && <Check size={12} />}
+                                    <span>Ascending</span>
+                                </button>
+                                <button
+                                    className={`sort-popover-item ${sortDir === 'desc' ? 'active' : ''}`}
+                                    onClick={() => { setSortDir('desc'); setSortOpen(false); }}
+                                >
+                                    {sortDir === 'desc' && <Check size={12} />}
+                                    <span>Descending</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    <button
+                        className={`toolbar-chip ${selectMode ? 'active' : ''}`}
+                        onClick={() => { setSelectMode(!selectMode); if (selectMode) clearSelection(); }}
+                        title="Toggle selection mode"
+                    >
+                        <MousePointer2 size={14} />
+                        <span>Select</span>
+                    </button>
+                    {viewMode === 'grid' && (
+                        <div className="view-toggle">
+                            <button
+                                className={`view-toggle-btn ${gridSize === 'sm' ? 'active' : ''}`}
+                                onClick={() => setGridSize('sm')}
+                                title="Small thumbnails"
+                            >
+                                <ZoomOut size={14} />
+                            </button>
+                            <button
+                                className={`view-toggle-btn ${gridSize === 'md' ? 'active' : ''}`}
+                                onClick={() => setGridSize('md')}
+                                title="Medium thumbnails"
+                            >
+                                <LayoutGrid size={14} />
+                            </button>
+                            <button
+                                className={`view-toggle-btn ${gridSize === 'lg' ? 'active' : ''}`}
+                                onClick={() => setGridSize('lg')}
+                                title="Large thumbnails"
+                            >
+                                <ZoomIn size={14} />
+                            </button>
+                        </div>
+                    )}
+                    <div className="view-toggle">
+                        <button
+                            className={`view-toggle-btn ${viewMode === 'grid' ? 'active' : ''}`}
+                            onClick={() => setViewMode('grid')}
+                            title="Grid view"
+                        >
+                            <LayoutGrid size={14} />
+                        </button>
+                        <button
+                            className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`}
+                            onClick={() => setViewMode('list')}
+                            title="List view"
+                        >
+                            <List size={14} />
+                        </button>
+                    </div>
+                    <button
+                        className={`toolbar-chip ${showHidden ? 'active' : ''}`}
+                        onClick={() => setShowHidden(!showHidden)}
+                        title="Toggle hidden files"
+                    >
+                        {showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                        <span>Hidden</span>
+                    </button>
+                    <button
+                        className="toolbar-chip"
                         onClick={analyzeDirectory}
                         disabled={analysisLoading}
                         title="Analyze directory sizes"
                     >
                         <BarChart3 size={14} />
-                        Analyze
-                    </Button>
-                    <label className="checkbox-label">
-                        <input
-                            type="checkbox"
-                            checked={showHidden}
-                            onChange={(e) => setShowHidden(e.target.checked)}
-                        />
-                        {showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
-                        Hidden
-                    </label>
-                    <Button variant="ghost" size="icon" onClick={() => loadDirectory(currentPath)} title="Refresh">
-                        <RefreshCw size={16} />
-                    </Button>
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setSidebarVisible(!sidebarVisible)}
-                        title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+                        <span>{analysisLoading ? 'Analyzing…' : 'Analyze'}</span>
+                    </button>
+                    <button
+                        className="toolbar-icon-btn"
+                        onClick={() => loadDirectory(currentPath)}
+                        title="Refresh"
                     >
-                        {sidebarVisible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-                    </Button>
+                        <RefreshCw size={14} className={loading ? 'spinning' : ''} />
+                    </button>
                 </div>
             </div>
 
-            <div className="file-manager-layout">
-                <div className="file-manager-main">
-                    <div className="file-manager-content">
-                        <div className="file-list-container">
-                            {loading ? (
-                                <div className="loading-state">
-                                    <Spinner />
+            <div className="filter-chips-row">
+                {FILTER_CHIPS.map((chip) => {
+                    const Icon = chip.icon;
+                    const count = filterCounts[chip.id] ?? 0;
+                    return (
+                        <button
+                            key={chip.id}
+                            className={`filter-chip ${activeFilter === chip.id ? 'active' : ''}`}
+                            onClick={() => setActiveFilter(chip.id)}
+                            disabled={chip.id !== 'all' && count === 0}
+                        >
+                            <Icon size={13} />
+                            <span>{chip.label}</span>
+                            <span className="filter-chip-count">{count}</span>
+                        </button>
+                    );
+                })}
+            </div>
+
+            {selectedPaths.size > 0 && (
+                <div className="bulk-bar">
+                    <div className="bulk-bar-info">
+                        <Check size={14} />
+                        <span>{selectedPaths.size} selected · {formatBytes(stats.selectedBytes)}</span>
+                    </div>
+                    <div className="bulk-bar-actions">
+                        <button className="bulk-btn" onClick={downloadSelected}>
+                            <Download size={14} /> Download
+                        </button>
+                        {selectedEntries.length === 1 && (
+                            <>
+                                <button className="bulk-btn" onClick={() => openRenameModal(selectedEntries[0])}>
+                                    <Edit3 size={14} /> Rename
+                                </button>
+                                <button className="bulk-btn" onClick={() => copyPathToClipboard(selectedEntries[0].path)}>
+                                    <Copy size={14} /> Copy path
+                                </button>
+                            </>
+                        )}
+                        <button className="bulk-btn danger" onClick={() => handleDelete(selectedEntries)}>
+                            <Trash2 size={14} /> Delete
+                        </button>
+                        <button className="bulk-btn ghost" onClick={clearSelection}>
+                            <X size={14} /> Clear
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            <div className="file-manager-body">
+                {sidebarVisible && (
+                    <aside className="file-manager-sidebar left">
+                        {/* Folder Tree */}
+                        <div className="sidebar-section">
+                            <button className="sidebar-section-header" onClick={() => setTreeCollapsed(!treeCollapsed)}>
+                                <FolderTreeIcon size={16} />
+                                <span>Folders</span>
+                                {treeCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                            </button>
+                            {!treeCollapsed && (
+                                <div className="sidebar-section-content tree-content">
+                                    <FolderTree
+                                        roots={TREE_ROOTS}
+                                        expanded={treeExpanded}
+                                        treeCache={treeCache}
+                                        treeLoading={treeLoading}
+                                        currentPath={currentPath}
+                                        onNavigate={navigateTo}
+                                        onToggle={toggleTreeExpand}
+                                    />
                                 </div>
-                            ) : displayedEntries.length === 0 ? (
-                                <div className="empty-state">
-                                    <Folder size={48} strokeWidth={1.5} />
-                                    <p>{searchResults ? 'No files found matching your search' : 'This directory is empty'}</p>
-                                </div>
-                            ) : (
-                                <div className="file-list">
-                                    <div className="file-list-header">
-                                        <span className="col-name">Name</span>
-                                        <span className="col-size">Size</span>
-                                        <span className="col-modified">Modified</span>
-                                        <span className="col-permissions">Permissions</span>
-                                        <span className="col-actions">Actions</span>
-                                    </div>
-                                    {displayedEntries.map((entry) => (
+                            )}
+                        </div>
+
+                        {/* Quick Access */}
+                        <div className="sidebar-section">
+                            <button className="sidebar-section-header" onClick={() => setQuickCollapsed(!quickCollapsed)}>
+                                <Star size={16} />
+                                <span>Quick Access</span>
+                                {quickCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                            </button>
+                            {!quickCollapsed && (
+                                <div className="sidebar-section-content quick-access-list">
+                                    {pinned.length === 0 && (
+                                        <div className="quick-access-empty">
+                                            Star folders from the breadcrumb to pin them here.
+                                        </div>
+                                    )}
+                                    {pinned.map((p) => (
                                         <div
-                                            key={entry.path}
-                                            className={`file-item ${selectedFile?.path === entry.path ? 'selected' : ''}`}
-                                            onClick={() => handleNavigate(entry)}
+                                            key={p.path}
+                                            className={`quick-access-item ${currentPath === p.path ? 'active' : ''}`}
+                                            onClick={() => navigateTo(p.path)}
                                         >
-                                            <span className="col-name">
-                                                {getFileIcon(entry)}
-                                                {entry.name}
-                                                {entry.is_link && <span className="link-indicator">→</span>}
-                                            </span>
-                                            <span className="col-size">{entry.is_dir ? '-' : entry.size_human}</span>
-                                            <span className="col-modified">
-                                                {new Date(entry.modified).toLocaleDateString()}
-                                            </span>
-                                            <span className="col-permissions">{entry.permissions}</span>
-                                            <span className="col-actions" onClick={(e) => e.stopPropagation()}>
-                                                {!entry.is_dir && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="btn-sm"
-                                                        onClick={() => handleDownload(entry)}
-                                                        title="Download"
-                                                    >
-                                                        <Download size={14} />
-                                                    </Button>
-                                                )}
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="btn-sm"
-                                                    onClick={() => openRenameModal(entry)}
-                                                    title="Rename"
-                                                >
-                                                    <Edit3 size={14} />
-                                                </Button>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="btn-sm"
-                                                    onClick={() => openPermissionsModal(entry)}
-                                                    title="Permissions"
-                                                >
-                                                    <Lock size={14} />
-                                                </Button>
-                                                <Button
-                                                    variant="destructive"
-                                                    size="icon"
-                                                    className="btn-sm"
-                                                    onClick={() => handleDelete(entry)}
-                                                    title="Delete"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </Button>
-                                            </span>
+                                            <Folder size={14} fill="currentColor" fillOpacity={0.15} />
+                                            <div className="quick-access-text">
+                                                <div className="quick-access-name">{p.name}</div>
+                                                <div className="quick-access-path">{p.path}</div>
+                                            </div>
+                                            <button
+                                                className="quick-access-remove"
+                                                onClick={(e) => { e.stopPropagation(); togglePin(p.path); }}
+                                                title="Unpin"
+                                            >
+                                                <X size={12} />
+                                            </button>
                                         </div>
                                     ))}
                                 </div>
                             )}
                         </div>
 
-                        {selectedFile && !selectedFile.is_dir && (
-                            <div className="file-preview">
-                                <div className="preview-header">
-                                    <h3>{selectedFile.name}</h3>
-                                    <div className="preview-actions">
-                                        {selectedFile.is_editable && !editingFile && (
-                                            <Button size="sm" onClick={handleEditFile}>
-                                                <Edit3 size={14} />
-                                                Edit
-                                            </Button>
-                                        )}
-                                        {editingFile && (
-                                            <>
-                                                <Button variant="outline" size="sm" onClick={() => setEditingFile(null)}>
-                                                    Cancel
-                                                </Button>
-                                                <Button size="sm" onClick={handleSaveFile}>
-                                                    Save
-                                                </Button>
-                                            </>
-                                        )}
-                                        <Button variant="ghost" size="icon" className="btn-sm" onClick={() => setSelectedFile(null)}>
-                                            <X size={16} />
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div className="preview-info">
-                                    <span>Size: {selectedFile.size_human}</span>
-                                    <span>Owner: {selectedFile.owner}</span>
-                                    <span>Group: {selectedFile.group}</span>
-                                    {selectedFile.mime_type && <span>Type: {selectedFile.mime_type}</span>}
-                                </div>
-                                {selectedFile.is_editable ? (
-                                    <textarea
-                                        className="file-editor"
-                                        value={fileContent}
-                                        onChange={(e) => setFileContent(e.target.value)}
-                                        readOnly={!editingFile}
-                                        spellCheck={false}
-                                    />
-                                ) : (
-                                    <div className="preview-unavailable">
-                                        <EyeOff size={48} strokeWidth={1.5} />
-                                        <p>Preview not available for this file type</p>
-                                        <Button onClick={() => handleDownload(selectedFile)}>
-                                            <Download size={16} />
-                                            Download File
-                                        </Button>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Sidebar */}
-                {sidebarVisible && (
-                    <div className="file-manager-sidebar">
-                        {/* Disk Usage Section */}
+                        {/* Disk Usage */}
                         <div className="sidebar-section">
-                            <button
-                                className="sidebar-section-header"
-                                onClick={() => setDiskCollapsed(!diskCollapsed)}
-                            >
+                            <button className="sidebar-section-header" onClick={() => setDiskCollapsed(!diskCollapsed)}>
                                 <HardDrive size={16} />
                                 <span>Disk Usage</span>
                                 {diskCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
                             </button>
-
                             {!diskCollapsed && (
                                 <div className="sidebar-section-content">
                                     <div className="disk-header-row">
@@ -589,18 +1028,10 @@ function FileManager() {
                                                 {diskLastUpdated.toLocaleTimeString()}
                                             </span>
                                         )}
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="btn-sm"
-                                            onClick={loadDiskMounts}
-                                            disabled={diskLoading}
-                                            title="Refresh"
-                                        >
+                                        <button className="toolbar-icon-btn small" onClick={loadDiskMounts} disabled={diskLoading} title="Refresh">
                                             <RefreshCw size={12} className={diskLoading ? 'spinning' : ''} />
-                                        </Button>
+                                        </button>
                                     </div>
-
                                     {diskMounts.map((mount, idx) => (
                                         <div key={idx} className="disk-mount-item">
                                             <div className="disk-mount-header">
@@ -610,10 +1041,7 @@ function FileManager() {
                                                 </span>
                                             </div>
                                             <div className={`disk-progress ${getDiskColor(mount.percent)}`}>
-                                                <div
-                                                    className="disk-progress-fill"
-                                                    style={{ width: `${mount.percent}%` }}
-                                                />
+                                                <div className="disk-progress-fill" style={{ width: `${mount.percent}%` }} />
                                             </div>
                                             <div className="disk-mount-info">
                                                 <span>{mount.used_human} / {mount.total_human}</span>
@@ -625,60 +1053,47 @@ function FileManager() {
                             )}
                         </div>
 
-                        {/* Analysis Section */}
+                        {/* Analysis */}
                         {(directoryAnalysis || analysisLoading) && (
                             <div className="sidebar-section analysis-section">
                                 <div className="sidebar-section-header static">
                                     <BarChart3 size={16} />
                                     <span>Directory Analysis</span>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="btn-sm close-btn"
-                                        onClick={closeAnalysis}
-                                    >
+                                    <button className="toolbar-icon-btn small" onClick={() => { setDirectoryAnalysis(null); setTypeBreakdown(null); }}>
                                         <X size={14} />
-                                    </Button>
+                                    </button>
                                 </div>
-
                                 <div className="sidebar-section-content">
                                     {analysisLoading ? (
                                         <div className="analysis-loading">
-                                            <Spinner />
-                                            <span>Analyzing...</span>
+                                            <Spinner /><span>Analyzing…</span>
                                         </div>
                                     ) : (
                                         <>
                                             <div className="analysis-total">
                                                 Total: {directoryAnalysis.total_size_human}
                                             </div>
-
-                                            {/* View Toggle */}
                                             <div className="analysis-tabs">
                                                 <button
                                                     className={`analysis-tab ${analysisView === 'directories' ? 'active' : ''}`}
                                                     onClick={() => setAnalysisView('directories')}
                                                 >
-                                                    <Folder size={14} />
-                                                    Directories
+                                                    <Folder size={14} /> Directories
                                                 </button>
                                                 <button
                                                     className={`analysis-tab ${analysisView === 'files' ? 'active' : ''}`}
                                                     onClick={() => setAnalysisView('files')}
                                                 >
-                                                    <File size={14} />
-                                                    Files
+                                                    <File size={14} /> Files
                                                 </button>
                                             </div>
-
-                                            {/* Directory Sizes */}
                                             {analysisView === 'directories' && (
                                                 <div className="analysis-bars">
                                                     {directoryAnalysis.directories.slice(0, 10).map((dir, idx) => (
                                                         <div
                                                             key={idx}
                                                             className="analysis-bar-item"
-                                                            onClick={() => setCurrentPath(dir.path)}
+                                                            onClick={() => navigateTo(dir.path)}
                                                         >
                                                             <div className="analysis-bar-header">
                                                                 <span className="analysis-bar-name">
@@ -688,36 +1103,23 @@ function FileManager() {
                                                                 <span className="analysis-bar-size">{dir.size_human}</span>
                                                             </div>
                                                             <div className="analysis-bar-track">
-                                                                <div
-                                                                    className="analysis-bar-fill"
-                                                                    style={{ width: `${dir.percent}%` }}
-                                                                />
+                                                                <div className="analysis-bar-fill" style={{ width: `${dir.percent}%` }} />
                                                             </div>
                                                         </div>
                                                     ))}
-                                                    {directoryAnalysis.directories.length === 0 && (
-                                                        <div className="analysis-empty">No subdirectories</div>
-                                                    )}
+                                                    {directoryAnalysis.directories.length === 0 && <div className="analysis-empty">No subdirectories</div>}
                                                 </div>
                                             )}
-
-                                            {/* Largest Files */}
                                             {analysisView === 'files' && (
                                                 <div className="analysis-files">
                                                     {directoryAnalysis.largest_files.slice(0, 10).map((file, idx) => (
-                                                        <div
-                                                            key={idx}
-                                                            className="analysis-file-item"
-                                                            onClick={() => handleFileClick(file)}
-                                                        >
+                                                        <div key={idx} className="analysis-file-item" onClick={() => handleOpen(file)}>
                                                             <File size={12} />
                                                             <span className="analysis-file-name">{file.name}</span>
                                                             <span className="analysis-file-size">{file.size_human}</span>
                                                         </div>
                                                     ))}
-                                                    {directoryAnalysis.largest_files.length === 0 && (
-                                                        <div className="analysis-empty">No files</div>
-                                                    )}
+                                                    {directoryAnalysis.largest_files.length === 0 && <div className="analysis-empty">No files</div>}
                                                 </div>
                                             )}
                                         </>
@@ -726,7 +1128,7 @@ function FileManager() {
                             </div>
                         )}
 
-                        {/* Type Breakdown Section */}
+                        {/* Type breakdown chart */}
                         {typeBreakdown && typeBreakdown.breakdown && typeBreakdown.breakdown.length > 0 && (
                             <div className="sidebar-section">
                                 <div className="sidebar-section-header static">
@@ -754,7 +1156,7 @@ function FileManager() {
                                                 <Tooltip
                                                     formatter={(value, name) => [
                                                         typeBreakdown.breakdown.find(b => b.name === name)?.size_human || value,
-                                                        name
+                                                        name,
                                                     ]}
                                                 />
                                             </RechartsPie>
@@ -763,10 +1165,7 @@ function FileManager() {
                                     <div className="type-breakdown-legend">
                                         {typeBreakdown.breakdown.map((cat, idx) => (
                                             <div key={idx} className="type-legend-item">
-                                                <span
-                                                    className="type-legend-color"
-                                                    style={{ background: cat.color }}
-                                                />
+                                                <span className="type-legend-color" style={{ background: cat.color }} />
                                                 <span className="type-legend-name">{cat.name}</span>
                                                 <span className="type-legend-size">{cat.size_human}</span>
                                             </div>
@@ -775,19 +1174,173 @@ function FileManager() {
                                 </div>
                             </div>
                         )}
-                    </div>
+                    </aside>
                 )}
+
+                <main className="file-manager-main">
+                    <div
+                        className="file-list-container"
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget) clearSelection();
+                        }}
+                    >
+                        {dragActive && (
+                            <div className="drag-overlay">
+                                <div className="drag-overlay-inner">
+                                    <CloudUpload size={56} strokeWidth={1.5} />
+                                    <h3>Drop to upload</h3>
+                                    <p>Files will be uploaded to <code>{currentPath}</code></p>
+                                </div>
+                            </div>
+                        )}
+
+                        {loading ? (
+                            <div className="loading-state">
+                                <Spinner />
+                            </div>
+                        ) : sortedFiltered.length === 0 ? (
+                            <div className="empty-state">
+                                <Folder size={56} strokeWidth={1.25} />
+                                <h3>{searchResults ? 'No matches' : activeFilter !== 'all' ? `No ${activeFilter} files` : 'This folder is empty'}</h3>
+                                <p>
+                                    {searchResults
+                                        ? 'Try a different search term or browse another folder.'
+                                        : activeFilter !== 'all'
+                                            ? 'Try a different filter.'
+                                            : 'Drop files here, or use the buttons above to create something new.'}
+                                </p>
+                            </div>
+                        ) : viewMode === 'grid' ? (
+                            <div className="file-grid">
+                                {sortedFiltered.map((entry) => (
+                                    <FileCard
+                                        key={entry.path}
+                                        entry={entry}
+                                        selected={selectedPaths.has(entry.path)}
+                                        selectMode={selectMode}
+                                        onOpen={handleOpen}
+                                        onToggleSelect={handleToggleSelect}
+                                        onContext={openContextMenu}
+                                    />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="file-list">
+                                <div className="file-list-header">
+                                    <span className="col-check">
+                                        <button
+                                            className="checkbox-btn"
+                                            onClick={() => {
+                                                if (selectedPaths.size === sortedFiltered.length) clearSelection();
+                                                else setSelectedPaths(new Set(sortedFiltered.map((x) => x.path)));
+                                            }}
+                                        >
+                                            <span className={`checkbox ${selectedPaths.size === sortedFiltered.length && sortedFiltered.length > 0 ? 'checked' : ''}`}>
+                                                {selectedPaths.size === sortedFiltered.length && sortedFiltered.length > 0 && <Check size={12} />}
+                                            </span>
+                                        </button>
+                                    </span>
+                                    <span className="col-name">Name</span>
+                                    <span className="col-size">Size</span>
+                                    <span className="col-modified">Modified</span>
+                                    <span className="col-permissions">Permissions</span>
+                                    <span className="col-actions">Actions</span>
+                                </div>
+                                {sortedFiltered.map((entry) => (
+                                    <FileRow
+                                        key={entry.path}
+                                        entry={entry}
+                                        selected={selectedPaths.has(entry.path)}
+                                        selectMode={selectMode}
+                                        onOpen={handleOpen}
+                                        onToggleSelect={handleToggleSelect}
+                                        onContext={openContextMenu}
+                                        onDownload={(e) => api.downloadFile(e.path)}
+                                        onRename={openRenameModal}
+                                        onPermissions={openPermissionsModal}
+                                        onDelete={(e) => handleDelete(e)}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </main>
             </div>
 
-            {/* New File Modal */}
+            <div className="status-bar">
+                <div className="status-bar-left">
+                    <span className="status-item">
+                        <span className="status-label">Total</span>
+                        <span className="status-value">{stats.total} item{stats.total !== 1 ? 's' : ''}</span>
+                    </span>
+                    <span className="status-divider" />
+                    <span className="status-item">
+                        <Folder size={12} />
+                        <span>{stats.folders} folder{stats.folders !== 1 ? 's' : ''}</span>
+                    </span>
+                    <span className="status-item">
+                        <File size={12} />
+                        <span>{stats.files} file{stats.files !== 1 ? 's' : ''}</span>
+                    </span>
+                    {stats.totalBytes > 0 && (
+                        <>
+                            <span className="status-divider" />
+                            <span className="status-item">
+                                <span className="status-label">Size</span>
+                                <span className="status-value">{formatBytes(stats.totalBytes)}</span>
+                            </span>
+                        </>
+                    )}
+                </div>
+                <div className="status-bar-right">
+                    {stats.selectedCount > 0 && (
+                        <span className="status-selection">
+                            {stats.selectedCount} selected · {formatBytes(stats.selectedBytes)}
+                        </span>
+                    )}
+                    <span className="status-shortcuts" title="Keyboard shortcuts">
+                        ⌫ Up · Del Delete · F2 Rename · ⌘A All
+                    </span>
+                </div>
+            </div>
+
+            <ContextMenu
+                menu={contextMenu}
+                selectionCount={selectedEntries.length}
+                isPinned={isPinned}
+                onClose={() => setContextMenu(null)}
+                onOpen={handleOpen}
+                onDownload={(e) => api.downloadFile(e.path)}
+                onRename={openRenameModal}
+                onPermissions={openPermissionsModal}
+                onCopyPath={copyPathToClipboard}
+                onTogglePin={togglePin}
+                onDelete={(e) => handleDelete(selectedEntries.length > 1 ? selectedEntries : e)}
+            />
+
+            <PreviewDrawer
+                file={previewFile}
+                fileContent={fileContent}
+                setFileContent={setFileContent}
+                editing={editing}
+                onStartEdit={() => setEditing(true)}
+                onCancelEdit={() => setEditing(false)}
+                onSave={handleSaveFile}
+                onClose={() => { setPreviewFile(null); setEditing(false); }}
+                onDownload={(e) => api.downloadFile(e.path)}
+                onRename={openRenameModal}
+                onPermissions={openPermissionsModal}
+                onCopyPath={copyPathToClipboard}
+                onDelete={(e) => handleDelete(e)}
+            />
+
+            {/* Modals */}
             {showNewFileModal && (
                 <div className="modal-overlay" onClick={() => setShowNewFileModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Create New File</h2>
-                            <Button variant="ghost" size="icon" onClick={() => setShowNewFileModal(false)}>
-                                <X size={20} />
-                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowNewFileModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
@@ -798,31 +1351,25 @@ function FileManager() {
                                     onChange={(e) => setNewFileName(e.target.value)}
                                     placeholder="example.txt"
                                     autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateFile()}
                                 />
                             </div>
-                            <p className="text-muted">File will be created in: {currentPath}</p>
+                            <p className="text-muted">Will be created in: <code>{currentPath}</code></p>
                         </div>
                         <div className="modal-footer">
-                            <Button variant="outline" onClick={() => setShowNewFileModal(false)}>
-                                Cancel
-                            </Button>
-                            <Button onClick={handleCreateFile}>
-                                Create File
-                            </Button>
+                            <Button variant="outline" onClick={() => setShowNewFileModal(false)}>Cancel</Button>
+                            <Button onClick={handleCreateFile}>Create File</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* New Folder Modal */}
             {showNewFolderModal && (
                 <div className="modal-overlay" onClick={() => setShowNewFolderModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Create New Folder</h2>
-                            <Button variant="ghost" size="icon" onClick={() => setShowNewFolderModal(false)}>
-                                <X size={20} />
-                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowNewFolderModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
@@ -833,31 +1380,25 @@ function FileManager() {
                                     onChange={(e) => setNewFolderName(e.target.value)}
                                     placeholder="new-folder"
                                     autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
                                 />
                             </div>
-                            <p className="text-muted">Folder will be created in: {currentPath}</p>
+                            <p className="text-muted">Will be created in: <code>{currentPath}</code></p>
                         </div>
                         <div className="modal-footer">
-                            <Button variant="outline" onClick={() => setShowNewFolderModal(false)}>
-                                Cancel
-                            </Button>
-                            <Button onClick={handleCreateFolder}>
-                                Create Folder
-                            </Button>
+                            <Button variant="outline" onClick={() => setShowNewFolderModal(false)}>Cancel</Button>
+                            <Button onClick={handleCreateFolder}>Create Folder</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Rename Modal */}
             {showRenameModal && (
                 <div className="modal-overlay" onClick={() => setShowRenameModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Rename {renameTarget?.is_dir ? 'Folder' : 'File'}</h2>
-                            <Button variant="ghost" size="icon" onClick={() => setShowRenameModal(false)}>
-                                <X size={20} />
-                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowRenameModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
@@ -867,30 +1408,24 @@ function FileManager() {
                                     value={newName}
                                     onChange={(e) => setNewName(e.target.value)}
                                     autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleRename()}
                                 />
                             </div>
                         </div>
                         <div className="modal-footer">
-                            <Button variant="outline" onClick={() => setShowRenameModal(false)}>
-                                Cancel
-                            </Button>
-                            <Button onClick={handleRename}>
-                                Rename
-                            </Button>
+                            <Button variant="outline" onClick={() => setShowRenameModal(false)}>Cancel</Button>
+                            <Button onClick={handleRename}>Rename</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Permissions Modal */}
             {showPermissionsModal && (
                 <div className="modal-overlay" onClick={() => setShowPermissionsModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Change Permissions</h2>
-                            <Button variant="ghost" size="icon" onClick={() => setShowPermissionsModal(false)}>
-                                <X size={20} />
-                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowPermissionsModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
@@ -904,31 +1439,24 @@ function FileManager() {
                                     autoFocus
                                 />
                             </div>
-                            <p className="text-muted">
-                                Current: {permissionsTarget?.permissions} ({permissionsTarget?.permissions_octal})
-                            </p>
+                            <p className="text-muted">Current: {permissionsTarget?.permissions} ({permissionsTarget?.permissions_octal})</p>
                             <div className="permissions-help">
-                                <p>Common permissions:</p>
+                                <p>Common values:</p>
                                 <ul>
-                                    <li><code>755</code> - Owner: rwx, Group/Other: rx (directories)</li>
-                                    <li><code>644</code> - Owner: rw, Group/Other: r (files)</li>
-                                    <li><code>600</code> - Owner: rw only (private files)</li>
+                                    <li><code>755</code> Owner: rwx, Group/Other: rx (directories)</li>
+                                    <li><code>644</code> Owner: rw, Group/Other: r (files)</li>
+                                    <li><code>600</code> Owner: rw only (private files)</li>
                                 </ul>
                             </div>
                         </div>
                         <div className="modal-footer">
-                            <Button variant="outline" onClick={() => setShowPermissionsModal(false)}>
-                                Cancel
-                            </Button>
-                            <Button onClick={handleChangePermissions}>
-                                Apply
-                            </Button>
+                            <Button variant="outline" onClick={() => setShowPermissionsModal(false)}>Cancel</Button>
+                            <Button onClick={handleChangePermissions}>Apply</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Confirm Dialog */}
             {confirmDialog && (
                 <ConfirmDialog
                     title={confirmDialog.title}

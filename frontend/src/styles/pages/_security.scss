@@ -597,12 +597,6 @@
         }
     }
 
-    .empty-state-sm {
-        text-align: center;
-        padding: $space-6;
-        color: $text-secondary;
-    }
-
     .install-info {
         margin-top: $space-4;
         padding: $space-4;
@@ -910,7 +904,22 @@
 }
 
 .empty-state-sm {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     text-align: center;
+    gap: $space-3;
     padding: $space-6;
     color: $text-secondary;
+
+    svg {
+        color: $text-tertiary;
+        opacity: 0.7;
+        flex-shrink: 0;
+    }
+
+    p {
+        margin: 0;
+    }
 }

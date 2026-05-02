@@ -63,3 +63,16 @@
         opacity: 1;
     }
 }
+
+.error-message,
+.error-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: $space-2;
+    line-height: 1.5;
+
+    > svg {
+        flex-shrink: 0;
+        margin-top: 2px;
+    }
+}

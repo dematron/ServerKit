@@ -3,7 +3,7 @@ import { cva } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const badgeVariants = cva(
-  'inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors leading-none',
+  'inline-flex min-h-6 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold leading-none transition-colors',
   {
     variants: {
       variant: {
@@ -24,7 +24,12 @@ const badgeVariants = cva(
 
 function Badge({ className, variant, ...props }) {
   return (
-    <span className={cn(badgeVariants({ variant }), className)} {...props} />
+    <span
+      data-slot="badge"
+      data-variant={variant || 'default'}
+      className={cn(badgeVariants({ variant }), className)}
+      {...props}
+    />
   );
 }
 

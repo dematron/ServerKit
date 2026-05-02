@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 
 const iconMap = { danger: AlertTriangle, warning: AlertCircle, info: Info };
 const iconColor = { danger: 'text-destructive', warning: 'text-yellow-400', info: 'text-blue-400' };
+const iconBg = { danger: 'bg-destructive/10', warning: 'bg-yellow-500/10', info: 'bg-blue-500/10' };
 
 export function ConfirmDialog({
   isOpen,
@@ -37,22 +38,31 @@ export function ConfirmDialog({
   const Icon = iconMap[variant] || AlertTriangle;
   const isConfirmDisabled = requireConfirmation && inputValue !== requireConfirmation;
 
-  return (
-    <AlertDialog open={isOpen} onOpenChange={(v) => !v && onCancel()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <div className="flex items-start gap-3">
-            <div className={cn('flex-shrink-0 mt-0.5', iconColor[variant] || 'text-destructive')}>
-              <Icon size={22} />
+    return (
+      <AlertDialog open={isOpen} onOpenChange={(v) => !v && onCancel()}>
+      <AlertDialogContent className="sm:max-w-xl">
+        <AlertDialogHeader className="items-center text-center sm:text-center">
+          <div className="flex flex-col items-center gap-3">
+            <div
+              className={cn(
+                'flex size-12 shrink-0 items-center justify-center rounded-full border',
+                iconBg[variant] || iconBg.danger,
+                iconColor[variant] || 'text-destructive',
+                variant === 'danger' && 'border-destructive/20',
+                variant === 'warning' && 'border-yellow-500/20',
+                variant === 'info' && 'border-blue-500/20'
+              )}
+            >
+              <Icon size={24} />
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0">
               <AlertDialogTitle>{title}</AlertDialogTitle>
               {message && <AlertDialogDescription className="mt-1.5">{message}</AlertDialogDescription>}
               {details && <p className="text-sm text-muted-foreground mt-1.5">{details}</p>}
             </div>
           </div>
           {requireConfirmation && (
-            <div className="space-y-1.5 mt-2">
+            <div className="space-y-2 mt-2 w-full text-left">
               <Label className="text-muted-foreground">
                 Type <strong className="text-foreground">{requireConfirmation}</strong> to confirm:
               </Label>
@@ -66,7 +76,7 @@ export function ConfirmDialog({
             </div>
           )}
         </AlertDialogHeader>
-        <AlertDialogFooter>
+        <AlertDialogFooter className="sm:justify-center">
           <AlertDialogCancel onClick={onCancel}>{cancelText}</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}

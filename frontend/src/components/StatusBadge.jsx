@@ -36,7 +36,7 @@ export default function StatusBadge({ status, label, className = '' }) {
   const displayLabel = label || STATUS_LABEL[key] || status;
 
   return (
-    <Badge variant={variant} className={cn('gap-1.5', className)}>
+    <Badge variant={variant} className={cn('status-badge-token', className)}>
       <span className={cn('size-1.5 rounded-full shrink-0', dotColor)} />
       {displayLabel}
     </Badge>

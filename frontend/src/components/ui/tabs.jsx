@@ -169,18 +169,20 @@ const TabsList = React.forwardRef(({ className, children, ...props }, ref) => {
                 const triggerEl = triggerRefs.current[idx];
                 const isActive = triggerEl?.dataset?.state === 'active';
                 return (
-                  <button
+                  <TabsPrimitive.Trigger
                     key={`overflow-${child.key ?? idx}`}
                     type="button"
+                    value={child.props.value}
+                    disabled={child.props.disabled}
                     className="tabs-overflow-item"
                     data-state={isActive ? 'active' : 'inactive'}
-                    onClick={() => {
-                      triggerRefs.current[idx]?.click();
+                    onClick={(event) => {
+                      child.props.onClick?.(event);
                       setPopoverOpen(false);
                     }}
                   >
                     {child.props.children}
-                  </button>
+                  </TabsPrimitive.Trigger>
                 );
               })}
             </div>

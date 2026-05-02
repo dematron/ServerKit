@@ -1105,13 +1105,13 @@ $lk-default:  #71717a;
 .journal-controls {
     display: flex;
     align-items: flex-end;
-    gap: $space-6;
+    gap: $space-4;
     flex-wrap: wrap;
 
     .control-group {
         display: flex;
         flex-direction: column;
-        gap: $space-1;
+        gap: $space-2;
 
         label {
             font-size: $font-size-xs;
@@ -1121,9 +1121,10 @@ $lk-default:  #71717a;
 
         input,
         select {
-            padding: $space-1 $space-2;
+            min-height: 36px;
+            padding: $space-2 $space-3;
             border: 1px solid $border-subtle;
-            border-radius: $radius-sm;
+            border-radius: $radius-md;
             background: $bg-card;
             font-size: $font-size-sm;
         }
@@ -1147,11 +1148,13 @@ $lk-default:  #71717a;
 }
 
 .unit-chip {
-    padding: 2px $space-2;
+    min-height: 24px;
+    padding: 4px $space-3;
     border: 1px solid $border-subtle;
     border-radius: $radius-full;
     background: $bg-card;
     font-size: $font-size-xs;
+    color: $text-secondary;
     cursor: pointer;
     transition: all 0.15s ease;
 
@@ -1337,6 +1340,12 @@ $lk-default:  #71717a;
     .action-buttons {
         display: flex;
         gap: $space-1;
+        align-items: center;
+    }
+
+    .process-action-button {
+        width: 28px;
+        height: 28px;
     }
 }
 
@@ -1530,6 +1539,11 @@ $lk-default:  #71717a;
         margin-top: auto;
         padding-top: $space-3;
         border-top: 1px solid $border-subtle;
+
+        .size-8,
+        button {
+            min-width: 64px;
+        }
     }
 }
 

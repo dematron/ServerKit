@@ -16,16 +16,23 @@ const buttonVariants = cva(
         link:        'text-primary underline-offset-4 hover:underline',
       },
       size: {
-        default: 'h-9 px-4 py-2 has-[>svg]:px-3',
-        sm:      'h-8 rounded-md gap-1.5 px-3 text-xs has-[>svg]:px-2.5',
-        lg:      'h-10 rounded-md px-6 has-[>svg]:px-4',
-        icon:    'size-9',
+        default: 'h-10 min-w-24 px-5 py-2.5 has-[>svg]:px-4',
+        sm:      'h-8 min-w-[4.5rem] rounded-md gap-1.5 px-3.5 text-xs has-[>svg]:px-3',
+        lg:      'h-11 min-w-32 rounded-lg px-7 text-base has-[>svg]:px-5',
+        icon:    'size-9 min-w-0 p-0',
       },
     },
     defaultVariants: {
       variant: 'default',
       size: 'default',
     },
+    compoundVariants: [
+      {
+        variant: 'ghost',
+        size: 'icon',
+        className: 'border border-border bg-transparent text-muted-foreground shadow-xs hover:bg-accent hover:text-accent-foreground',
+      },
+    ],
   }
 );
 

@@ -96,6 +96,7 @@ new_templates/
 nul
 SECURITY_AUDIT.md
 APP_IMPROVEMENTS.md
+UI_REPORT.md
 *.png
 
 # MSI / build artifacts that should not be committed.

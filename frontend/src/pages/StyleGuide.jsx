@@ -51,6 +51,20 @@ const SECTIONS = [
 ];
 
 const SECTION_IDS = SECTIONS.map(s => s.id);
+const MANY_TAB_ITEMS = [
+    ['overview', 'Overview'],
+    ['docker', 'Docker'],
+    ['metrics', 'Metrics'],
+    ['settings', 'Settings'],
+    ['cron', 'Cron Jobs'],
+    ['packages', 'Packages'],
+    ['services', 'Services'],
+    ['security', 'Security'],
+    ['cloudflared', 'Cloudflared'],
+    ['terminal', 'Terminal'],
+    ['logs', 'Logs'],
+    ['backups', 'Backups'],
+];
 
 export default function StyleGuide() {
     const [activeSection, setActiveSection] = useTabParam('/style-guide', SECTION_IDS, 'colors');
@@ -58,6 +72,9 @@ export default function StyleGuide() {
     const [modalOpen, setModalOpen] = useState(false);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [confirmVariant, setConfirmVariant] = useState('danger');
+    const [controlledDemoTab, setControlledDemoTab] = useState('general');
+    const [halfDemoTab, setHalfDemoTab] = useState('summary');
+    const [halfOverflowTab, setHalfOverflowTab] = useState('overview');
     const [inputValue, setInputValue] = useState('');
     const [selectValue, setSelectValue] = useState('');
     const [checkValue, setCheckValue] = useState(false);
@@ -745,7 +762,7 @@ export default function StyleGuide() {
                 {/* ── TABS ── */}
                 {activeSection === 'tabs' && (
                     <div className="space-y-6">
-                        <SectionTitle title="Tabs (shadcn)" />
+                        <SectionTitle title="Tabs (Basic)" />
                         <div className="card" style={{ padding: 24 }}>
                             <Tabs defaultValue="tab1">
                                 <TabsList>
@@ -763,6 +780,79 @@ export default function StyleGuide() {
                                     <p className="text-secondary" style={{ paddingTop: 16 }}>Monitoring tab content.</p>
                                 </TabsContent>
                             </Tabs>
+                        </div>
+
+                        <SectionTitle title="Tabs (Controlled)" />
+                        <p className="text-sm text-secondary mb-2">Controlled value/onValueChange usage. This should match URL-backed pages behaviorally.</p>
+                        <div className="card" style={{ padding: 24 }}>
+                            <Tabs value={controlledDemoTab} onValueChange={setControlledDemoTab}>
+                                <TabsList>
+                                    <TabsTrigger value="general"><Server size={14} /> General</TabsTrigger>
+                                    <TabsTrigger value="security"><Shield size={14} /> Security</TabsTrigger>
+                                    <TabsTrigger value="monitoring"><Activity size={14} /> Monitoring</TabsTrigger>
+                                    <TabsTrigger value="disabled" disabled><Lock size={14} /> Disabled</TabsTrigger>
+                                </TabsList>
+                                <TabsContent value="general">
+                                    <p className="text-secondary" style={{ paddingTop: 16 }}>Controlled general content.</p>
+                                </TabsContent>
+                                <TabsContent value="security">
+                                    <p className="text-secondary" style={{ paddingTop: 16 }}>Controlled security content.</p>
+                                </TabsContent>
+                                <TabsContent value="monitoring">
+                                    <p className="text-secondary" style={{ paddingTop: 16 }}>Controlled monitoring content.</p>
+                                </TabsContent>
+                            </Tabs>
+                        </div>
+
+                        <SectionTitle title="Tabs (Overflow Menu)" />
+                        <p className="text-sm text-secondary mb-2">Many tabs force the overflow menu. Selecting an item from the ellipsis must activate the tab and close the popover.</p>
+                        <div className="card" style={{ padding: 24 }}>
+                            <Tabs defaultValue="overview">
+                                <TabsList>
+                                    {MANY_TAB_ITEMS.map(([value, label]) => (
+                                        <TabsTrigger key={value} value={value}>{label}</TabsTrigger>
+                                    ))}
+                                </TabsList>
+                                {MANY_TAB_ITEMS.map(([value, label]) => (
+                                    <TabsContent key={value} value={value}>
+                                        <p className="text-secondary" style={{ paddingTop: 16 }}>{label} tab content.</p>
+                                    </TabsContent>
+                                ))}
+                            </Tabs>
+                        </div>
+
+                        <SectionTitle title="Tabs (Half + Half Layout)" />
+                        <p className="text-sm text-secondary mb-2">Constrained cards catch layout bugs that full-width tabs hide.</p>
+                        <div className="styleguide__split-demo">
+                            <div className="card" style={{ padding: 24 }}>
+                                <Tabs value={halfDemoTab} onValueChange={setHalfDemoTab}>
+                                    <TabsList>
+                                        <TabsTrigger value="summary">Summary</TabsTrigger>
+                                        <TabsTrigger value="activity">Activity</TabsTrigger>
+                                    </TabsList>
+                                    <TabsContent value="summary">
+                                        <p className="text-secondary" style={{ paddingTop: 16 }}>Short two-tab card content.</p>
+                                    </TabsContent>
+                                    <TabsContent value="activity">
+                                        <p className="text-secondary" style={{ paddingTop: 16 }}>Recent activity content.</p>
+                                    </TabsContent>
+                                </Tabs>
+                            </div>
+
+                            <div className="card" style={{ padding: 24 }}>
+                                <Tabs value={halfOverflowTab} onValueChange={setHalfOverflowTab}>
+                                    <TabsList>
+                                        {MANY_TAB_ITEMS.map(([value, label]) => (
+                                            <TabsTrigger key={value} value={value}>{label}</TabsTrigger>
+                                        ))}
+                                    </TabsList>
+                                    {MANY_TAB_ITEMS.map(([value, label]) => (
+                                        <TabsContent key={value} value={value}>
+                                            <p className="text-secondary" style={{ paddingTop: 16 }}>{label} content inside a half-width card.</p>
+                                        </TabsContent>
+                                    ))}
+                                </Tabs>
+                            </div>
                         </div>
                     </div>
                 )}

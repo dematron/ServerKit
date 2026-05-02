@@ -1,19 +1,19 @@
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from '@/components/ui/sheet';
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
-// Size → Tailwind max-width on >=sm screens. Mobile is always full-width.
+// Size → Tailwind max-width on >=sm screens. Mobile is always nearly full-width.
 const SIZE_CLASS = {
-  sm:  'sm:max-w-sm',          // 384px
-  md:  'sm:max-w-md',          // 448px (default)
-  lg:  'sm:max-w-2xl',         // 672px
-  xl:  'sm:max-w-4xl',         // 896px
-  '2xl': 'sm:max-w-6xl',       // 1152px — large workspaces (QueryRunner, CompareView)
+  sm:  'sm:max-w-sm',
+  md:  'sm:max-w-lg',
+  lg:  'sm:max-w-2xl',
+  xl:  'sm:max-w-4xl',
+  '2xl': 'sm:max-w-6xl',
 };
 
 export default function Modal({
@@ -28,30 +28,28 @@ export default function Modal({
   const sizeClass = SIZE_CLASS[size] || SIZE_CLASS.md;
 
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent
-        side="right"
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent
         className={cn(
-          // Override Sheet's default sm:max-w-md with our explicit size token.
-          'p-0 flex flex-col gap-0',
+          'max-h-[90vh] overflow-hidden p-0 flex flex-col gap-0',
           sizeClass,
           className
         )}
       >
         {title && (
-          <SheetHeader className="px-6 py-4 border-b border-border space-y-0">
-            <SheetTitle>{title}</SheetTitle>
-          </SheetHeader>
+          <DialogHeader className="px-6 py-4 pr-12 border-b border-border space-y-0">
+            <DialogTitle>{title}</DialogTitle>
+          </DialogHeader>
         )}
 
         <div className="flex-1 overflow-y-auto px-6 py-4">{children}</div>
 
         {footer && (
-          <SheetFooter className="px-6 py-3 border-t border-border bg-card sm:justify-end">
+          <DialogFooter className="px-6 py-3 border-t border-border bg-card sm:justify-end">
             {footer}
-          </SheetFooter>
+          </DialogFooter>
         )}
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 }

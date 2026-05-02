@@ -4,14 +4,18 @@
 
 // Status badge
 .status-badge {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: $space-2 - 2;
-    padding: $space-1 $space-2 + 2;
+    justify-content: center;
+    gap: $space-1;
+    min-height: 24px;
+    padding: 4px $space-3;
     border-radius: $radius-full;
-    font-size: $font-size-xs + 1;
+    font-size: $font-size-xs;
     font-weight: $font-weight-semibold;
+    line-height: 1;
     border: 1px solid transparent;
+    white-space: nowrap;
 }
 
 .status-dot {
@@ -46,8 +50,8 @@
 // App type badge
 .app-type {
     background: $bg-hover;
-    padding: $space-1 - 2 $space-2;
-    border-radius: $radius-sm;
+    padding: 5px $space-3;
+    border-radius: $radius-md;
     font-weight: $font-weight-semibold;
     font-size: $font-size-xs;
     letter-spacing: 0.5px;
@@ -56,10 +60,13 @@
 
 // SSL badge
 .ssl-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: $space-1;
     background: $success-bg;
     color: $success;
-    padding: $space-1 - 2 $space-2;
-    border-radius: $radius-sm;
+    padding: 6px $space-3;
+    border-radius: $radius-md;
     font-size: $font-size-xs;
     font-weight: $font-weight-semibold;
 }
@@ -80,8 +87,8 @@
     align-items: center;
     gap: $space-1;
     background: $bg-hover;
-    padding: $space-1 - 2 $space-2;
-    border-radius: $radius-sm;
+    padding: 5px $space-3;
+    border-radius: $radius-md;
     font-size: $font-size-xs;
     font-weight: $font-weight-semibold;
     text-transform: uppercase;
@@ -123,8 +130,8 @@
     display: inline-flex;
     align-items: center;
     gap: $space-1;
-    padding: $space-1 - 2 $space-2;
-    border-radius: $radius-sm;
+    padding: 5px $space-3;
+    border-radius: $radius-md;
     font-size: $font-size-xs;
     font-weight: $font-weight-semibold;
     text-transform: uppercase;
@@ -159,7 +166,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.25rem 0.5rem;
+    min-height: 1.5rem;
+    padding: 0.25rem 0.625rem;
     font-size: 0.75rem;
     font-weight: 600;
     line-height: 1;
@@ -190,4 +198,73 @@
 .badge-default {
     background-color: fade($text-tertiary-raw, 15%);
     color: $text-tertiary;
+}
+
+[data-slot="badge"] {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: $space-1;
+    min-height: 22px;
+    padding: 4px $space-2;
+    border: 1px solid transparent;
+    border-radius: $radius-md;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+    line-height: 1;
+    letter-spacing: 0;
+    white-space: nowrap;
+    overflow: visible;
+    text-shadow: none;
+    box-shadow: none;
+
+    &[data-variant="default"] {
+        background: $accent-primary;
+        color: white;
+        border-color: transparent;
+    }
+
+    &[data-variant="secondary"] {
+        background: $bg-hover;
+        color: $text-primary;
+        border-color: $border-active;
+    }
+
+    &[data-variant="destructive"] {
+        background: $danger;
+        color: white;
+        border-color: transparent;
+    }
+
+    &[data-variant="outline"] {
+        background: transparent;
+        color: $text-primary;
+        border-color: $border-active;
+    }
+
+    &[data-variant="success"] {
+        background: $success-bg;
+        color: $success;
+        border-color: $success-border;
+    }
+
+    &[data-variant="warning"] {
+        background: $warning-bg;
+        color: $warning;
+        border-color: $warning-border;
+    }
+
+    &[data-variant="info"] {
+        background: $info-bg;
+        color: $info;
+        border-color: $info-border;
+    }
+
+    &.status-badge-token {
+        min-height: 24px;
+        padding: 4px 9px;
+        border-radius: $radius-full;
+        gap: 6px;
+    }
 }

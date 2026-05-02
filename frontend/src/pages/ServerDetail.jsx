@@ -6,12 +6,27 @@ import MetricsGraph from '../components/MetricsGraph';
 import { useConfirm } from '../hooks/useConfirm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DangerZone } from '../components/DangerZone';
-import { InfoList, InfoItem } from '../components/InfoList';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import PackagesTab from '../components/serverdetail/PackagesTab';
 import ServicesTab from '../components/serverdetail/ServicesTab';
 import SystemStatusCard from '../components/serverdetail/SystemStatusCard';
@@ -26,9 +41,10 @@ const ServerDetail = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [showTokenModal, setShowTokenModal] = useState(false);
+    const [securityAlerts, setSecurityAlerts] = useState([]);
     const toast = useToast();
 
-    const validTabs = ['overview', 'docker', 'cron', 'cloudflared', 'packages', 'services', 'metrics', 'settings'];
+    const validTabs = ['overview', 'docker', 'cron', 'cloudflared', 'packages', 'services', 'metrics', 'alerts', 'settings'];
     const activeTab = validTabs.includes(tab) ? tab : 'overview';
 
     const loadServer = useCallback(async () => {
@@ -67,6 +83,39 @@ const ServerDetail = () => {
     useEffect(() => {
         loadServer();
     }, [loadServer]);
+
+    const loadSecurityAlerts = useCallback(async () => {
+        try {
+            const data = await api.getServerSecurityAlerts(id, { status: 'open', limit: 25 });
+            setSecurityAlerts(Array.isArray(data) ? data : []);
+        } catch (err) {
+            console.error('Failed to load security alerts:', err);
+        }
+    }, [id]);
+
+    useEffect(() => {
+        loadSecurityAlerts();
+    }, [loadSecurityAlerts]);
+
+    async function handleAcknowledgeAlert(alertId) {
+        try {
+            await api.acknowledgeAlert(alertId);
+            setSecurityAlerts(prev => prev.map(a =>
+                a.id === alertId ? { ...a, status: 'acknowledged' } : a
+            ));
+        } catch {
+            toast.error('Failed to acknowledge alert');
+        }
+    }
+
+    async function handleResolveAlert(alertId) {
+        try {
+            await api.resolveAlert(alertId);
+            setSecurityAlerts(prev => prev.filter(a => a.id !== alertId));
+        } catch {
+            toast.error('Failed to resolve alert');
+        }
+    }
 
     useEffect(() => {
         if (server?.status === 'online') {
@@ -150,6 +199,25 @@ const ServerDetail = () => {
         );
     }
 
+    // Aggregate any "you should know about this" alerts into a single
+    // Alerts tab. Today only the polling-transport fallback shows up as
+    // a system notification, but this is the place to add future
+    // advisories (stale agent, missing capabilities, expiring tokens,
+    // etc.). Security alerts (raised by the security service) are
+    // surfaced alongside them so there's only one place to look.
+    const systemNotifications = [];
+    if (server.transport === 'poll') {
+        systemNotifications.push({
+            id: 'limited-mode',
+            severity: 'warning',
+            title: 'Limited mode',
+            message:
+                'This agent connected via the REST polling fallback because the WebSocket link could not be established cleanly. Heartbeats and one-shot commands work; live logs, real-time metrics, and terminal sessions are unavailable until the WS link is restored.',
+        });
+    }
+    const openSecurityAlerts = securityAlerts.filter(a => a.status === 'open');
+    const totalAlertCount = systemNotifications.length + openSecurityAlerts.length;
+
     // Show the cron tab only when the agent reported the capability.
     // Older agents (pre-1.6.16) and Windows hosts won't have it set —
     // hiding the tab matches the rest of the panel's "don't expose what
@@ -162,6 +230,9 @@ const ServerDetail = () => {
         ...(server.capabilities?.packages ? [{ id: 'packages', label: 'Packages' }] : []),
         ...(server.capabilities?.systemd ? [{ id: 'services', label: 'Services' }] : []),
         { id: 'metrics', label: 'Metrics' },
+        ...(totalAlertCount > 0
+            ? [{ id: 'alerts', label: 'Alerts', badge: totalAlertCount }]
+            : [{ id: 'alerts', label: 'Alerts' }]),
         { id: 'settings', label: 'Settings' }
     ];
 
@@ -181,21 +252,16 @@ const ServerDetail = () => {
                     <div className="server-detail-header__identity">
                         <div className="server-detail-header__title-row">
                             <h1>{server.name}</h1>
-                            <CopyChip
-                                label="name"
-                                value={server.name}
-                                title="Copy server name"
-                            />
+                            <span className={`status-pill status-pill--${server.status || 'pending'}`}>
+                                <span className="status-pill__dot" />
+                                {server.status || 'pending'}
+                            </span>
                             <CopyChip
                                 label="id"
                                 value={server.id}
                                 title="Copy server ID"
                                 mono
                             />
-                            <span className={`status-pill status-pill--${server.status || 'pending'}`}>
-                                <span className="status-pill__dot" />
-                                {server.status || 'pending'}
-                            </span>
                         </div>
                         <div className="server-detail-header__meta">
                             <span className="mono">{server.hostname || server.ip_address || 'No endpoint configured'}</span>
@@ -215,23 +281,9 @@ const ServerDetail = () => {
                         )}
                     </div>
                 </div>
-                {server.transport === 'poll' && (
-                    <div className="server-detail-header__transport-banner">
-                        <strong>Limited mode:</strong> this agent connected via the REST polling
-                        fallback because the WebSocket link couldn't be established cleanly.
-                        Heartbeats and one-shot commands work; live logs, real-time metrics, and
-                        terminal sessions are unavailable until the WS link is restored.
-                    </div>
-                )}
                 <div className="server-detail-header__actions">
-                    <Button variant="outline" onClick={handlePingServer}>
+                    <Button variant="outline" size="sm" onClick={handlePingServer}>
                         <RefreshIcon /> Ping
-                    </Button>
-                    <Button variant="outline" asChild>
-                        <Link to={`/servers/${id}/docker`}>Docker</Link>
-                    </Button>
-                    <Button onClick={handleOpenTokenModal}>
-                        <KeyIcon /> Connection String
                     </Button>
                 </div>
             </header>
@@ -244,7 +296,10 @@ const ServerDetail = () => {
             >
                 <TabsList>
                     {tabs.map(t => (
-                        <TabsTrigger key={t.id} value={t.id}>{t.label}</TabsTrigger>
+                        <TabsTrigger key={t.id} value={t.id}>
+                            {t.label}
+                            {t.badge ? <span className="tab-badge">{t.badge}</span> : null}
+                        </TabsTrigger>
                     ))}
                 </TabsList>
 
@@ -282,6 +337,14 @@ const ServerDetail = () => {
                     )}
                     <TabsContent value="metrics">
                         <MetricsTab serverId={id} metrics={metrics} />
+                    </TabsContent>
+                    <TabsContent value="alerts">
+                        <AlertsTab
+                            notifications={systemNotifications}
+                            securityAlerts={securityAlerts}
+                            onAcknowledge={handleAcknowledgeAlert}
+                            onResolve={handleResolveAlert}
+                        />
                     </TabsContent>
                     <TabsContent value="settings">
                         <SettingsTab
@@ -332,104 +395,295 @@ const OverviewTab = ({ server, metrics, systemInfo, onRefreshServer }) => {
         return `${hours}h ${mins}m`;
     };
 
+    const isOnline = server.status === 'online';
+    const cpuCores = systemInfo?.cpu_cores || server.cpu_cores;
+    const cpuModel = systemInfo?.cpu_model || server.cpu_model;
+    const totalMemory = systemInfo?.total_memory || server.total_memory;
+    const totalDisk = systemInfo?.total_disk || server.total_disk;
+    const osLabel = `${systemInfo?.os || server.os_type || 'Unknown'}${systemInfo?.os_version || server.os_version ? ` ${systemInfo?.os_version || server.os_version}` : ''}`;
+
     return (
         <div className="overview-tab">
+            <div className="server-stats-strip">
+                <KpiTile
+                    icon={<PulseIcon />}
+                    label="Status"
+                    value={server.status || 'pending'}
+                    tone={isOnline ? 'success' : server.status === 'connecting' ? 'warning' : 'danger'}
+                    accent
+                />
+                <KpiTile
+                    icon={<ClockIcon />}
+                    label="Uptime"
+                    value={isOnline ? formatUptime(metrics?.uptime) : '—'}
+                    sub={isOnline && metrics?.uptime ? 'since last boot' : null}
+                />
+                <KpiGauge
+                    icon={<CpuIcon />}
+                    label="CPU"
+                    percent={isOnline ? metrics?.cpu_percent : null}
+                    color="var(--accent-primary)"
+                    sub={cpuCores ? `${cpuCores} cores` : null}
+                />
+                <KpiGauge
+                    icon={<MemoryIcon />}
+                    label="Memory"
+                    percent={isOnline ? metrics?.memory_percent : null}
+                    color="#10B981"
+                    sub={totalMemory ? formatBytes(totalMemory) : null}
+                />
+                <KpiGauge
+                    icon={<DiskIcon />}
+                    label="Disk"
+                    percent={isOnline ? metrics?.disk_percent : null}
+                    color="#F59E0B"
+                    sub={totalDisk ? formatBytes(totalDisk) : null}
+                />
+            </div>
+
+            {!isOnline && (
+                <div className="info-card offline-card">
+                    <div className="offline-message">
+                        <OfflineIcon />
+                        <h4>Server Offline</h4>
+                        <p>
+                            {server.status === 'pending'
+                                ? 'Waiting for agent installation...'
+                                : 'Unable to connect to the server agent.'}
+                        </p>
+                    </div>
+                </div>
+            )}
+
             <div className="overview-grid">
-                <div className="info-card">
-                    <h3>Server Information</h3>
-                    <InfoList>
-                        <InfoItem label="Status">
+                <div className="info-card info-card--accent">
+                    <h3><ServerIcon /> Server Information</h3>
+                    <ul className="info-rows">
+                        <InfoRow icon={<PulseIcon />} label="Status">
                             <span className={`status-badge ${server.status}`}>{server.status}</span>
-                        </InfoItem>
-                        <InfoItem label="Hostname" value={server.hostname || 'N/A'} />
-                        <InfoItem label="IP Address" value={server.ip_address || 'N/A'} />
-                        <InfoItem label="Group" value={server.group_name || 'Ungrouped'} />
-                        <InfoItem
+                        </InfoRow>
+                        <InfoRow icon={<HostIcon />} label="Hostname" value={server.hostname || 'N/A'} mono />
+                        <InfoRow icon={<NetworkIcon />} label="IP Address" value={server.ip_address || 'N/A'} mono />
+                        <InfoRow icon={<FolderTinyIcon />} label="Group" value={server.group_name || 'Ungrouped'} />
+                        <InfoRow
+                            icon={<ClockIcon />}
                             label="Last Seen"
                             value={server.last_seen ? new Date(server.last_seen).toLocaleString() : 'Never'}
                         />
-                    </InfoList>
+                    </ul>
                 </div>
 
-                <div className="info-card">
-                    <h3>System Information</h3>
-                    <InfoList>
-                        <InfoItem
-                            label="Operating System"
-                            value={`${systemInfo?.os || server.os_type || 'Unknown'}${systemInfo?.os_version || server.os_version ? ` ${systemInfo?.os_version || server.os_version}` : ''}`}
-                        />
-                        <InfoItem label="Architecture" value={systemInfo?.architecture || server.architecture || 'N/A'} />
-                        <InfoItem
+                <div className="info-card info-card--accent">
+                    <h3><ChipIcon /> System Information</h3>
+                    <ul className="info-rows">
+                        <InfoRow icon={<OsIcon />} label="Operating System" value={osLabel} />
+                        <InfoRow icon={<ArchIcon />} label="Architecture" value={systemInfo?.architecture || server.architecture || 'N/A'} mono />
+                        <InfoRow
+                            icon={<CpuIcon />}
                             label="CPU"
                             value={
-                                ((systemInfo?.cpu_model || server.cpu_model) || 'N/A') +
-                                (systemInfo?.cpu_cores || server.cpu_cores
-                                    ? ` (${systemInfo?.cpu_cores || server.cpu_cores} cores)`
-                                    : '')
+                                (cpuModel || 'N/A') + (cpuCores ? ` (${cpuCores} cores)` : '')
                             }
                         />
-                        <InfoItem label="Total Memory" value={formatBytes(systemInfo?.total_memory || server.total_memory)} />
-                        <InfoItem label="Total Disk" value={formatBytes(systemInfo?.total_disk || server.total_disk)} />
-                    </InfoList>
+                        <InfoRow icon={<MemoryIcon />} label="Total Memory" value={formatBytes(totalMemory)} mono />
+                        <InfoRow icon={<DiskIcon />} label="Total Disk" value={formatBytes(totalDisk)} mono />
+                    </ul>
                 </div>
 
-                <div className="info-card">
-                    <h3>Agent Information</h3>
-                    <InfoList>
-                        <InfoItem label="Agent Version" value={server.agent_version || 'Not installed'} />
-                        <InfoItem label="Agent ID" value={server.agent_id || 'N/A'} mono />
-                        <InfoItem label="Docker Version" value={server.docker_version || systemInfo?.docker_version || 'N/A'} />
-                        <InfoItem label="Uptime" value={formatUptime(metrics?.uptime)} />
-                    </InfoList>
+                <div className="info-card info-card--accent overview-grid__full">
+                    <h3><AgentIcon /> Agent Information</h3>
+                    <ul className="info-rows info-rows--columns">
+                        <InfoRow icon={<TagIcon />} label="Agent Version" value={server.agent_version || 'Not installed'} mono />
+                        <InfoRow icon={<HashIcon />} label="Agent ID" value={server.agent_id || 'N/A'} mono />
+                        <InfoRow icon={<DockerMiniIcon />} label="Docker Version" value={server.docker_version || systemInfo?.docker_version || 'N/A'} mono />
+                        <InfoRow icon={<ClockIcon />} label="Uptime" value={formatUptime(metrics?.uptime)} mono />
+                    </ul>
                 </div>
 
-                {server.status === 'online' && metrics && (
-                    <div className="info-card metrics-card">
-                        <h3>Current Resources</h3>
-                        <div className="resource-meters">
-                            <ResourceMeter label="CPU" value={metrics.cpu_percent} color="#6366F1" />
-                            <ResourceMeter label="Memory" value={metrics.memory_percent} color="#10B981" />
-                            <ResourceMeter label="Disk" value={metrics.disk_percent} color="#F59E0B" />
-                        </div>
-                    </div>
-                )}
-
-                {server.status !== 'online' && (
-                    <div className="info-card offline-card">
-                        <div className="offline-message">
-                            <OfflineIcon />
-                            <h4>Server Offline</h4>
-                            <p>
-                                {server.status === 'pending'
-                                    ? 'Waiting for agent installation...'
-                                    : 'Unable to connect to the server agent.'}
-                            </p>
-                        </div>
-                    </div>
-                )}
-
-                <SystemStatusCard server={server} onRefresh={onRefreshServer} />
+                <div className="overview-grid__full">
+                    <SystemStatusCard server={server} onRefresh={onRefreshServer} />
+                </div>
             </div>
         </div>
     );
 };
 
-const ResourceMeter = ({ label, value, color }) => {
-    const safeValue = Math.min(Math.max(value || 0, 0), 100);
-    return (
-        <div className="resource-meter">
-            <div className="resource-header">
-                <span className="resource-label">{label}</span>
-                <span className="resource-value">{safeValue.toFixed(1)}%</span>
+const AlertsTab = ({ notifications, securityAlerts, onAcknowledge, onResolve }) => {
+    const sysItems = notifications || [];
+    const secItems = securityAlerts || [];
+    const openSec = secItems.filter(a => a.status === 'open');
+    const ackSec = secItems.filter(a => a.status === 'acknowledged');
+
+    if (sysItems.length === 0 && secItems.length === 0) {
+        return (
+            <div className="alerts-tab">
+                <div className="notifications-empty">
+                    <BellIcon />
+                    <h4>All clear</h4>
+                    <p>No active alerts for this server.</p>
+                </div>
             </div>
-            <div className="resource-bar">
-                <div
-                    className="resource-fill"
-                    style={{
-                        width: `${safeValue}%`,
-                        backgroundColor: safeValue > 80 ? '#EF4444' : color
-                    }}
-                />
+        );
+    }
+
+    return (
+        <div className="alerts-tab">
+            {sysItems.length > 0 && (
+                <section className="alerts-section">
+                    <header className="alerts-section__header">
+                        <h3>System</h3>
+                        <span className="alerts-section__count">{sysItems.length}</span>
+                    </header>
+                    <ul className="notifications-list">
+                        {sysItems.map((n) => (
+                            <li key={n.id} className={`notification notification--${n.severity || 'info'}`}>
+                                <span className="notification__icon">
+                                    {n.severity === 'warning' || n.severity === 'danger' ? <AlertIcon /> : <InfoCircleIcon />}
+                                </span>
+                                <div className="notification__body">
+                                    <div className="notification__title">{n.title}</div>
+                                    <p className="notification__message">{n.message}</p>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            )}
+
+            {openSec.length > 0 && (
+                <section className="alerts-section">
+                    <header className="alerts-section__header">
+                        <h3>Security</h3>
+                        <span className="alerts-section__count">{openSec.length} open</span>
+                    </header>
+                    <ul className="notifications-list">
+                        {openSec.map(a => (
+                            <SecurityAlertItem
+                                key={a.id}
+                                alert={a}
+                                onAcknowledge={onAcknowledge}
+                                onResolve={onResolve}
+                            />
+                        ))}
+                    </ul>
+                </section>
+            )}
+
+            {ackSec.length > 0 && (
+                <section className="alerts-section alerts-section--muted">
+                    <header className="alerts-section__header">
+                        <h3>Acknowledged</h3>
+                        <span className="alerts-section__count">{ackSec.length}</span>
+                    </header>
+                    <ul className="notifications-list">
+                        {ackSec.map(a => (
+                            <SecurityAlertItem
+                                key={a.id}
+                                alert={a}
+                                onAcknowledge={onAcknowledge}
+                                onResolve={onResolve}
+                            />
+                        ))}
+                    </ul>
+                </section>
+            )}
+        </div>
+    );
+};
+
+const SecurityAlertItem = ({ alert, onAcknowledge, onResolve }) => {
+    const sev = (alert.severity || 'info').toLowerCase();
+    const tone =
+        sev === 'critical' || sev === 'high' ? 'danger' :
+        sev === 'medium' || sev === 'warning' ? 'warning' : 'info';
+    const title = (alert.alert_type || 'alert').replace(/_/g, ' ');
+    return (
+        <li className={`notification notification--${tone}`}>
+            <span className="notification__icon">
+                {tone === 'info' ? <InfoCircleIcon /> : <AlertIcon />}
+            </span>
+            <div className="notification__body">
+                <div className="notification__head">
+                    <span className="notification__title">{title}</span>
+                    <span className={`severity-badge ${sev}`}>{sev}</span>
+                    <span className="notification__time">
+                        {alert.created_at ? new Date(alert.created_at).toLocaleString() : ''}
+                    </span>
+                </div>
+                <p className="notification__message">
+                    {alert.source_ip && <><strong>IP:</strong> {alert.source_ip}{'  '}</>}
+                    {alert.details?.message || ''}
+                    {alert.details?.attempts ? ` (${alert.details.attempts} attempts)` : ''}
+                </p>
+                <div className="notification__actions">
+                    {alert.status === 'open' && (
+                        <Button variant="outline" size="sm" onClick={() => onAcknowledge(alert.id)}>
+                            Acknowledge
+                        </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => onResolve(alert.id)}>
+                        Resolve
+                    </Button>
+                </div>
+            </div>
+        </li>
+    );
+};
+
+const InfoRow = ({ icon, label, value, mono, children }) => (
+    <li className="info-row">
+        <span className="info-row__icon">{icon}</span>
+        <span className="info-row__label">{label}</span>
+        <span className={`info-row__value${mono ? ' mono' : ''}`}>
+            {children ?? value}
+        </span>
+    </li>
+);
+
+const KpiTile = ({ icon, label, value, sub, tone, accent }) => (
+    <div className={`kpi-tile${accent ? ' kpi-tile--accent' : ''}${tone ? ` kpi-tile--${tone}` : ''}`}>
+        <div className="kpi-tile__head">
+            <span className="kpi-tile__icon">{icon}</span>
+            <span className="kpi-tile__label">{label}</span>
+        </div>
+        <div className="kpi-tile__value">{value}</div>
+        {sub && <div className="kpi-tile__sub">{sub}</div>}
+    </div>
+);
+
+const KpiGauge = ({ icon, label, percent, color, sub }) => {
+    const has = percent !== null && percent !== undefined && Number.isFinite(percent);
+    const safe = has ? Math.min(Math.max(percent, 0), 100) : 0;
+    const danger = safe > 85;
+    const warn = safe > 70 && !danger;
+    const fillColor = danger ? '#EF4444' : warn ? '#F59E0B' : color;
+    const radius = 22;
+    const circumference = 2 * Math.PI * radius;
+    const dash = (safe / 100) * circumference;
+
+    return (
+        <div className={`kpi-tile kpi-tile--gauge${danger ? ' kpi-tile--danger' : warn ? ' kpi-tile--warn' : ''}`}>
+            <div className="kpi-tile__head">
+                <span className="kpi-tile__icon">{icon}</span>
+                <span className="kpi-tile__label">{label}</span>
+            </div>
+            <div className="kpi-tile__gauge-row">
+                <svg className="kpi-gauge" width="56" height="56" viewBox="0 0 56 56">
+                    <circle cx="28" cy="28" r={radius} className="kpi-gauge__track" />
+                    <circle
+                        cx="28"
+                        cy="28"
+                        r={radius}
+                        className="kpi-gauge__bar"
+                        stroke={has ? fillColor : 'var(--border-subtle)'}
+                        strokeDasharray={`${dash} ${circumference - dash}`}
+                        transform="rotate(-90 28 28)"
+                    />
+                </svg>
+                <div className="kpi-tile__gauge-text">
+                    <span className="kpi-tile__value">{has ? `${safe.toFixed(1)}%` : '—'}</span>
+                    {sub && <span className="kpi-tile__sub">{sub}</span>}
+                </div>
             </div>
         </div>
     );
@@ -443,6 +697,26 @@ const unwrapList = (response) => {
     if (Array.isArray(response)) return response;
     if (response?.success && Array.isArray(response.data)) return response.data;
     return [];
+};
+
+// Docker exposes container ports as an array of {ip, private_port,
+// public_port, type} objects. Render a compact "host:container/proto"
+// string per binding, or fall back to "container/proto" when the port
+// isn't mapped to the host. Older agents may already send a string.
+const formatPorts = (ports) => {
+    if (!ports) return '-';
+    if (typeof ports === 'string') return ports || '-';
+    if (!Array.isArray(ports) || ports.length === 0) return '-';
+    const parts = ports.map((p) => {
+        if (!p || typeof p !== 'object') return String(p);
+        const proto = p.type || 'tcp';
+        if (p.public_port) {
+            const host = p.ip && p.ip !== '0.0.0.0' && p.ip !== '::' ? `${p.ip}:` : '';
+            return `${host}${p.public_port}->${p.private_port}/${proto}`;
+        }
+        return `${p.private_port}/${proto}`;
+    });
+    return parts.join(', ');
 };
 
 const DockerTab = ({ serverId, serverStatus, server }) => {
@@ -498,7 +772,7 @@ const DockerTab = ({ serverId, serverStatus, server }) => {
                 <ul>
                     <li>Docker Desktop / dockerd is not running on the host</li>
                     <li>The agent user isn&apos;t in the <code>docker</code> group (Linux)</li>
-                    <li>The npipe socket <code>//./pipe/docker_engine</code> isn&apos;t accessible (Windows)</li>
+                    <li>The npipe socket <code>{'//./pipe/docker_engine'}</code> isn&apos;t accessible (Windows)</li>
                 </ul>
                 <p>
                     Start Docker on the host, then click <strong>Refresh</strong> on the Overview tab to
@@ -600,7 +874,7 @@ const DockerTab = ({ serverId, serverStatus, server }) => {
                                                     {container.state}
                                                 </span>
                                             </td>
-                                            <td>{container.ports || '-'}</td>
+                                            <td>{formatPorts(container.ports)}</td>
                                             <td className="actions-cell">
                                                 {isRunning ? (
                                                     <>
@@ -900,69 +1174,74 @@ const CronTab = ({ serverId, serverStatus }) => {
                 </table>
             )}
 
-            {showAddModal && (
-                <div className="modal-overlay" onClick={() => !submitting && setShowAddModal(false)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3>Add Cron Job</h3>
-                            <button className="modal-close" onClick={() => setShowAddModal(false)} disabled={submitting}>×</button>
+            <Dialog
+                open={showAddModal}
+                onOpenChange={(open) => { if (!open && !submitting) setShowAddModal(false); }}
+            >
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Add Cron Job</DialogTitle>
+                        <DialogDescription>
+                            Schedule a command on the host crontab. Runs as the agent user.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="cron-name">Name (optional)</Label>
+                            <Input
+                                id="cron-name"
+                                value={form.name}
+                                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                                placeholder="Backup database"
+                            />
                         </div>
-                        <form onSubmit={handleSubmit}>
-                            <div className="modal-body">
-                                <div className="form-group">
-                                    <label htmlFor="cron-name">Name (optional)</label>
-                                    <Input
-                                        id="cron-name"
-                                        value={form.name}
-                                        onChange={(e) => setForm({ ...form, name: e.target.value })}
-                                        placeholder="Backup database"
-                                    />
-                                </div>
-                                <div className="form-group">
-                                    <label htmlFor="cron-schedule">Schedule</label>
-                                    <select
-                                        className="form-control"
-                                        value={Object.keys(PRESET_LABELS).includes(form.schedule) ? form.schedule : 'custom'}
-                                        onChange={(e) => {
-                                            if (e.target.value === 'custom') return;
-                                            setForm({ ...form, schedule: e.target.value });
-                                        }}
-                                    >
-                                        {Object.entries(PRESET_LABELS).map(([cron, label]) => (
-                                            <option key={cron} value={cron}>{label} — {cron}</option>
-                                        ))}
-                                        <option value="custom">Custom…</option>
-                                    </select>
-                                    <Input
-                                        id="cron-schedule"
-                                        className="cron-tab__custom-schedule"
-                                        value={form.schedule}
-                                        onChange={(e) => setForm({ ...form, schedule: e.target.value })}
-                                        placeholder="* * * * *"
-                                    />
-                                    <p className="form-hint">5 fields: minute, hour, day, month, weekday.</p>
-                                </div>
-                                <div className="form-group">
-                                    <label htmlFor="cron-command">Command</label>
-                                    <Textarea
-                                        id="cron-command"
-                                        rows={3}
-                                        value={form.command}
-                                        onChange={(e) => setForm({ ...form, command: e.target.value })}
-                                        placeholder="/usr/local/bin/my-script.sh"
-                                        required
-                                    />
-                                    <p className="form-hint">Absolute path. Shell operators (;, &&, |, $(), &gt;, &lt;) are not allowed.</p>
-                                </div>
-                            </div>
-                            <div className="modal-footer">
-                                <Button type="button" variant="outline" onClick={() => setShowAddModal(false)} disabled={submitting}>Cancel</Button>
-                                <Button type="submit" disabled={submitting}>{submitting ? 'Adding…' : 'Add Job'}</Button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+                        <div className="space-y-1.5">
+                            <Label htmlFor="cron-schedule">Schedule</Label>
+                            <Select
+                                value={Object.keys(PRESET_LABELS).includes(form.schedule) ? form.schedule : 'custom'}
+                                onValueChange={(value) => {
+                                    if (value === 'custom') return;
+                                    setForm({ ...form, schedule: value });
+                                }}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {Object.entries(PRESET_LABELS).map(([cron, label]) => (
+                                        <SelectItem key={cron} value={cron}>{label} — {cron}</SelectItem>
+                                    ))}
+                                    <SelectItem value="custom">Custom…</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Input
+                                id="cron-schedule"
+                                value={form.schedule}
+                                onChange={(e) => setForm({ ...form, schedule: e.target.value })}
+                                placeholder="* * * * *"
+                                className="font-mono"
+                            />
+                            <p className="text-xs text-muted-foreground">5 fields: minute, hour, day, month, weekday.</p>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="cron-command">Command</Label>
+                            <Textarea
+                                id="cron-command"
+                                rows={3}
+                                value={form.command}
+                                onChange={(e) => setForm({ ...form, command: e.target.value })}
+                                placeholder="/usr/local/bin/my-script.sh"
+                                required
+                            />
+                            <p className="text-xs text-muted-foreground">Absolute path. Shell operators (;, &amp;&amp;, |, $(), &gt;, &lt;) are not allowed.</p>
+                        </div>
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setShowAddModal(false)} disabled={submitting}>Cancel</Button>
+                            <Button type="submit" disabled={submitting}>{submitting ? 'Adding…' : 'Add Job'}</Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
 
             <ConfirmDialog
                 isOpen={confirmCronState.isOpen}
@@ -1274,67 +1553,68 @@ const CloudflaredTab = ({ serverId, serverStatus }) => {
                 )
             )}
 
-            {showCreateModal && (
-                <div className="modal-overlay" onClick={() => !creating && setShowCreateModal(false)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3>Create Tunnel</h3>
-                            <button className="modal-close" onClick={() => setShowCreateModal(false)} disabled={creating}>×</button>
+            <Dialog
+                open={showCreateModal}
+                onOpenChange={(open) => { if (!open && !creating) setShowCreateModal(false); }}
+            >
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Create Tunnel</DialogTitle>
+                        <DialogDescription>
+                            Provisions a new Cloudflare Tunnel on this server.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleCreate} className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="cf-name">Tunnel Name</Label>
+                            <Input
+                                id="cf-name"
+                                value={createName}
+                                onChange={(e) => setCreateName(e.target.value)}
+                                placeholder="my-app"
+                                required
+                                autoFocus
+                            />
+                            <p className="text-xs text-muted-foreground">Letters, numbers, dashes, underscores. Up to 32 chars.</p>
                         </div>
-                        <form onSubmit={handleCreate}>
-                            <div className="modal-body">
-                                <div className="form-group">
-                                    <label htmlFor="cf-name">Tunnel Name</label>
-                                    <Input
-                                        id="cf-name"
-                                        value={createName}
-                                        onChange={(e) => setCreateName(e.target.value)}
-                                        placeholder="my-app"
-                                        required
-                                        autoFocus
-                                    />
-                                    <p className="form-hint">Letters, numbers, dashes, underscores. Up to 32 chars.</p>
-                                </div>
-                            </div>
-                            <div className="modal-footer">
-                                <Button type="button" variant="outline" onClick={() => setShowCreateModal(false)} disabled={creating}>Cancel</Button>
-                                <Button type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create'}</Button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setShowCreateModal(false)} disabled={creating}>Cancel</Button>
+                            <Button type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create'}</Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
 
-            {showRouteModal && routeTunnel && (
-                <div className="modal-overlay" onClick={() => !routing && setShowRouteModal(false)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3>Route Subdomain → {routeTunnel.name}</h3>
-                            <button className="modal-close" onClick={() => setShowRouteModal(false)} disabled={routing}>×</button>
+            <Dialog
+                open={showRouteModal && !!routeTunnel}
+                onOpenChange={(open) => { if (!open && !routing) setShowRouteModal(false); }}
+            >
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Route Subdomain{routeTunnel ? ` → ${routeTunnel.name}` : ''}</DialogTitle>
+                        <DialogDescription>
+                            A CNAME for this hostname will be created in Cloudflare DNS, pointing at the tunnel.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleRoute} className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="cf-host">Hostname</Label>
+                            <Input
+                                id="cf-host"
+                                value={routeHostname}
+                                onChange={(e) => setRouteHostname(e.target.value)}
+                                placeholder="app.example.com"
+                                required
+                                autoFocus
+                            />
                         </div>
-                        <form onSubmit={handleRoute}>
-                            <div className="modal-body">
-                                <div className="form-group">
-                                    <label htmlFor="cf-host">Hostname</label>
-                                    <Input
-                                        id="cf-host"
-                                        value={routeHostname}
-                                        onChange={(e) => setRouteHostname(e.target.value)}
-                                        placeholder="app.example.com"
-                                        required
-                                        autoFocus
-                                    />
-                                    <p className="form-hint">A CNAME for this hostname will be created in Cloudflare DNS, pointing at the tunnel.</p>
-                                </div>
-                            </div>
-                            <div className="modal-footer">
-                                <Button type="button" variant="outline" onClick={() => setShowRouteModal(false)} disabled={routing}>Cancel</Button>
-                                <Button type="submit" disabled={routing}>{routing ? 'Adding…' : 'Add Route'}</Button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setShowRouteModal(false)} disabled={routing}>Cancel</Button>
+                            <Button type="submit" disabled={routing}>{routing ? 'Adding…' : 'Add Route'}</Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
 
             <ConfirmDialog
                 isOpen={confirmCfState.isOpen}
@@ -1471,15 +1751,20 @@ const AgentRegistrationSection = ({ server, onRegenerateToken }) => {
     const isOnline = server.status === 'online';
 
     return (
-        <div className="form-section">
-            <h3>Connection String</h3>
-            <p className="section-description">
-                Generate a fresh connection string to pair (or re-pair) this server.
-                Useful after reinstalling the agent — old credentials are gone, but a
-                new string brings the agent right back to this row.
-                {isOnline && ' This server is currently online; regenerating only affects re-pairing.'}
-                {isExpired && ' The previous token has expired.'}
-            </p>
+        <div className="form-section form-section--accent">
+            <div className="form-section__header">
+                <span className="form-section__icon"><KeyIcon /></span>
+                <div>
+                    <h3>Connection String</h3>
+                    <p className="section-description">
+                        Generate a fresh connection string to pair (or re-pair) this server.
+                        Useful after reinstalling the agent — old credentials are gone, but a
+                        new string brings the agent right back to this row.
+                        {isOnline && ' This server is currently online; regenerating only affects re-pairing.'}
+                        {isExpired && ' The previous token has expired.'}
+                    </p>
+                </div>
+            </div>
             <Button onClick={onRegenerateToken}>
                 <KeyIcon /> Generate Connection String
             </Button>
@@ -1501,7 +1786,6 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
     const [allowedIPs, setAllowedIPs] = useState([]);
     const [newIP, setNewIP] = useState('');
     const [connectionInfo, setConnectionInfo] = useState(null);
-    const [securityAlerts, setSecurityAlerts] = useState([]);
     const [rotatingKey, setRotatingKey] = useState(false);
     const toast = useToast();
 
@@ -1521,14 +1805,12 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
 
     async function loadSecurityData() {
         try {
-            const [ipsData, connData, alertsData] = await Promise.all([
+            const [ipsData, connData] = await Promise.all([
                 api.getAllowedIPs(server.id),
                 api.getConnectionInfo(server.id),
-                api.getServerSecurityAlerts(server.id, { status: 'open', limit: 10 })
             ]);
             setAllowedIPs(ipsData.allowed_ips || []);
             setConnectionInfo(connData);
-            setSecurityAlerts(alertsData || []);
         } catch (err) {
             console.error('Failed to load security data:', err);
         }
@@ -1576,26 +1858,6 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
         }
     }
 
-    async function handleAcknowledgeAlert(alertId) {
-        try {
-            await api.acknowledgeAlert(alertId);
-            setSecurityAlerts(prev => prev.map(a =>
-                a.id === alertId ? { ...a, status: 'acknowledged' } : a
-            ));
-        } catch (err) {
-            toast.error('Failed to acknowledge alert');
-        }
-    }
-
-    async function handleResolveAlert(alertId) {
-        try {
-            await api.resolveAlert(alertId);
-            setSecurityAlerts(prev => prev.filter(a => a.id !== alertId));
-        } catch (err) {
-            toast.error('Failed to resolve alert');
-        }
-    }
-
     async function handleSubmit(e) {
         e.preventDefault();
         setLoading(true);
@@ -1620,9 +1882,14 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
         <div className="settings-tab">
             <div className="settings-grid">
                 <form onSubmit={handleSubmit} className="settings-form">
-                    <div className="form-section">
-                        <h3>Basic Information</h3>
-
+                    <div className="form-section form-section--accent">
+                        <div className="form-section__header">
+                            <span className="form-section__icon"><ServerIcon /></span>
+                            <div>
+                                <h3>Basic Information</h3>
+                                <p className="section-description">Identity and grouping for this server.</p>
+                            </div>
+                        </div>
                         <div className="form-group">
                             <label>Server Name</label>
                             <Input
@@ -1688,8 +1955,16 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
             </div>
 
             <div className="security-grid">
-                <div className="form-section">
-                    <h3>Connection & IP Allowlist</h3>
+                <div className="form-section form-section--accent">
+                    <div className="form-section__header">
+                        <span className="form-section__icon"><NetworkIcon /></span>
+                        <div>
+                            <h3>Connection & IP Allowlist</h3>
+                            <p className="section-description">
+                                Restrict which IPs can connect. Supports single IPs, CIDR notation, and wildcards.
+                            </p>
+                        </div>
+                    </div>
 
                     {connectionInfo && (
                         <div className="security-info-bar">
@@ -1709,10 +1984,6 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
                     )}
 
                     <div className="subsection">
-                        <p className="section-description">
-                            Restrict which IPs can connect. Supports single IPs, CIDR notation, and wildcards.
-                        </p>
-
                         <div className="ip-list">
                             {allowedIPs.length === 0 ? (
                                 <div className="ip-empty">No IP restrictions (all IPs allowed)</div>
@@ -1758,11 +2029,16 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
                     </div>
                 </div>
 
-                <div className="form-section">
-                    <h3>API Key Rotation</h3>
-                    <p className="section-description">
-                        Rotate the API credentials used by the agent. The agent must be online to receive new credentials.
-                    </p>
+                <div className="form-section form-section--accent">
+                    <div className="form-section__header">
+                        <span className="form-section__icon"><KeyIcon /></span>
+                        <div>
+                            <h3>API Key Rotation</h3>
+                            <p className="section-description">
+                                Rotate the API credentials used by the agent. The agent must be online to receive new credentials.
+                            </p>
+                        </div>
+                    </div>
                     <div className="key-rotation-actions">
                         <Button
                             variant="outline"
@@ -1783,46 +2059,6 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
                     )}
                 </div>
             </div>
-
-            {securityAlerts.length > 0 && (
-                <div className="form-section">
-                    <h3>Security Alerts</h3>
-                    <div className="alerts-list">
-                        {securityAlerts.map(alert => (
-                            <div key={alert.id} className={`alert-item severity-${alert.severity}`}>
-                                <div className="alert-item-header">
-                                    <span className={`severity-badge ${alert.severity}`}>{alert.severity}</span>
-                                    <span className="alert-type">{alert.alert_type.replace('_', ' ')}</span>
-                                    <span className="alert-time">{new Date(alert.created_at).toLocaleString()}</span>
-                                </div>
-                                <div className="alert-item-details">
-                                    {alert.source_ip && <span>IP: {alert.source_ip}</span>}
-                                    {alert.details?.message && <span>{alert.details.message}</span>}
-                                    {alert.details?.attempts && <span>Attempts: {alert.details.attempts}</span>}
-                                </div>
-                                <div className="alert-item-actions">
-                                    {alert.status === 'open' && (
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => handleAcknowledgeAlert(alert.id)}
-                                        >
-                                            Acknowledge
-                                        </Button>
-                                    )}
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleResolveAlert(alert.id)}
-                                    >
-                                        Resolve
-                                    </Button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             <DangerZone
                 title="Danger Zone"
@@ -1896,106 +2132,104 @@ const TokenModal = ({ server, onClose, onGenerated }) => {
 Install-ServerKitAgent -Server "${window.location.origin}" -Token "${result.registration_token}"` : '';
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Connection String</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
-                </div>
-
-                <div className="install-instructions">
-                    {!result ? (
-                        <>
-                            <p className="section-description">
-                                Generate a single pasteable string the agent can consume.
-                                The token inside is single-use — burned the moment any
-                                agent registers with it.
-                            </p>
-
-                            <div className="form-row">
-                                <div className="form-group">
-                                    <label>Token expires</label>
-                                    <select
-                                        value={expiresIn}
-                                        onChange={(e) => setExpiresIn(Number(e.target.value))}
-                                    >
-                                        {TOKEN_EXPIRY_OPTIONS.map(opt => (
-                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div className="modal-actions">
-                                <Button variant="outline" onClick={onClose}>Cancel</Button>
-                                <Button onClick={handleGenerate} disabled={generating}>
-                                    {generating ? 'Generating…' : 'Generate'}
-                                </Button>
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            <div className="token-status">
-                                <span className="token-status-dot active" />
-                                <span>
-                                    Active — expires {new Date(result.registration_expires).toLocaleString()}
-                                </span>
-                            </div>
-
-                            <div className="connection-string-field">
-                                <div className="connection-string-field__header">
-                                    <KeyIcon />
-                                    <span>Connection string</span>
-                                    <Button variant="outline" size="sm" onClick={() => copyToClipboard(result.connection_string)}>
-                                        <CopyIcon /> Copy
-                                    </Button>
-                                </div>
-                                <pre className="connection-string-field__value">{result.connection_string}</pre>
-                            </div>
-
-                            <details className="install-fallback">
-                                <summary>Need to install the agent first? Use the one-liner installer.</summary>
-                                <div className="install-tabs" style={{ marginTop: '0.75rem' }}>
-                                    <div className="install-tab">
-                                        <div className="install-tab-header">
-                                            <TerminalIcon />
-                                            <div className="install-tab-title">
-                                                <span>Linux</span>
-                                                <span className="install-tab-description">curl, tar, sudo, and systemd</span>
-                                            </div>
-                                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(linuxScript)}>
-                                                <CopyIcon /> Copy
-                                            </Button>
-                                        </div>
-                                        <pre className="install-script">{linuxScript}</pre>
-                                    </div>
-                                    <div className="install-tab">
-                                        <div className="install-tab-header">
-                                            <WindowsIcon />
-                                            <div className="install-tab-title">
-                                                <span>Windows (PowerShell)</span>
-                                                <span className="install-tab-description">Run as Administrator</span>
-                                            </div>
-                                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(windowsScript)}>
-                                                <CopyIcon /> Copy
-                                            </Button>
-                                        </div>
-                                        <pre className="install-script">{windowsScript}</pre>
-                                    </div>
-                                </div>
-                            </details>
-
-                            <div className="modal-actions">
-                                <Button variant="outline" onClick={() => setResult(null)}>
-                                    Generate another
-                                </Button>
-                                <Button onClick={onClose}>Done</Button>
-                            </div>
-                        </>
+        <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+            <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                    <DialogTitle>Connection String</DialogTitle>
+                    {!result && (
+                        <DialogDescription>
+                            Generate a single pasteable string the agent can consume.
+                            The token inside is single-use — burned the moment any
+                            agent registers with it.
+                        </DialogDescription>
                     )}
-                </div>
-            </div>
-        </div>
+                </DialogHeader>
+
+                {!result ? (
+                    <>
+                        <div className="space-y-2">
+                            <Label htmlFor="token-expires">Token expires</Label>
+                            <Select value={String(expiresIn)} onValueChange={(v) => setExpiresIn(Number(v))}>
+                                <SelectTrigger id="token-expires">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {TOKEN_EXPIRY_OPTIONS.map(opt => (
+                                        <SelectItem key={opt.value} value={String(opt.value)}>{opt.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <DialogFooter>
+                            <Button variant="outline" onClick={onClose}>Cancel</Button>
+                            <Button onClick={handleGenerate} disabled={generating}>
+                                {generating ? 'Generating…' : 'Generate'}
+                            </Button>
+                        </DialogFooter>
+                    </>
+                ) : (
+                    <>
+                        <div className="token-status">
+                            <span className="token-status-dot active" />
+                            <span>
+                                Active — expires {new Date(result.registration_expires).toLocaleString()}
+                            </span>
+                        </div>
+
+                        <div className="connection-string-field">
+                            <div className="connection-string-field__header">
+                                <KeyIcon />
+                                <span>Connection string</span>
+                                <Button variant="outline" size="sm" onClick={() => copyToClipboard(result.connection_string)}>
+                                    <CopyIcon /> Copy
+                                </Button>
+                            </div>
+                            <pre className="connection-string-field__value">{result.connection_string}</pre>
+                        </div>
+
+                        <details className="install-fallback">
+                            <summary>Need to install the agent first? Use the one-liner installer.</summary>
+                            <div className="install-tabs" style={{ marginTop: '0.75rem' }}>
+                                <div className="install-tab">
+                                    <div className="install-tab-header">
+                                        <TerminalIcon />
+                                        <div className="install-tab-title">
+                                            <span>Linux</span>
+                                            <span className="install-tab-description">curl, tar, sudo, and systemd</span>
+                                        </div>
+                                        <Button variant="outline" size="sm" onClick={() => copyToClipboard(linuxScript)}>
+                                            <CopyIcon /> Copy
+                                        </Button>
+                                    </div>
+                                    <pre className="install-script">{linuxScript}</pre>
+                                </div>
+                                <div className="install-tab">
+                                    <div className="install-tab-header">
+                                        <WindowsIcon />
+                                        <div className="install-tab-title">
+                                            <span>Windows (PowerShell)</span>
+                                            <span className="install-tab-description">Run as Administrator</span>
+                                        </div>
+                                        <Button variant="outline" size="sm" onClick={() => copyToClipboard(windowsScript)}>
+                                            <CopyIcon /> Copy
+                                        </Button>
+                                    </div>
+                                    <pre className="install-script">{windowsScript}</pre>
+                                </div>
+                            </div>
+                        </details>
+
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setResult(null)}>
+                                Generate another
+                            </Button>
+                            <Button onClick={onClose}>Done</Button>
+                        </DialogFooter>
+                    </>
+                )}
+            </DialogContent>
+        </Dialog>
     );
 };
 
@@ -2090,6 +2324,153 @@ const CopyIcon = () => (
 const WindowsIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
         <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+    </svg>
+);
+
+const CpuIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+        <rect x="9" y="9" width="6" height="6"/>
+        <line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/>
+        <line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/>
+        <line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/>
+        <line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/>
+    </svg>
+);
+
+const MemoryIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="2" y="7" width="20" height="10" rx="2"/>
+        <line x1="6" y1="7" x2="6" y2="17"/>
+        <line x1="10" y1="7" x2="10" y2="17"/>
+        <line x1="14" y1="7" x2="14" y2="17"/>
+        <line x1="18" y1="7" x2="18" y2="17"/>
+    </svg>
+);
+
+const DiskIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+        <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>
+    </svg>
+);
+
+const ClockIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+    </svg>
+);
+
+const NetworkIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="2" y1="12" x2="22" y2="12"/>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+    </svg>
+);
+
+const ServerIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="2" y="3" width="20" height="7" rx="1"/>
+        <rect x="2" y="14" width="20" height="7" rx="1"/>
+        <line x1="6" y1="6.5" x2="6.01" y2="6.5"/>
+        <line x1="6" y1="17.5" x2="6.01" y2="17.5"/>
+    </svg>
+);
+
+const HostIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        <polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>
+);
+
+const OsIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="2" y="3" width="20" height="14" rx="2"/>
+        <line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="17" x2="12" y2="21"/>
+    </svg>
+);
+
+const ArchIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <polyline points="16 18 22 12 16 6"/>
+        <polyline points="8 6 2 12 8 18"/>
+    </svg>
+);
+
+const ChipIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="5" y="5" width="14" height="14" rx="1"/>
+        <rect x="9" y="9" width="6" height="6"/>
+        <path d="M3 9h2M3 15h2M19 9h2M19 15h2M9 3v2M15 3v2M9 19v2M15 19v2"/>
+    </svg>
+);
+
+const AgentIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/>
+        <circle cx="9" cy="14" r="1"/>
+        <circle cx="15" cy="14" r="1"/>
+    </svg>
+);
+
+const TagIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+        <line x1="7" y1="7" x2="7.01" y2="7"/>
+    </svg>
+);
+
+const HashIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <line x1="4" y1="9" x2="20" y2="9"/>
+        <line x1="4" y1="15" x2="20" y2="15"/>
+        <line x1="10" y1="3" x2="8" y2="21"/>
+        <line x1="16" y1="3" x2="14" y2="21"/>
+    </svg>
+);
+
+const DockerMiniIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="10" width="3" height="3"/>
+        <rect x="7" y="10" width="3" height="3"/>
+        <rect x="11" y="10" width="3" height="3"/>
+        <rect x="7" y="6" width="3" height="3"/>
+        <rect x="11" y="6" width="3" height="3"/>
+        <path d="M2 14c0 4 4 6 10 6s10-2 10-6"/>
+    </svg>
+);
+
+const PulseIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+);
+
+const BellIcon = () => (
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </svg>
+);
+
+const AlertIcon = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+);
+
+const InfoCircleIcon = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="16" x2="12" y2="12"/>
+        <line x1="12" y1="8" x2="12.01" y2="8"/>
     </svg>
 );
 

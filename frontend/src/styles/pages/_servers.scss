@@ -943,6 +943,8 @@
 
 .server-detail-page {
     padding: 0;
+    width: min(100%, 1480px);
+    margin: 0 auto;
 }
 
 .page-breadcrumb {
@@ -1928,6 +1930,62 @@
     }
 }
 
+// Polished form section variant used in Settings tab
+.form-section--accent {
+    position: relative;
+    overflow: hidden;
+    padding: $space-6;
+
+    &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, $accent-primary, transparent 70%);
+        opacity: 0.85;
+    }
+
+    .form-section__header {
+        display: flex;
+        align-items: flex-start;
+        gap: $space-3;
+        margin-bottom: $space-5;
+
+        h3 {
+            margin: 0 0 $space-1;
+            font-size: $font-size-lg;
+            letter-spacing: -0.01em;
+        }
+
+        .section-description {
+            margin: 0;
+            color: $text-secondary;
+            font-size: $font-size-sm;
+            line-height: 1.5;
+        }
+    }
+
+    .form-section__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+        border-radius: $radius-md;
+        background: rgba($accent-primary-raw, 0.12);
+        color: $accent-primary;
+        border: 1px solid rgba($accent-primary-raw, 0.25);
+
+        svg {
+            width: 18px;
+            height: 18px;
+        }
+    }
+}
+
 .form-row {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -2812,9 +2870,14 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: $space-5;
-    padding: $space-5 0 $space-5;
+    padding: $space-6;
     margin-bottom: $space-5;
-    border-bottom: 1px solid $border-subtle;
+    background:
+        linear-gradient(135deg, rgba($accent-primary-raw, 0.10), transparent 42%),
+        $bg-card;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-2xl;
+    box-shadow: $shadow-sm;
     flex-wrap: wrap;
 
     &__main {
@@ -2829,9 +2892,9 @@
         flex-basis: 100%;
         margin-top: $space-3;
         padding: $space-3 $space-4;
-        background: rgba(79, 70, 229, 0.08);
-        border: 1px solid rgba(99, 102, 241, 0.4);
-        border-radius: $radius-md;
+        background: $info-bg;
+        border: 1px solid $info-border;
+        border-radius: $radius-lg;
         color: $text-secondary;
         font-size: $font-size-sm;
         line-height: 1.5;
@@ -2861,7 +2924,7 @@
             background: $success-bg;
             border-color: $success-border;
             color: $success;
-            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.08);
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.08), 0 0 24px rgba(16, 185, 129, 0.14);
         }
         &--offline {
             background: $danger-bg;
@@ -3005,7 +3068,7 @@
 
 // Refine overview info cards (less marketing, more dashboard)
 .overview-tab .info-card {
-    padding: $space-4 $space-5;
+    padding: $space-5;
     border-radius: $radius-xl;
     background: $bg-card;
     border: 1px solid $border-subtle;
@@ -3039,4 +3102,355 @@
         font-size: $font-size-xs;
         color: $text-primary;
     }
+}
+
+// ============================================
+// SERVER OVERVIEW — KPI STRIP & ICONIFIED ROWS
+// ============================================
+.server-stats-strip {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: $space-4;
+    margin-bottom: $space-5;
+
+    @media (max-width: $breakpoint-lg) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    @media (max-width: $breakpoint-sm) {
+        grid-template-columns: 1fr;
+    }
+}
+
+.kpi-tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+    padding: $space-4;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent 60%),
+        $bg-card;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-xl;
+    box-shadow: $shadow-sm;
+    transition: border-color $transition-fast, transform $transition-fast, box-shadow $transition-fast;
+    overflow: hidden;
+
+    &::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, rgba($accent-primary-raw, 0.6), transparent);
+        opacity: 0.5;
+    }
+
+    &:hover {
+        border-color: $border-active;
+        transform: translateY(-1px);
+        box-shadow: $shadow-md;
+    }
+
+    &__head {
+        display: flex;
+        align-items: center;
+        gap: $space-2;
+        color: $text-tertiary;
+    }
+
+    &__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: $radius-sm;
+        background: $bg-elevated;
+        border: 1px solid $border-subtle;
+        color: $text-secondary;
+
+        svg { width: 12px; height: 12px; }
+    }
+
+    &__label {
+        font-size: 11px;
+        font-weight: $font-weight-bold;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: $text-tertiary;
+    }
+
+    &__value {
+        font-size: $font-size-xl;
+        font-weight: $font-weight-semibold;
+        color: $text-primary;
+        line-height: 1.2;
+        font-feature-settings: "tnum";
+        text-transform: capitalize;
+    }
+
+    &__sub {
+        font-size: $font-size-xs;
+        color: $text-tertiary;
+    }
+
+    &__gauge-row {
+        display: flex;
+        align-items: center;
+        gap: $space-3;
+    }
+
+    &__gauge-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+
+        .kpi-tile__value { font-size: $font-size-lg; font-family: $font-mono; }
+    }
+
+    // Tone variants
+    &--accent::before {
+        background: linear-gradient(90deg, transparent, rgba($accent-primary-raw, 0.9), transparent);
+        opacity: 0.9;
+    }
+
+    &--success {
+        .kpi-tile__icon { background: $success-bg; border-color: $success-border; color: $success; }
+        .kpi-tile__value { color: $success; }
+        &::before { background: linear-gradient(90deg, transparent, $success, transparent); opacity: 0.9; }
+    }
+
+    &--danger {
+        .kpi-tile__icon { background: $danger-bg; border-color: $danger-border; color: $danger; }
+        .kpi-tile__value { color: $danger; }
+        &::before { background: linear-gradient(90deg, transparent, $danger, transparent); opacity: 0.9; }
+    }
+
+    &--warning, &--warn {
+        .kpi-tile__icon { background: $warning-bg; border-color: $warning-border; color: $warning; }
+        &::before { background: linear-gradient(90deg, transparent, $warning, transparent); opacity: 0.9; }
+    }
+}
+
+.kpi-gauge {
+    flex-shrink: 0;
+    transform: rotate(0deg);
+
+    &__track {
+        fill: none;
+        stroke: $bg-elevated;
+        stroke-width: 6;
+    }
+
+    &__bar {
+        fill: none;
+        stroke-width: 6;
+        stroke-linecap: round;
+        transition: stroke-dasharray $transition-base, stroke 0.2s ease;
+    }
+}
+
+// Iconified info rows replacing plain InfoList rows in overview cards
+.overview-tab .info-card {
+    h3 {
+        display: flex;
+        align-items: center;
+        gap: $space-2;
+        color: $text-tertiary;
+
+        svg {
+            width: 14px;
+            height: 14px;
+            color: $accent-primary;
+        }
+    }
+}
+
+.info-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+
+    &--columns {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 $space-5;
+
+        @media (max-width: $breakpoint-md) {
+            grid-template-columns: 1fr;
+        }
+    }
+}
+
+.info-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: $space-3;
+    padding: $space-3 0;
+    border-bottom: 1px dashed $border-subtle;
+    min-height: 40px;
+
+    &:last-child { border-bottom: 0; }
+
+    &__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: $text-tertiary;
+
+        svg { width: 14px; height: 14px; }
+    }
+
+    &__label {
+        font-size: $font-size-sm;
+        color: $text-secondary;
+    }
+
+    &__value {
+        font-size: $font-size-sm;
+        color: $text-primary;
+        text-align: right;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &.mono {
+            font-family: $font-mono;
+            font-size: $font-size-xs;
+            color: $text-secondary;
+        }
+    }
+}
+
+.overview-grid__full {
+    grid-column: 1 / -1;
+}
+
+.info-card--accent {
+    position: relative;
+    overflow: hidden;
+
+    &::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba($accent-primary-raw, 0.5), transparent);
+    }
+}
+
+// ============================================
+// TAB BADGE (notification count on tabs)
+// ============================================
+.tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: $space-2;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: $radius-full;
+    background: $warning;
+    color: #1a1a1a;
+    font-size: 10px;
+    font-weight: $font-weight-bold;
+    line-height: 1;
+    font-feature-settings: "tnum";
+}
+
+// ============================================
+// NOTIFICATIONS TAB
+// ============================================
+.notifications-tab {
+    display: flex;
+    flex-direction: column;
+    gap: $space-4;
+}
+
+.notifications-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: $space-3;
+}
+
+.notification {
+    display: flex;
+    align-items: flex-start;
+    gap: $space-3;
+    padding: $space-4 $space-5;
+    background: $bg-card;
+    border: 1px solid $border-subtle;
+    border-left-width: 3px;
+    border-radius: $radius-lg;
+    box-shadow: $shadow-sm;
+
+    &__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: $radius-md;
+        background: $bg-elevated;
+        flex-shrink: 0;
+    }
+
+    &__body {
+        min-width: 0;
+        flex: 1;
+    }
+
+    &__title {
+        font-weight: $font-weight-semibold;
+        color: $text-primary;
+        margin-bottom: $space-1;
+    }
+
+    &__message {
+        margin: 0;
+        font-size: $font-size-sm;
+        color: $text-secondary;
+        line-height: $line-height-relaxed;
+    }
+
+    &--info {
+        border-left-color: $accent-primary;
+        .notification__icon { background: $accent-glow; color: $accent-primary; }
+    }
+
+    &--warning {
+        border-left-color: $warning;
+        .notification__icon { background: $warning-bg; color: $warning; }
+    }
+
+    &--danger {
+        border-left-color: $danger;
+        .notification__icon { background: $danger-bg; color: $danger; }
+    }
+}
+
+.notifications-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: $space-2;
+    padding: $space-12 $space-6;
+    background: $bg-card;
+    border: 1px dashed $border-subtle;
+    border-radius: $radius-xl;
+    text-align: center;
+
+    svg { color: $text-tertiary; margin-bottom: $space-2; }
+    h4 { margin: 0; color: $text-primary; font-size: $font-size-lg; }
+    p { margin: 0; color: $text-secondary; font-size: $font-size-sm; }
 }

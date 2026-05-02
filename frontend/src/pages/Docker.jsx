@@ -29,6 +29,36 @@ const unwrapRemoteData = (response) => {
     return response;
 };
 
+// formatPorts normalises Docker port data from the two shapes the agent
+// returns: a comma-separated string (legacy `docker ps`-style output)
+// or an array of `{ip, private_port, public_port, type}` objects from
+// `docker inspect`. Always returns an array of human-readable strings,
+// or `['-']` when there are no ports — both call sites (the container
+// list grid and the inspector drawer) want array semantics. Rendering
+// the raw inspect array directly triggered React error #31.
+function formatPorts(ports) {
+    if (!ports) return ['-'];
+    if (Array.isArray(ports)) {
+        const formatted = ports
+            .map((p) => {
+                if (!p || typeof p !== 'object') return null;
+                const proto = p.type || p.protocol || 'tcp';
+                const priv = p.private_port ?? p.PrivatePort;
+                const pub = p.public_port ?? p.PublicPort;
+                const ip = p.ip || p.IP;
+                if (pub) {
+                    return `${ip ? `${ip}:` : ''}${pub}->${priv}/${proto}`;
+                }
+                return priv ? `${priv}/${proto}` : null;
+            })
+            .filter(Boolean);
+        return formatted.length > 0 ? formatted : ['-'];
+    }
+    if (typeof ports !== 'string') return ['-'];
+    const parts = ports.split(',').map((p) => p.trim()).filter(Boolean);
+    return parts.length > 0 ? parts : ['-'];
+}
+
 const normalizeListResponse = (response, key) => {
     const data = unwrapRemoteData(response);
     if (Array.isArray(data)) return data;
@@ -554,13 +584,6 @@ const ContainersTab = ({ onStatsChange }) => {
         const memory = parseFloat(memStr.replace('%', '')) || 0;
 
         return { cpu, memory };
-    }
-
-    function formatPorts(portsStr) {
-        if (!portsStr) return '-';
-        // Parse ports like "0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp"
-        const ports = portsStr.split(',').map(p => p.trim()).filter(Boolean);
-        return ports.length > 0 ? ports : ['-'];
     }
 
     const [statusFilter, setStatusFilter] = useState('all');
@@ -1669,10 +1692,10 @@ const ContainerLogsModal = ({ container, onClose }) => {
                         <span className="meta-label">ID</span>
                         <span className="meta-value mono">{container.id}</span>
                     </div>
-                    {container.ports && (
+                    {container.ports && container.ports.length > 0 && (
                         <div className="meta-item meta-item-wide">
                             <span className="meta-label">Ports</span>
-                            <span className="meta-value mono">{container.ports || '—'}</span>
+                            <span className="meta-value mono">{formatPorts(container.ports).join(', ')}</span>
                         </div>
                     )}
                 </div>

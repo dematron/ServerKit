@@ -144,11 +144,23 @@ func (s *Server) Start(ctx context.Context) error {
 	// Load or generate the bearer token before binding the listener.
 	// Token failures are fatal — running the IPC API without auth
 	// would expose /restart and /logs to any local process.
-	tok, err := loadOrGenerateToken(config.IPCTokenPath())
-	if err != nil {
-		return fmt.Errorf("ipc token: %w", err)
+	//
+	// SERVERKIT_IPC_NO_AUTH=true disables the bearer check entirely.
+	// This exists for dev environments where the desktop console
+	// bundle, asset server, and agent service can't always be
+	// rebuilt in lockstep — the auth requires all three to ship
+	// together. Logged at WARN every startup so it can't be set
+	// silently in production.
+	noAuth := os.Getenv("SERVERKIT_IPC_NO_AUTH") == "true"
+	if noAuth {
+		s.log.Warn("SERVERKIT_IPC_NO_AUTH=true: IPC bearer-token check is DISABLED; only use this for development")
+	} else {
+		tok, err := loadOrGenerateToken(config.IPCTokenPath())
+		if err != nil {
+			return fmt.Errorf("ipc token: %w", err)
+		}
+		s.token = tok
 	}
-	s.token = tok
 
 	mux := http.NewServeMux()
 
@@ -173,9 +185,13 @@ func (s *Server) Start(ctx context.Context) error {
 		addr = fmt.Sprintf("127.0.0.1:%d", s.cfg.Port)
 	}
 
+	var handler http.Handler = mux
+	if !noAuth {
+		handler = authMiddleware(s.token, handler)
+	}
 	s.server = &http.Server{
 		Addr:         addr,
-		Handler:      corsMiddleware(authMiddleware(s.token, mux)),
+		Handler:      corsMiddleware(handler),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -222,7 +238,15 @@ func (s *Server) Stop() error {
 	return s.server.Shutdown(ctx)
 }
 
-// corsMiddleware adds CORS headers for local development
+// corsMiddleware adds CORS headers for local development.
+//
+// The desktop console's React UI runs on the asset server (127.0.0.1:<random>)
+// and calls the IPC server (127.0.0.1:19780) — different ports means CORS
+// applies. Authorization must be in Allow-Headers, otherwise the browser
+// preflight refuses to forward the bearer token and every IPC request
+// arrives unauthenticated → 401 storm. The previous list (just Content-Type)
+// was OK before IPC auth existed; with auth required, it silently broke
+// the entire desktop console.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only allow requests from localhost
@@ -230,7 +254,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		if origin == "" || isLocalhost(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		}
 
 		if r.Method == "OPTIONS" {

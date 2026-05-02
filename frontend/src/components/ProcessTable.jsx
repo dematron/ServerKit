@@ -61,12 +61,14 @@ export function ProcessTable({
                             </td>
                             <td>
                                 <div className="action-buttons">
-                                    {onKill && (
+                                     {onKill && (
                                         <Button
                                             variant="outline"
-                                            size="sm"
+                                            size="icon"
+                                            className="process-action-button"
                                             onClick={(e) => { e.stopPropagation(); onKill(p); }}
                                             title="Kill"
+                                            aria-label={`Kill ${p.name}`}
                                         >
                                             <X size={12} />
                                         </Button>
@@ -74,9 +76,11 @@ export function ProcessTable({
                                     {onForceKill && (
                                         <Button
                                             variant="destructive"
-                                            size="sm"
+                                            size="icon"
+                                            className="process-action-button"
                                             onClick={(e) => { e.stopPropagation(); onForceKill(p); }}
                                             title="Force Kill"
+                                            aria-label={`Force kill ${p.name}`}
                                         >
                                             <AlertTriangle size={12} />
                                         </Button>

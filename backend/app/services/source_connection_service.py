@@ -1,5 +1,6 @@
 """Source provider connection service for GitHub repository imports."""
 
+import base64
 import os
 import secrets
 from datetime import datetime
@@ -10,6 +11,7 @@ from flask import session
 
 from app import db
 from app.models import SourceConnection
+from app.services.repository_manifest_service import RepositoryManifestService
 from app.services.settings_service import SettingsService
 from app.utils.crypto import encrypt_secret, decrypt_secret
 
@@ -186,6 +188,27 @@ class SourceConnectionService:
         ]
 
     @classmethod
+    def get_github_repository_manifest(cls, user_id, full_name, ref=None):
+        token = cls._get_github_token(user_id)
+        owner, repo = cls._split_full_name(full_name)
+        root_files = cls._github_list_root_files(token, owner, repo, ref)
+        file_map = {}
+
+        for file_name in RepositoryManifestService.supported_files():
+            if root_files and file_name not in root_files:
+                continue
+            content = cls._github_get_file_content(token, owner, repo, file_name, ref)
+            if content is not None:
+                file_map[file_name] = content
+
+        manifest = RepositoryManifestService.analyze_files(file_map, root_files=root_files)
+        connection = cls.get_connection(user_id)
+        if connection:
+            connection.last_used_at = datetime.utcnow()
+            db.session.commit()
+        return manifest
+
+    @classmethod
     def get_authenticated_clone_url(cls, user_id, connection_id, full_name):
         connection = SourceConnection.query.filter_by(
             id=connection_id,
@@ -232,6 +255,43 @@ class SourceConnectionService:
             'Authorization': f'Bearer {token}',
             'X-GitHub-Api-Version': '2022-11-28',
         }
+
+    @classmethod
+    def _github_list_root_files(cls, token, owner, repo, ref=None):
+        params = {}
+        if ref:
+            params['ref'] = ref
+        response = requests.get(
+            f'{cls.GITHUB_API_URL}/repos/{quote(owner)}/{quote(repo)}/contents',
+            headers=cls._github_headers(token),
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, list):
+            return []
+        return [item.get('name') for item in data if item.get('type') == 'file' and item.get('name')]
+
+    @classmethod
+    def _github_get_file_content(cls, token, owner, repo, file_name, ref=None):
+        params = {}
+        if ref:
+            params['ref'] = ref
+        response = requests.get(
+            f'{cls.GITHUB_API_URL}/repos/{quote(owner)}/{quote(repo)}/contents/{quote(file_name)}',
+            headers=cls._github_headers(token),
+            params=params,
+            timeout=20,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        data = response.json()
+        if data.get('type') != 'file' or data.get('encoding') != 'base64':
+            return None
+        raw = base64.b64decode(data.get('content') or '', validate=False)
+        return raw.decode('utf-8', errors='replace')
 
     @staticmethod
     def _split_full_name(full_name):

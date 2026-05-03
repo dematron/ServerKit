@@ -41,6 +41,49 @@ const BUILD_METHOD_OPTIONS = [
     { value: 'custom', label: 'Custom command' },
 ];
 
+const APP_TYPE_LABELS = Object.fromEntries(APP_TYPE_OPTIONS.map(option => [option.value, option.label]));
+const BUILD_METHOD_LABELS = Object.fromEntries(BUILD_METHOD_OPTIONS.map(option => [option.value, option.label]));
+
+const SERVICE_TEMPLATES = [
+    {
+        id: 'agentsite',
+        name: 'AgentSite',
+        serviceName: 'agentsite',
+        description: 'AI-powered website builder with multi-agent orchestration.',
+        repoUrl: 'https://github.com/jhd3197/AgentSite.git',
+        branch: 'main',
+        appType: 'docker',
+        buildMethod: 'dockerfile',
+        port: 6391,
+        badges: ['Render', 'Railway', 'Compose', 'Dockerfile'],
+        manifest: {
+            strategy: 'docker_compose',
+            recommended: {
+                app_type: 'docker',
+                build_method: 'dockerfile',
+                port: 6391,
+                dockerfile_path: 'Dockerfile',
+                healthcheck_path: '/api/health',
+            },
+            manifests: [
+                { type: 'docker_compose', file: 'docker-compose.yml', label: 'Docker Compose', summary: 'agentsite service on port 6391' },
+                { type: 'render', file: 'render.yaml', label: 'Render blueprint', summary: 'agentsite web service using docker' },
+                { type: 'railway', file: 'railway.json', label: 'Railway config', summary: 'Dockerfile build with health check' },
+                { type: 'app_json', file: 'app.json', label: 'App manifest', summary: 'AI-powered website builder using multi-agent orchestration' },
+            ],
+            env: [
+                { key: 'OPENAI_API_KEY', required: true, secret: true, source: 'render.yaml' },
+                { key: 'CLAUDE_API_KEY', required: true, secret: true, source: 'render.yaml' },
+                { key: 'GOOGLE_API_KEY', required: true, secret: true, source: 'render.yaml' },
+                { key: 'GROQ_API_KEY', required: true, secret: true, source: 'render.yaml' },
+                { key: 'GROK_API_KEY', required: true, secret: true, source: 'render.yaml' },
+                { key: 'OPENROUTER_API_KEY', required: true, secret: true, source: 'render.yaml' },
+            ],
+            ports: [6391],
+        },
+    },
+];
+
 function slugify(value) {
     return value.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 }
@@ -60,6 +103,14 @@ function normalizeManualRepo(value) {
     return trimmed;
 }
 
+function formatAppType(value) {
+    return APP_TYPE_LABELS[value] || value || 'Auto-detect';
+}
+
+function formatBuildMethod(value) {
+    return BUILD_METHOD_LABELS[value] || value || 'Auto build';
+}
+
 const NewService = () => {
     const navigate = useNavigate();
     const toast = useToast();
@@ -69,8 +120,11 @@ const NewService = () => {
     const [reposLoading, setReposLoading] = useState(false);
     const [repoSearch, setRepoSearch] = useState('');
     const [selectedRepo, setSelectedRepo] = useState(null);
+    const [selectedTemplate, setSelectedTemplate] = useState(null);
     const [branches, setBranches] = useState([]);
     const [branchesLoading, setBranchesLoading] = useState(false);
+    const [repoManifest, setRepoManifest] = useState(null);
+    const [repoManifestLoading, setRepoManifestLoading] = useState(false);
     const [manualRepoUrl, setManualRepoUrl] = useState('');
     const [name, setName] = useState('');
     const [nameTouched, setNameTouched] = useState(false);
@@ -85,14 +139,22 @@ const NewService = () => {
     const githubConnection = githubStatus?.connection;
     const githubConfigured = githubStatus?.configured;
     const normalizedManualRepo = useMemo(() => normalizeManualRepo(manualRepoUrl), [manualRepoUrl]);
+    const activeManifest = sourceMode === 'template' ? selectedTemplate?.manifest : repoManifest;
+    const recommended = activeManifest?.recommended || {};
     const detectedServiceName = useMemo(() => {
+        if (sourceMode === 'template' && selectedTemplate) return slugify(selectedTemplate.serviceName || selectedTemplate.name || '');
         if (sourceMode === 'github' && selectedRepo) return slugify(selectedRepo.name || '');
         return repoNameFromUrl(normalizedManualRepo);
-    }, [normalizedManualRepo, selectedRepo, sourceMode]);
+    }, [normalizedManualRepo, selectedRepo, selectedTemplate, sourceMode]);
     const serviceName = nameTouched ? name : detectedServiceName;
     const canSubmit = sourceMode === 'github'
         ? Boolean(githubConnection && selectedRepo && serviceName?.length >= 2)
-        : Boolean(normalizedManualRepo && serviceName?.length >= 2);
+        : sourceMode === 'template'
+            ? Boolean(selectedTemplate && serviceName?.length >= 2)
+            : Boolean(normalizedManualRepo && serviceName?.length >= 2);
+    const buildSummary = buildMethod === 'auto' && recommended.build_method
+        ? `Auto -> ${formatBuildMethod(recommended.build_method)}`
+        : formatBuildMethod(buildMethod);
 
     const loadGithubStatus = useCallback(async () => {
         try {
@@ -146,6 +208,40 @@ const NewService = () => {
     }, [selectedRepo, loadBranches]);
 
     useEffect(() => {
+        if (sourceMode !== 'github' || !selectedRepo) {
+            if (sourceMode !== 'template') setRepoManifest(null);
+            setRepoManifestLoading(false);
+            return undefined;
+        }
+
+        let cancelled = false;
+        setRepoManifestLoading(true);
+        api.inspectGithubRepositoryManifest(selectedRepo.full_name, branch || selectedRepo.default_branch || 'main')
+            .then((data) => {
+                if (cancelled) return;
+                const manifest = data.manifest || null;
+                setRepoManifest(manifest);
+                const detectedPort = manifest?.recommended?.port;
+                if (!port && detectedPort) {
+                    setPort(String(detectedPort));
+                }
+            })
+            .catch((err) => {
+                if (!cancelled) {
+                    setRepoManifest(null);
+                    toast.error(err.message || 'Failed to inspect repository manifests');
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setRepoManifestLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [branch, port, selectedRepo, sourceMode, toast]);
+
+    useEffect(() => {
         if (selectedRepo) {
             if (!nameTouched) {
                 setName(slugify(selectedRepo.name || ''));
@@ -164,6 +260,27 @@ const NewService = () => {
         }
     }
 
+    function handleSourceModeChange(mode) {
+        setSourceMode(mode);
+        if (mode === 'template' && !selectedTemplate) {
+            handleSelectTemplate(SERVICE_TEMPLATES[0]);
+        }
+    }
+
+    function handleSelectTemplate(template) {
+        setSelectedTemplate(template);
+        setSelectedRepo(null);
+        setRepoManifest(template.manifest || null);
+        setManualRepoUrl(template.repoUrl);
+        setName(slugify(template.serviceName || template.name || ''));
+        setNameTouched(false);
+        setBranch(template.branch || 'main');
+        setAppType(template.appType || 'auto');
+        setBuildMethod(template.buildMethod || 'auto');
+        setPort(template.port ? String(template.port) : '');
+        setAutoDeploy(template.autoDeploy ?? true);
+    }
+
     function handleManualRepoChange(value) {
         setManualRepoUrl(value);
         if (!nameTouched) {
@@ -174,7 +291,11 @@ const NewService = () => {
     async function handleSubmit(e) {
         e.preventDefault();
         if (!canSubmit) {
-            toast.error(sourceMode === 'github' ? 'Select a GitHub repository' : 'Repository URL is required');
+            toast.error(sourceMode === 'github'
+                ? 'Select a GitHub repository'
+                : sourceMode === 'template'
+                    ? 'Select a service template'
+                    : 'Repository URL is required');
             return;
         }
 
@@ -186,11 +307,17 @@ const NewService = () => {
             port: port ? Number(port) : null,
             auto_deploy: autoDeploy,
         };
+        if (recommended.dockerfile_path) payload.dockerfile_path = recommended.dockerfile_path;
+        if (recommended.custom_build_cmd) payload.custom_build_cmd = recommended.custom_build_cmd;
+        if (recommended.custom_start_cmd) payload.custom_start_cmd = recommended.custom_start_cmd;
 
         if (sourceMode === 'github') {
             payload.source_connection_id = githubConnection.id;
             payload.repository_full_name = selectedRepo.full_name;
             payload.repo_url = `https://github.com/${selectedRepo.full_name}.git`;
+        } else if (sourceMode === 'template') {
+            payload.template_id = selectedTemplate.id;
+            payload.repo_url = selectedTemplate.repoUrl;
         } else {
             payload.repo_url = normalizedManualRepo;
         }
@@ -232,7 +359,7 @@ const NewService = () => {
                 <button
                     className={`new-service-page__mode-card ${sourceMode === 'github' ? 'new-service-page__mode-card--active' : ''}`}
                     type="button"
-                    onClick={() => setSourceMode('github')}
+                    onClick={() => handleSourceModeChange('github')}
                 >
                     <span className="new-service-page__mode-icon">
                         <Github size={18} />
@@ -246,7 +373,7 @@ const NewService = () => {
                 <button
                     className={`new-service-page__mode-card ${sourceMode === 'manual' ? 'new-service-page__mode-card--active' : ''}`}
                     type="button"
-                    onClick={() => setSourceMode('manual')}
+                    onClick={() => handleSourceModeChange('manual')}
                 >
                     <span className="new-service-page__mode-icon">
                         <KeyRound size={18} />
@@ -257,23 +384,27 @@ const NewService = () => {
                     </span>
                     {sourceMode === 'manual' ? <CheckCircle2 size={18} /> : <ArrowRight size={18} />}
                 </button>
-                <Link to="/templates" className="new-service-page__mode-card">
+                <button
+                    className={`new-service-page__mode-card ${sourceMode === 'template' ? 'new-service-page__mode-card--active' : ''}`}
+                    type="button"
+                    onClick={() => handleSourceModeChange('template')}
+                >
                     <span className="new-service-page__mode-icon">
                         <Package size={18} />
                     </span>
                     <span>
-                        <strong>Template</strong>
-                        <small>Packaged apps and infrastructure services</small>
+                        <strong>Deploy Template</strong>
+                        <small>Fast import from manifest-ready repos</small>
                     </span>
-                    <ArrowRight size={18} />
-                </Link>
+                    {sourceMode === 'template' ? <CheckCircle2 size={18} /> : <ArrowRight size={18} />}
+                </button>
             </div>
 
             <form className="new-service-page__wizard" onSubmit={handleSubmit}>
                 <section className="new-service-page__panel new-service-page__provider-panel">
                     <div className="new-service-page__section-heading">
                         <Link2 size={16} />
-                        <h2>{sourceMode === 'github' ? 'Pick Repository' : 'Connect Source'}</h2>
+                        <h2>{sourceMode === 'github' ? 'Pick Repository' : sourceMode === 'template' ? 'Choose Template' : 'Connect Source'}</h2>
                     </div>
 
                     {sourceMode === 'github' ? (
@@ -353,6 +484,50 @@ const NewService = () => {
                                 </div>
                             )}
                         </div>
+                    ) : sourceMode === 'template' ? (
+                        <div className="new-service-page__connect-box">
+                            <div className="new-service-page__connect-heading">
+                                <span className="new-service-page__connect-icon">
+                                    <Package size={18} />
+                                </span>
+                                <div>
+                                    <strong>Manifest-ready templates</strong>
+                                    <span>Templates can ship Render, Railway, Docker Compose, app.json, or ServerKit manifest files.</span>
+                                </div>
+                            </div>
+
+                            <div className="new-service-page__template-list">
+                                {SERVICE_TEMPLATES.map(template => (
+                                    <button
+                                        key={template.id}
+                                        type="button"
+                                        className={`new-service-page__template-row ${selectedTemplate?.id === template.id ? 'new-service-page__template-row--active' : ''}`}
+                                        onClick={() => handleSelectTemplate(template)}
+                                    >
+                                        <span className="new-service-page__template-main">
+                                            <strong>{template.name}</strong>
+                                            <small>{template.description}</small>
+                                            <em>{template.repoUrl}</em>
+                                        </span>
+                                        <span className="new-service-page__template-badges">
+                                            {template.badges.map(badge => (
+                                                <span key={badge}>{badge}</span>
+                                            ))}
+                                        </span>
+                                        {selectedTemplate?.id === template.id ? <CheckCircle2 size={18} /> : <ArrowRight size={18} />}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="new-service-page__connect-actions new-service-page__connect-actions--left">
+                                <Button type="button" variant="outline" asChild>
+                                    <Link to="/templates">
+                                        <Package size={16} />
+                                        Template Library
+                                    </Link>
+                                </Button>
+                            </div>
+                        </div>
                     ) : (
                         <div className="new-service-page__connect-box">
                             <div className="new-service-page__connect-heading">
@@ -378,7 +553,7 @@ const NewService = () => {
                         </div>
                     )}
 
-                    {(selectedRepo || sourceMode === 'manual') && (
+                    {(selectedRepo || sourceMode === 'manual' || selectedTemplate) && (
                         <div className="new-service-page__repo-preview">
                             <div>
                                 <span>Service</span>
@@ -390,7 +565,7 @@ const NewService = () => {
                             </div>
                             <div>
                                 <span>Build</span>
-                                <strong>{buildMethod === 'auto' ? 'Auto' : buildMethod}</strong>
+                                <strong>{buildSummary}</strong>
                             </div>
                         </div>
                     )}
@@ -424,14 +599,65 @@ const NewService = () => {
                         </div>
                     </div>
 
+                    {(repoManifestLoading || activeManifest) && (
+                        <div className="new-service-page__manifest-card">
+                            <div className="new-service-page__manifest-head">
+                                <span>
+                                    <Zap size={16} />
+                                    Manifest Detection
+                                </span>
+                                <strong>{repoManifestLoading ? 'Inspecting' : activeManifest?.strategy?.replace('_', ' ') || 'Detected'}</strong>
+                            </div>
+                            {!repoManifestLoading && activeManifest && (
+                                <>
+                                    <div className="new-service-page__manifest-grid">
+                                        <div>
+                                            <span>Type</span>
+                                            <strong>{formatAppType(recommended.app_type)}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Build</span>
+                                            <strong>{formatBuildMethod(recommended.build_method)}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Port</span>
+                                            <strong>{recommended.port || 'Auto'}</strong>
+                                        </div>
+                                    </div>
+                                    <div className="new-service-page__manifest-files">
+                                        {(activeManifest.manifests || []).slice(0, 5).map(manifest => (
+                                            <span key={manifest.file}>
+                                                <CheckCircle2 size={13} />
+                                                {manifest.file}
+                                            </span>
+                                        ))}
+                                    </div>
+                                    {(activeManifest.env || []).length > 0 && (
+                                        <div className="new-service-page__env-preview">
+                                            {(activeManifest.env || []).slice(0, 6).map(env => (
+                                                <span key={env.key} className={env.secret ? 'new-service-page__env-preview-secret' : ''}>
+                                                    {env.key}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    )}
+
                     <div className="new-service-page__summary">
                         <div>
                             <span>Source</span>
-                            <strong>{sourceMode === 'github' ? 'GitHub API' : 'Git remote'}</strong>
+                            <strong>{sourceMode === 'github' ? 'GitHub API' : sourceMode === 'template' ? 'Template' : 'Git remote'}</strong>
                         </div>
                         <div>
                             <span>Repository</span>
-                            <strong>{selectedRepo?.full_name || normalizedManualRepo || 'Not selected'}</strong>
+                            <strong>{selectedRepo?.full_name || selectedTemplate?.repoUrl || normalizedManualRepo || 'Not selected'}</strong>
+                        </div>
+                        <div>
+                            <span>Build</span>
+                            <strong>{buildSummary}</strong>
                         </div>
                         <div>
                             <span>Auto-deploy</span>
@@ -547,11 +773,11 @@ const NewService = () => {
                     <div className="new-service-page__notes">
                         <div className="new-service-page__note">
                             <ShieldCheck size={16} />
-                            <span>GitHub repositories are listed through the API after account authorization.</span>
+                            <span>ServerKit checks serverkit.json, Docker Compose, Render, Railway, app.json, Dockerfile, and Nixpacks signals.</span>
                         </div>
                         <div className="new-service-page__note">
                             <Lock size={16} />
-                            <span>Other Git remotes still use server-side keys or authenticated URLs.</span>
+                            <span>Secret values from manifests stay empty until you add them to the service environment.</span>
                         </div>
                     </div>
 

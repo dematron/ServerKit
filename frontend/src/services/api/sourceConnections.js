@@ -31,6 +31,13 @@ export async function listGithubBranches(fullName) {
     return this.request(`/source-connections/github/repos/${encodeURIComponent(fullName)}/branches`);
 }
 
+export async function inspectGithubRepositoryManifest(fullName, ref = null) {
+    const params = new URLSearchParams();
+    if (ref) params.set('ref', ref);
+    const query = params.toString();
+    return this.request(`/source-connections/github/repos/${encodeURIComponent(fullName)}/manifest${query ? `?${query}` : ''}`);
+}
+
 export async function getGithubSourceConfig() {
     return this.request('/source-connections/admin/github');
 }

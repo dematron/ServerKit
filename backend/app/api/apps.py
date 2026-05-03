@@ -9,6 +9,7 @@ from app.models import Application, User
 from app.services.build_service import BuildService
 from app.services.docker_service import DockerService
 from app.services.git_service import GitService
+from app.services.repository_manifest_service import RepositoryManifestService
 from app.services.source_connection_service import SourceConnectionService
 from app.services.remote_docker_service import RemoteDockerService
 from app.services.log_service import LogService
@@ -365,6 +366,9 @@ def create_app_from_repository():
     build_method = (data.get('build_method') or 'auto').strip().lower()
     auto_deploy = bool(data.get('auto_deploy', True))
     port = data.get('port')
+    dockerfile_path = (data.get('dockerfile_path') or '').strip() or None
+    custom_build_cmd = (data.get('custom_build_cmd') or '').strip() or None
+    custom_start_cmd = (data.get('custom_start_cmd') or '').strip() or None
 
     if not name or len(name) < 2:
         return jsonify({'error': 'Service name must be at least 2 characters'}), 400
@@ -418,8 +422,34 @@ def create_app_from_repository():
             clone_result['error'] = clone_result['error'].replace(clone_repo_url, deploy_repo_url)
         return jsonify(clone_result), 400
 
+    manifest = RepositoryManifestService.analyze_path(app_path)
+    recommended = manifest.get('recommended') or {}
+    manifest_strategy = manifest.get('strategy')
     detection = BuildService.detect_build_method(app_path)
-    resolved_app_type = _derive_repo_app_type(detection) if app_type == 'auto' else app_type
+    manifest_app_type_strategies = {
+        'serverkit',
+        'docker_compose',
+        'render',
+        'railway',
+        'dockerfile',
+        'app_json',
+    }
+    resolved_app_type = (
+        (recommended.get('app_type') if manifest_strategy in manifest_app_type_strategies else None)
+        or _derive_repo_app_type(detection)
+    ) if app_type == 'auto' else app_type
+    resolved_build_method = build_method
+    if build_method == 'auto':
+        resolved_build_method = (
+            recommended.get('build_method') if manifest_strategy else None
+        ) or detection.get('build_method') or 'auto'
+        if resolved_build_method == 'custom' and not (custom_build_cmd or recommended.get('custom_build_cmd')):
+            resolved_build_method = 'auto'
+    if not port:
+        port = recommended.get('port')
+    dockerfile_path = dockerfile_path or recommended.get('dockerfile_path') or 'Dockerfile'
+    custom_build_cmd = custom_build_cmd or recommended.get('custom_build_cmd')
+    custom_start_cmd = custom_start_cmd or recommended.get('custom_start_cmd')
 
     app = Application(
         name=name,
@@ -447,7 +477,10 @@ def create_app_from_repository():
         build_result = BuildService.configure_build(
             app_id=app.id,
             app_path=app.root_path,
-            build_method=build_method,
+            build_method=resolved_build_method,
+            dockerfile_path=dockerfile_path,
+            custom_build_cmd=custom_build_cmd,
+            custom_start_cmd=custom_start_cmd,
         )
         if not build_result.get('success'):
             raise RuntimeError(build_result.get('error', 'Failed to configure build'))
@@ -463,6 +496,7 @@ def create_app_from_repository():
             },
             'build_config': build_result.get('config'),
             'detection': detection,
+            'manifest': manifest,
         }), 201
     except Exception as exc:
         db.session.rollback()

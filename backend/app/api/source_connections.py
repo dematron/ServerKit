@@ -89,6 +89,21 @@ def github_branches(full_name):
         return jsonify({'error': _github_error(exc)}), 400
 
 
+@source_connections_bp.route('/github/repos/<path:full_name>/manifest', methods=['GET'])
+@jwt_required()
+def github_repository_manifest(full_name):
+    user_id = int(get_jwt_identity())
+    ref = request.args.get('ref') or None
+
+    try:
+        manifest = SourceConnectionService.get_github_repository_manifest(user_id, full_name, ref)
+        return jsonify({'manifest': manifest}), 200
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except HTTPError as exc:
+        return jsonify({'error': _github_error(exc)}), 400
+
+
 @source_connections_bp.route('/github', methods=['DELETE'])
 @jwt_required()
 def disconnect_github():

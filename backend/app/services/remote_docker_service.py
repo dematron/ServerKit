@@ -59,7 +59,7 @@ class RemoteDockerService:
         if not server_id or server_id == 'local':
             from app.services.docker_service import DockerService
             try:
-                info = DockerService.inspect_container(container_id)
+                info = DockerService.get_container(container_id)
                 return {'success': True, 'data': info}
             except Exception as e:
                 return {'success': False, 'error': str(e)}

@@ -2,6 +2,323 @@
 // DATABASES PAGE
 // ============================================
 
+.databases-page {
+    display: flex;
+    flex-direction: column;
+    gap: $space-6;
+}
+
+.databases-hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: $space-6;
+    padding-bottom: $space-6;
+    border-bottom: 1px solid $border-subtle;
+
+    @media (max-width: $breakpoint-md) {
+        flex-direction: column;
+        gap: $space-4;
+    }
+}
+
+.databases-hero__main {
+    display: flex;
+    align-items: flex-start;
+    gap: $space-4;
+    min-width: 0;
+}
+
+.databases-hero__icon {
+    @include flex-center();
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    color: $text-primary;
+    background:
+        linear-gradient(135deg, fade($color-mysql, 18%), fade($color-postgresql-secondary, 18%)),
+        $bg-card;
+    border: 1px solid $border-active;
+    border-radius: $radius-lg;
+}
+
+.databases-hero__copy {
+    min-width: 0;
+
+    h1 {
+        margin: 0;
+        color: $text-primary;
+        font-size: $font-size-3xl;
+        font-weight: $font-weight-semibold;
+        line-height: $line-height-tight;
+        letter-spacing: 0;
+    }
+
+    p {
+        max-width: 620px;
+        margin: $space-2 0 0;
+        color: $text-secondary;
+        font-size: $font-size-base;
+        line-height: $line-height-normal;
+    }
+}
+
+.databases-hero__eyebrow {
+    margin-bottom: $space-1;
+    color: $text-tertiary;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+.databases-hero__actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+
+    @media (max-width: $breakpoint-md) {
+        width: 100%;
+    }
+}
+
+.db-status-indicators {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: $space-2;
+    flex-wrap: wrap;
+
+    @media (max-width: $breakpoint-md) {
+        justify-content: flex-start;
+        width: 100%;
+    }
+}
+
+.db-status-indicator {
+    display: grid;
+    grid-template-columns: auto auto;
+    column-gap: $space-2;
+    row-gap: 2px;
+    align-items: center;
+    min-height: 38px;
+    padding: $space-2 $space-3;
+    background: fade($bg-card-raw, 82%);
+    border: 1px solid $border-subtle;
+    border-radius: $radius-lg;
+    color: $text-secondary;
+    white-space: nowrap;
+
+    .status-dot {
+        display: block;
+        grid-row: 1 / span 2;
+        width: 7px;
+        height: 7px;
+        background: $text-tertiary;
+        border-radius: $radius-full;
+    }
+
+    &.active {
+        background: $success-bg;
+        border-color: $success-border;
+
+        .status-dot {
+            background: $success;
+            box-shadow: 0 0 0 3px fade($success, 16%);
+        }
+
+        .db-status-value {
+            color: $success;
+        }
+    }
+
+    &.inactive {
+        background: $warning-bg;
+        border-color: $warning-border;
+
+        .status-dot {
+            background: $warning;
+        }
+
+        .db-status-value {
+            color: $warning;
+        }
+    }
+
+    &.missing,
+    &.unknown {
+        background: fade($bg-hover-raw, 42%);
+    }
+}
+
+.db-status-label {
+    color: $text-primary;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+    line-height: 1;
+}
+
+.db-status-value {
+    color: $text-tertiary;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-medium;
+    line-height: 1;
+}
+
+.database-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: $space-4;
+
+    @media (max-width: $breakpoint-lg) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @media (max-width: $breakpoint-sm) {
+        grid-template-columns: 1fr;
+    }
+}
+
+.database-summary-card {
+    display: flex;
+    align-items: flex-start;
+    gap: $space-3;
+    min-width: 0;
+    padding: $space-4;
+    background: fade($bg-card-raw, 88%);
+    border: 1px solid $border-subtle;
+    border-radius: $radius-lg;
+
+    span,
+    strong,
+    small {
+        display: block;
+        min-width: 0;
+    }
+
+    span {
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-semibold;
+        letter-spacing: 0;
+        line-height: 1;
+        text-transform: uppercase;
+    }
+
+    strong {
+        margin-top: $space-2;
+        color: $text-primary;
+        font-size: $font-size-lg;
+        font-weight: $font-weight-semibold;
+        line-height: $line-height-tight;
+    }
+
+    small {
+        margin-top: $space-1;
+        color: $text-tertiary;
+        font-size: $font-size-sm;
+        line-height: $line-height-normal;
+    }
+
+    &.mysql .database-summary-card__icon {
+        color: $color-mysql;
+        background: fade($color-mysql, 13%);
+        border-color: fade($color-mysql, 22%);
+    }
+
+    &.postgresql .database-summary-card__icon {
+        color: $color-postgresql-secondary;
+        background: fade($color-postgresql-secondary, 13%);
+        border-color: fade($color-postgresql-secondary, 22%);
+    }
+
+    &.docker .database-summary-card__icon {
+        color: $color-docker;
+        background: fade($color-docker, 13%);
+        border-color: fade($color-docker, 22%);
+    }
+
+    &.sqlite .database-summary-card__icon {
+        color: $text-secondary;
+        background: fade($text-secondary-raw, 10%);
+        border-color: fade($text-secondary-raw, 18%);
+    }
+}
+
+.database-summary-card__icon {
+    @include flex-center();
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-md;
+}
+
+.databases-page .database-tabs__list {
+    gap: $space-1;
+    padding: $space-1;
+    margin-bottom: 0;
+    background: fade($bg-card-raw, 78%);
+    border: 1px solid $border-subtle;
+    border-radius: $radius-lg;
+}
+
+.databases-page .database-tabs__list > .tab {
+    min-height: 36px;
+    padding: 0 $space-3;
+    border: 0;
+    border-radius: $radius-md;
+    margin-bottom: 0;
+    color: $text-secondary;
+    font-size: $font-size-sm + 1;
+    letter-spacing: 0;
+
+    svg {
+        flex-shrink: 0;
+    }
+
+    &:hover {
+        background: $bg-hover;
+        color: $text-primary;
+    }
+
+    &[data-state="active"],
+    &.active {
+        color: white;
+        background: $accent-primary;
+        box-shadow: 0 8px 18px fade($accent-primary-raw, 18%);
+    }
+}
+
+.database-tabs__content {
+    min-height: 360px;
+    padding-top: $space-5;
+}
+
+.database-tabs__pane {
+    outline: none;
+}
+
+.databases-page {
+    .empty-state {
+        min-height: 220px;
+        padding: $space-12 $space-6;
+        background:
+            linear-gradient(180deg, fade($bg-elevated-raw, 66%), fade($bg-card-raw, 88%)),
+            $bg-card;
+        border-radius: $radius-lg;
+    }
+
+    .section-header {
+        gap: $space-4;
+        margin-bottom: $space-4;
+        padding-bottom: $space-4;
+        border-bottom: 1px solid $border-subtle;
+        flex-wrap: wrap;
+    }
+}
+
 // Status section
 .db-status {
     display: flex;

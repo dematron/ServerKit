@@ -340,6 +340,14 @@ def remove_volume(volume_name):
 
 # ==================== DOCKER COMPOSE ====================
 
+@docker_bp.route('/compose/list', methods=['GET'])
+@jwt_required()
+def compose_list():
+    """List Docker Compose projects."""
+    projects = DockerService.compose_list()
+    return jsonify({'projects': projects}), 200
+
+
 @docker_bp.route('/compose/up', methods=['POST'])
 @jwt_required()
 @admin_required

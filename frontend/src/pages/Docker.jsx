@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
     Box, Layers, HardDrive, Network as NetworkIcon, Search, X, RefreshCw,
     Trash2, Play, Square, RotateCw, Terminal as TerminalLucide, FileText,
-    Cpu,
+    Activity, Clock3, Copy, Database, Gauge, Info, Package, Server as ServerIcon,
 } from 'lucide-react';
 
 // Server context for Docker operations
@@ -66,11 +66,48 @@ const normalizeListResponse = (response, key) => {
     return [];
 };
 
+const shortId = (value) => value ? value.substring(0, 12) : '-';
+
+const getContainerId = (container) => (
+    container?.id || container?.ID || container?.Id || ''
+);
+
+const getContainerName = (container) => (
+    container?.name || container?.Names || container?.Name || 'unnamed'
+);
+
+const getContainerImage = (container) => (
+    container?.image || container?.Image || container?.Config?.Image || '-'
+);
+
+const getContainerStatus = (container) => (
+    container?.status || container?.Status || container?.State?.Status || '-'
+);
+
+const getContainerState = (container) => {
+    const state = container?.state || container?.State?.Status || container?.State || '';
+    return typeof state === 'string' ? state.toLowerCase() : '';
+};
+
+const isContainerRunning = (container) => getContainerState(container) === 'running';
+
+const getContainerStatusLabel = (container) => {
+    if (isContainerRunning(container)) return 'Running';
+    const state = getContainerState(container);
+    if (state === 'exited') return 'Exited';
+    if (state === 'created') return 'Created';
+    return state || 'Unknown';
+};
+
+const getContainerProjectName = (container, details) => {
+    const labels = details?.Config?.Labels || container?.Labels || {};
+    return labels['com.docker.compose.project'] || labels['com.docker.compose.service'] || '-';
+};
+
 const Docker = () => {
     const [activeTab, setActiveTab] = useTabParam('/docker', VALID_TABS);
     const [dockerStatus, setDockerStatus] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [servers, setServers] = useState([]);
     const [selectedServer, setSelectedServer] = useState({ id: 'local', name: 'Local (this server)' });
     const [stats, setStats] = useState({
         containers: { total: 0, running: 0, stopped: 0 },
@@ -80,23 +117,8 @@ const Docker = () => {
     });
 
     useEffect(() => {
-        loadServers();
-    }, []);
-
-    useEffect(() => {
         checkDockerStatus();
-    }, [selectedServer]);
-
-    async function loadServers() {
-        try {
-            const data = await api.getAvailableServers();
-            setServers(Array.isArray(data) ? data : []);
-        } catch (err) {
-            console.error('Failed to load servers:', err);
-            // Default to just local
-            setServers([{ id: 'local', name: 'Local (this server)', status: 'online' }]);
-        }
-    }
+    }, [selectedServer]); // eslint-disable-line react-hooks/exhaustive-deps
 
     async function checkDockerStatus() {
         setLoading(true);
@@ -265,7 +287,7 @@ const Docker = () => {
 
     return (
         <ServerContext.Provider value={serverContextValue}>
-        <div className="page-container docker-page-new dx-page">
+        <div className="page-container page-container--full-bleed docker-page-new dx-page">
             <div className="page-header">
                 <div className="page-header-content">
                     <h1>Docker</h1>
@@ -369,9 +391,14 @@ const Docker = () => {
 // Action Buttons
 const RunContainerButton = () => {
     const [showModal, setShowModal] = useState(false);
+    const { isRemote } = useServer();
     return (
         <>
-            <Button onClick={() => setShowModal(true)}>
+            <Button
+                onClick={() => setShowModal(true)}
+                disabled={isRemote}
+                title={isRemote ? 'Running new containers is only available on the local Docker target right now' : 'Run container'}
+            >
                 <span>+</span> Run Container
             </Button>
             {showModal && <RunContainerModal onClose={() => setShowModal(false)} onCreated={() => window.location.reload()} />}
@@ -393,9 +420,14 @@ const PullImageButton = () => {
 
 const CreateNetworkButton = () => {
     const [showModal, setShowModal] = useState(false);
+    const { isRemote } = useServer();
     return (
         <>
-            <Button onClick={() => setShowModal(true)}>
+            <Button
+                onClick={() => setShowModal(true)}
+                disabled={isRemote}
+                title={isRemote ? 'Creating networks is only available on the local Docker target right now' : 'Create network'}
+            >
                 <span>+</span> Create Network
             </Button>
             {showModal && <CreateNetworkModal onClose={() => setShowModal(false)} onCreated={() => window.location.reload()} />}
@@ -405,9 +437,14 @@ const CreateNetworkButton = () => {
 
 const CreateVolumeButton = () => {
     const [showModal, setShowModal] = useState(false);
+    const { isRemote } = useServer();
     return (
         <>
-            <Button onClick={() => setShowModal(true)}>
+            <Button
+                onClick={() => setShowModal(true)}
+                disabled={isRemote}
+                title={isRemote ? 'Creating volumes is only available on the local Docker target right now' : 'Create volume'}
+            >
                 <span>+</span> Create Volume
             </Button>
             {showModal && <CreateVolumeModal onClose={() => setShowModal(false)} onCreated={() => window.location.reload()} />}
@@ -417,10 +454,15 @@ const CreateVolumeButton = () => {
 
 const PruneButton = ({ onPruned }) => {
     const toast = useToast();
+    const { isRemote } = useServer();
     const [loading, setLoading] = useState(false);
     const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm();
 
     async function handlePrune() {
+        if (isRemote) {
+            toast.error('Prune is only available on the local Docker target right now');
+            return;
+        }
         const confirmed = await confirm({ title: 'Docker Cleanup', message: 'Remove unused Docker resources? This will remove stopped containers, unused images, and unused networks.' });
         if (!confirmed) return;
 
@@ -429,7 +471,7 @@ const PruneButton = ({ onPruned }) => {
             await api.request('/docker/cleanup', { method: 'POST', body: {} });
             toast.success('Docker cleanup completed');
             onPruned?.();
-        } catch (err) {
+        } catch {
             toast.error('Failed to cleanup Docker resources');
         } finally {
             setLoading(false);
@@ -438,7 +480,13 @@ const PruneButton = ({ onPruned }) => {
 
     return (
         <>
-            <Button variant="outline" size="sm" onClick={handlePrune} disabled={loading}>
+            <Button
+                variant="outline"
+                size="sm"
+                onClick={handlePrune}
+                disabled={loading || isRemote}
+                title={isRemote ? 'Prune is only available on the local Docker target right now' : 'Prune unused Docker resources'}
+            >
                 {loading ? 'Cleaning...' : 'Prune Unused'}
             </Button>
             <ConfirmDialog
@@ -481,12 +529,14 @@ const ContainersTab = ({ onStatsChange }) => {
     const [loading, setLoading] = useState(true);
     const [showAll, setShowAll] = useState(true);
     const [selectedContainer, setSelectedContainer] = useState(null);
+    const [logsContainer, setLogsContainer] = useState(null);
     const [execContainer, setExecContainer] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
 
     useEffect(() => {
         loadContainers();
-    }, [showAll, serverId]);
+    }, [showAll, serverId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     async function loadContainers() {
         setLoading(true);
@@ -500,21 +550,28 @@ const ContainersTab = ({ onStatsChange }) => {
             }
             const containerList = data.containers || [];
             setContainers(containerList);
+            setContainerStats({});
+            setSelectedContainer(prev => {
+                if (!containerList.length) return null;
+                if (!prev) return containerList[0];
+                return containerList.find(c => getContainerId(c) === getContainerId(prev)) || containerList[0];
+            });
+            setLoading(false);
 
             // Load stats for running containers
-            const runningContainers = containerList.filter(c => c.state === 'running');
+            const runningContainers = containerList.filter(isContainerRunning);
             const statsPromises = runningContainers.map(async (c) => {
                 try {
                     let statsData;
                     if (isRemote) {
-                        const result = await api.getRemoteContainerStats(serverId, c.id);
+                        const result = await api.getRemoteContainerStats(serverId, getContainerId(c));
                         statsData = { stats: unwrapRemoteData(result) };
                     } else {
-                        statsData = await api.getContainerStats(c.id);
+                        statsData = await api.getContainerStats(getContainerId(c));
                     }
-                    return { id: c.id, stats: statsData.stats };
+                    return { id: getContainerId(c), stats: statsData.stats };
                 } catch {
-                    return { id: c.id, stats: null };
+                    return { id: getContainerId(c), stats: null };
                 }
             });
 
@@ -526,7 +583,6 @@ const ContainersTab = ({ onStatsChange }) => {
             setContainerStats(statsMap);
         } catch (err) {
             console.error('Failed to load containers:', err);
-        } finally {
             setLoading(false);
         }
     }
@@ -586,32 +642,38 @@ const ContainersTab = ({ onStatsChange }) => {
         return { cpu, memory };
     }
 
-    const [statusFilter, setStatusFilter] = useState('all');
-
     const counts = useMemo(() => {
         const c = { all: containers.length, running: 0, stopped: 0 };
-        containers.forEach(x => { if (x.state === 'running') c.running++; else c.stopped++; });
+        containers.forEach(x => { if (isContainerRunning(x)) c.running++; else c.stopped++; });
         return c;
     }, [containers]);
 
     const filteredContainers = containers.filter(c => {
-        if (statusFilter === 'running' && c.state !== 'running') return false;
-        if (statusFilter === 'stopped' && c.state === 'running') return false;
+        if (statusFilter === 'running' && !isContainerRunning(c)) return false;
+        if (statusFilter === 'stopped' && isContainerRunning(c)) return false;
         if (!searchTerm) return true;
         const search = searchTerm.toLowerCase();
-        return c.name?.toLowerCase().includes(search) ||
-               c.id?.toLowerCase().includes(search) ||
-               c.image?.toLowerCase().includes(search);
+        return getContainerName(c).toLowerCase().includes(search) ||
+               getContainerId(c).toLowerCase().includes(search) ||
+               getContainerImage(c).toLowerCase().includes(search);
     });
 
+    const selectedStats = selectedContainer
+        ? parseStats(containerStats[getContainerId(selectedContainer)])
+        : { cpu: 0, memory: 0 };
+
     if (loading) {
-        return <div className="lv-content-loading" style={{ padding: 60 }}>Loading containers…</div>;
+        return (
+            <div className="dx-tab-pane">
+                <div className="docker-loading">Loading containers...</div>
+            </div>
+        );
     }
 
     return (
-        <div className="dx-tab-pane">
+        <div className="dx-tab-pane dx-containers-pane">
             <div className="dx-tab-toolbar">
-                <div className="proc-filter-chips">
+                <div className="dx-filter-chips">
                     {[
                         { id: 'all', label: 'All', count: counts.all },
                         { id: 'running', label: 'Running', count: counts.running },
@@ -629,16 +691,24 @@ const ContainersTab = ({ onStatsChange }) => {
                     ))}
                 </div>
                 <div className="dx-tab-toolbar-right">
-                    <div className="lv-search-field" style={{ minWidth: 240 }}>
+                    <label className="dx-toggle">
+                        <input
+                            type="checkbox"
+                            checked={showAll}
+                            onChange={(e) => setShowAll(e.target.checked)}
+                        />
+                        <span>Include stopped</span>
+                    </label>
+                    <div className="dx-search-field">
                         <Search size={13} className="lv-search-field-icon" />
                         <input
                             type="text"
-                            placeholder="Filter name or image…"
+                            placeholder="Filter name, image, or ID..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                         {searchTerm && (
-                            <button className="lv-search-field-clear" onClick={() => setSearchTerm('')}>
+                            <button className="lv-search-field-clear" onClick={() => setSearchTerm('')} title="Clear search">
                                 <X size={11} />
                             </button>
                         )}
@@ -654,124 +724,124 @@ const ContainersTab = ({ onStatsChange }) => {
             </div>
 
             {filteredContainers.length === 0 ? (
-                <div className="lv-empty-hint" style={{ padding: 60, minHeight: 240 }}>
+                <div className="docker-empty">
                     <Box size={32} />
                     <p>{containers.length === 0 ? 'No containers yet. Run your first one.' : 'No containers match the current filters.'}</p>
                 </div>
             ) : (
-                <div className="dx-container-grid">
-                    {filteredContainers.map(container => {
-                        const stats = parseStats(containerStats[container.id]);
-                        const isRunning = container.state === 'running';
-                        const ports = formatPorts(container.ports);
-                        return (
-                            <div
-                                key={container.id}
-                                className={`dx-container-card ${isRunning ? 'is-running' : 'is-stopped'}`}
-                                onClick={() => setSelectedContainer(container)}
-                            >
-                                <div className="dx-card-head">
-                                    <div className="dx-card-title">
-                                        <span className={`dx-status-dot ${isRunning ? 'running' : 'stopped'}`} />
-                                        <h4 title={container.name}>{container.name}</h4>
-                                    </div>
-                                    <span className={`dx-status-pill ${isRunning ? 'running' : 'stopped'}`}>
-                                        {isRunning ? 'Running' : 'Exited'}
-                                    </span>
-                                </div>
-                                <div className="dx-card-image">
-                                    <Layers size={11} />
-                                    <span title={container.image}>{container.image}</span>
-                                </div>
-                                <div className="dx-card-detail">{container.status}</div>
-                                {isRunning && Array.isArray(ports) && ports[0] !== '-' && (
-                                    <div className="dx-card-ports">
-                                        {ports.slice(0, 3).map((p, i) => (
-                                            <span key={i} className="dx-port-pill">{p}</span>
-                                        ))}
-                                        {ports.length > 3 && <span className="dx-port-more">+{ports.length - 3}</span>}
-                                    </div>
-                                )}
-                                {isRunning && (
-                                    <div className="dx-card-resources">
-                                        <div className="dx-res">
-                                            <span className="dx-res-label"><Cpu size={10} /> CPU</span>
-                                            <div className="dx-res-track">
-                                                <div className="dx-res-fill cpu" style={{ width: `${Math.min(stats.cpu, 100)}%` }} />
-                                            </div>
-                                            <span className="dx-res-value">{stats.cpu.toFixed(1)}%</span>
-                                        </div>
-                                        <div className="dx-res">
-                                            <span className="dx-res-label">RAM</span>
-                                            <div className="dx-res-track">
-                                                <div className="dx-res-fill mem" style={{ width: `${Math.min(stats.memory, 100)}%` }} />
-                                            </div>
-                                            <span className="dx-res-value">{stats.memory.toFixed(1)}%</span>
-                                        </div>
-                                    </div>
-                                )}
-                                <div className="dx-card-actions" onClick={(e) => e.stopPropagation()}>
-                                    <button
-                                        className="svc-action-btn ghost"
-                                        onClick={() => setSelectedContainer(container)}
-                                        title="Logs"
-                                    >
-                                        <FileText size={12} /> Logs
-                                    </button>
-                                    {isRunning && (
-                                        <>
-                                            <button
-                                                className="svc-action-btn ghost"
-                                                onClick={() => setExecContainer(container)}
-                                                title="Exec"
+                <div className="dx-manager-layout">
+                    <section className="dx-resource-list">
+                        <div className="dx-table-wrap">
+                            <table className="dx-manager-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Image</th>
+                                        <th>Status</th>
+                                        <th>Ports</th>
+                                        <th>Resources</th>
+                                        <th>Created</th>
+                                        <th className="text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredContainers.map(container => {
+                                        const containerId = getContainerId(container);
+                                        const stats = parseStats(containerStats[containerId]);
+                                        const isRunning = isContainerRunning(container);
+                                        const ports = formatPorts(container.ports);
+                                        const isSelected = getContainerId(selectedContainer) === containerId;
+                                        return (
+                                            <tr
+                                                key={containerId}
+                                                className={`${isRunning ? 'is-running' : 'is-stopped'} ${isSelected ? 'is-selected' : ''}`}
+                                                onClick={() => setSelectedContainer(container)}
                                             >
-                                                <TerminalLucide size={12} /> Exec
-                                            </button>
-                                            <button
-                                                className="svc-action-btn"
-                                                onClick={() => handleAction(container.id, 'restart')}
-                                                title="Restart"
-                                            >
-                                                <RotateCw size={12} /> Restart
-                                            </button>
-                                            <button
-                                                className="svc-action-btn"
-                                                onClick={() => handleAction(container.id, 'stop')}
-                                                title="Stop"
-                                            >
-                                                <Square size={12} /> Stop
-                                            </button>
-                                        </>
-                                    )}
-                                    {!isRunning && (
-                                        <>
-                                            <button
-                                                className="svc-action-btn primary"
-                                                onClick={() => handleAction(container.id, 'start')}
-                                                title="Start"
-                                            >
-                                                <Play size={12} /> Start
-                                            </button>
-                                            <button
-                                                className="svc-action-btn danger"
-                                                onClick={() => handleAction(container.id, 'remove')}
-                                                title="Remove"
-                                            >
-                                                <Trash2 size={12} /> Remove
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-                        );
-                    })}
+                                                <td>
+                                                    <div className="dx-name-stack">
+                                                        <span className="dx-name-line">
+                                                            <span className={`dx-status-dot ${isRunning ? 'running' : 'stopped'}`} />
+                                                            <span title={getContainerName(container)}>{getContainerName(container)}</span>
+                                                        </span>
+                                                        <span className="dx-muted-line mono">{shortId(containerId)}</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <span className="dx-code-pill" title={getContainerImage(container)}>
+                                                        {getContainerImage(container)}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span className={`dx-status-pill ${isRunning ? 'running' : 'stopped'}`}>
+                                                        {getContainerStatusLabel(container)}
+                                                    </span>
+                                                    <span className="dx-muted-line">{getContainerStatus(container)}</span>
+                                                </td>
+                                                <td>
+                                                    <div className="dx-port-list">
+                                                        {ports.slice(0, 2).map((port, i) => (
+                                                            <span key={i} className={`dx-port-pill ${port === '-' ? 'is-empty' : ''}`}>{port}</span>
+                                                        ))}
+                                                        {ports.length > 2 && <span className="dx-port-more">+{ports.length - 2}</span>}
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <ContainerResourceBars stats={stats} muted={!isRunning} />
+                                                </td>
+                                                <td>
+                                                    <span className="dx-muted-line">{container.created || container.CreatedAt || '-'}</span>
+                                                </td>
+                                                <td className="dx-row-actions" onClick={(e) => e.stopPropagation()}>
+                                                    <button className="dx-row-action" onClick={() => setLogsContainer(container)} title="Logs">
+                                                        <FileText size={13} />
+                                                    </button>
+                                                    {isRunning && !isRemote && (
+                                                        <button className="dx-row-action" onClick={() => setExecContainer(container)} title="Exec">
+                                                            <TerminalLucide size={13} />
+                                                        </button>
+                                                    )}
+                                                    {isRunning ? (
+                                                        <>
+                                                            <button className="dx-row-action" onClick={() => handleAction(containerId, 'restart')} title="Restart">
+                                                                <RotateCw size={13} />
+                                                            </button>
+                                                            <button className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'stop')} title="Stop">
+                                                                <Square size={13} />
+                                                            </button>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <button className="dx-row-action is-success" onClick={() => handleAction(containerId, 'start')} title="Start">
+                                                                <Play size={13} />
+                                                            </button>
+                                                            <button className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'remove')} title="Remove">
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <ContainerInspector
+                        container={selectedContainer}
+                        stats={selectedStats}
+                        onAction={handleAction}
+                        onOpenLogs={setLogsContainer}
+                        onOpenExec={setExecContainer}
+                    />
                 </div>
             )}
 
-            {selectedContainer && (
+            {logsContainer && (
                 <ContainerLogsModal
-                    container={selectedContainer}
-                    onClose={() => setSelectedContainer(null)}
+                    container={logsContainer}
+                    onClose={() => setLogsContainer(null)}
                 />
             )}
 
@@ -792,6 +862,259 @@ const ContainersTab = ({ onStatsChange }) => {
                 onCancel={handleContainerCancel}
             />
         </div>
+    );
+};
+
+const ContainerResourceBars = ({ stats, muted = false }) => (
+    <div className={`dx-mini-resources ${muted ? 'is-muted' : ''}`}>
+        <div className="dx-mini-resource">
+            <span>CPU</span>
+            <div className="dx-res-track">
+                <div className="dx-res-fill cpu" style={{ width: `${Math.min(stats.cpu, 100)}%` }} />
+            </div>
+            <strong>{stats.cpu.toFixed(1)}%</strong>
+        </div>
+        <div className="dx-mini-resource">
+            <span>RAM</span>
+            <div className="dx-res-track">
+                <div className="dx-res-fill mem" style={{ width: `${Math.min(stats.memory, 100)}%` }} />
+            </div>
+            <strong>{stats.memory.toFixed(1)}%</strong>
+        </div>
+    </div>
+);
+
+const maskEnvValue = (entry) => {
+    const [key, ...rest] = String(entry).split('=');
+    if (!rest.length) return entry;
+    if (/pass|secret|token|key|credential/i.test(key)) {
+        return `${key}=****`;
+    }
+    return entry;
+};
+
+const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec }) => {
+    const toast = useToast();
+    const { serverId, isRemote } = useServer();
+    const [details, setDetails] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [activeSection, setActiveSection] = useState('overview');
+    const containerId = container ? getContainerId(container) : '';
+
+    useEffect(() => {
+        let mounted = true;
+
+        async function loadDetails() {
+            if (!container) {
+                setDetails(null);
+                return;
+            }
+
+            setLoading(true);
+            setActiveSection('overview');
+            try {
+                let data;
+                if (isRemote) {
+                    data = unwrapRemoteData(await api.getRemoteContainer(serverId, containerId));
+                } else {
+                    const result = await api.getContainer(containerId);
+                    data = result.container || result;
+                }
+                if (mounted) setDetails(data || null);
+            } catch (err) {
+                console.error('Failed to inspect container:', err);
+                if (mounted) setDetails(null);
+            } finally {
+                if (mounted) setLoading(false);
+            }
+        }
+
+        loadDetails();
+        return () => { mounted = false; };
+    }, [container, containerId, serverId, isRemote]);
+
+    if (!container) {
+        return (
+            <aside className="dx-inspector dx-inspector-empty">
+                <Info size={24} />
+                <h3>Select a container</h3>
+                <p>Use the list to inspect ports, mounts, networks, labels, and live resource usage.</p>
+            </aside>
+        );
+    }
+
+    const isRunning = isContainerRunning(container);
+    const ports = formatPorts(container.ports);
+    const envVars = details?.Config?.Env || [];
+    const mounts = details?.Mounts || [];
+    const networks = Object.entries(details?.NetworkSettings?.Networks || {});
+    const labels = details?.Config?.Labels || {};
+    const restartPolicy = details?.HostConfig?.RestartPolicy?.Name || '-';
+    const health = details?.State?.Health?.Status || getContainerStatusLabel(container);
+    const projectName = getContainerProjectName(container, details);
+
+    async function copyContainerId() {
+        try {
+            await navigator.clipboard.writeText(containerId);
+            toast.success('Container ID copied');
+        } catch {
+            toast.error('Could not copy container ID');
+        }
+    }
+
+    return (
+        <aside className="dx-inspector">
+            <div className="dx-inspector-header">
+                <div className="dx-inspector-icon">
+                    <Box size={18} />
+                </div>
+                <div className="dx-inspector-title">
+                    <h3 title={getContainerName(container)}>{getContainerName(container)}</h3>
+                    <span>{shortId(containerId)}</span>
+                </div>
+                <button className="dx-row-action" onClick={copyContainerId} title="Copy container ID">
+                    <Copy size={13} />
+                </button>
+            </div>
+
+            <div className="dx-inspector-status">
+                <span className={`dx-status-pill ${isRunning ? 'running' : 'stopped'}`}>
+                    {getContainerStatusLabel(container)}
+                </span>
+                <span>{health}</span>
+            </div>
+
+            <div className="dx-inspector-actions">
+                <button className="dx-action-btn" onClick={() => onOpenLogs(container)}>
+                    <FileText size={13} /> Logs
+                </button>
+                {isRunning && !isRemote && (
+                    <button className="dx-action-btn" onClick={() => onOpenExec(container)}>
+                        <TerminalLucide size={13} /> Exec
+                    </button>
+                )}
+                {isRunning ? (
+                    <>
+                        <button className="dx-action-btn" onClick={() => onAction(containerId, 'restart')}>
+                            <RotateCw size={13} /> Restart
+                        </button>
+                        <button className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'stop')}>
+                            <Square size={13} /> Stop
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <button className="dx-action-btn is-success" onClick={() => onAction(containerId, 'start')}>
+                            <Play size={13} /> Start
+                        </button>
+                        <button className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'remove')}>
+                            <Trash2 size={13} /> Remove
+                        </button>
+                    </>
+                )}
+            </div>
+
+            <div className="dx-inspector-tabs">
+                {['overview', 'ports', 'mounts', 'env'].map(section => (
+                    <button
+                        key={section}
+                        className={activeSection === section ? 'active' : ''}
+                        onClick={() => setActiveSection(section)}
+                    >
+                        {section}
+                    </button>
+                ))}
+            </div>
+
+            <div className="dx-inspector-body">
+                {loading && <div className="dx-inspector-loading">Inspecting container...</div>}
+
+                {activeSection === 'overview' && (
+                    <>
+                        <ContainerResourceBars stats={stats} muted={!isRunning} />
+                        <div className="dx-detail-grid">
+                            <div><span>Image</span><strong title={getContainerImage(container)}>{getContainerImage(container)}</strong></div>
+                            <div><span>Project</span><strong>{projectName}</strong></div>
+                            <div><span>Restart</span><strong>{restartPolicy}</strong></div>
+                            <div><span>Created</span><strong>{container.created || container.CreatedAt || '-'}</strong></div>
+                        </div>
+                        <div className="dx-section-title"><Gauge size={13} /> Runtime</div>
+                        <div className="dx-details-list">
+                            <span>Status</span><code>{getContainerStatus(container)}</code>
+                            <span>PID</span><code>{details?.State?.Pid || '-'}</code>
+                            <span>Platform</span><code>{details?.Platform || details?.Os || '-'}</code>
+                            <span>Driver</span><code>{details?.Driver || '-'}</code>
+                        </div>
+                    </>
+                )}
+
+                {activeSection === 'ports' && (
+                    <>
+                        <div className="dx-section-title"><Activity size={13} /> Published ports</div>
+                        <div className="dx-inspector-list">
+                            {ports.map((port, index) => (
+                                <code key={index} className={port === '-' ? 'is-empty' : ''}>{port}</code>
+                            ))}
+                        </div>
+                        <div className="dx-section-title"><ServerIcon size={13} /> Networks</div>
+                        <div className="dx-details-list">
+                            {networks.length === 0 ? (
+                                <>
+                                    <span>Networks</span><code>-</code>
+                                </>
+                            ) : networks.map(([name, network]) => (
+                                <React.Fragment key={name}>
+                                    <span>{name}</span>
+                                    <code>{network?.IPAddress || network?.Gateway || '-'}</code>
+                                </React.Fragment>
+                            ))}
+                        </div>
+                    </>
+                )}
+
+                {activeSection === 'mounts' && (
+                    <>
+                        <div className="dx-section-title"><Database size={13} /> Mounts and volumes</div>
+                        <div className="dx-inspector-list">
+                            {mounts.length === 0 ? (
+                                <code className="is-empty">No mounts</code>
+                            ) : mounts.map((mount, index) => (
+                                <code key={index}>
+                                    {mount.Name || mount.Source || '-'} -&gt; {mount.Destination || '-'}
+                                </code>
+                            ))}
+                        </div>
+                    </>
+                )}
+
+                {activeSection === 'env' && (
+                    <>
+                        <div className="dx-section-title"><Package size={13} /> Environment</div>
+                        <div className="dx-inspector-list">
+                            {envVars.length === 0 ? (
+                                <code className="is-empty">No environment variables</code>
+                            ) : envVars.slice(0, 24).map((entry, index) => (
+                                <code key={index}>{maskEnvValue(entry)}</code>
+                            ))}
+                            {envVars.length > 24 && <code>+{envVars.length - 24} more variables</code>}
+                        </div>
+                        <div className="dx-section-title"><Clock3 size={13} /> Labels</div>
+                        <div className="dx-details-list">
+                            {Object.keys(labels).length === 0 ? (
+                                <>
+                                    <span>Labels</span><code>-</code>
+                                </>
+                            ) : Object.entries(labels).slice(0, 12).map(([key, value]) => (
+                                <React.Fragment key={key}>
+                                    <span title={key}>{key}</span>
+                                    <code title={value}>{value}</code>
+                                </React.Fragment>
+                            ))}
+                        </div>
+                    </>
+                )}
+            </div>
+        </aside>
     );
 };
 
@@ -1148,7 +1471,6 @@ const ComposeTab = ({ onStatsChange }) => {
     const { confirm: confirmCompose, confirmState: confirmComposeState, handleConfirm: handleComposeConfirm, handleCancel: handleComposeCancel } = useConfirm();
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [selectedProject, setSelectedProject] = useState(null);
     const [logsProject, setLogsProject] = useState(null);
     const [actionLoading, setActionLoading] = useState({});
 
@@ -1163,7 +1485,7 @@ const ComposeTab = ({ onStatsChange }) => {
             if (isRemote) {
                 data = await api.getRemoteComposeProjects(serverId);
             } else {
-                data = await api.request('/docker/compose/list');
+                data = await api.composeList();
             }
             setProjects(normalizeListResponse(data, 'projects'));
         } catch (err) {
@@ -1184,12 +1506,11 @@ const ComposeTab = ({ onStatsChange }) => {
         setActionLoading(prev => ({ ...prev, [project.Name || project.name]: true }));
 
         try {
-            let result;
             if (action === 'up') {
                 if (isRemote) {
-                    result = await api.remoteComposeUp(serverId, projectPath);
+                    await api.remoteComposeUp(serverId, projectPath);
                 } else {
-                    result = await api.composeUp(projectPath, true, false);
+                    await api.composeUp(projectPath, true, false);
                 }
                 toast.success('Project started');
             } else if (action === 'down') {
@@ -1199,23 +1520,23 @@ const ComposeTab = ({ onStatsChange }) => {
                     return;
                 }
                 if (isRemote) {
-                    result = await api.remoteComposeDown(serverId, projectPath);
+                    await api.remoteComposeDown(serverId, projectPath);
                 } else {
-                    result = await api.composeDown(projectPath, false, true);
+                    await api.composeDown(projectPath, false, true);
                 }
                 toast.success('Project stopped');
             } else if (action === 'restart') {
                 if (isRemote) {
-                    result = await api.remoteComposeRestart(serverId, projectPath);
+                    await api.remoteComposeRestart(serverId, projectPath);
                 } else {
-                    result = await api.composeRestart(projectPath);
+                    await api.composeRestart(projectPath);
                 }
                 toast.success('Project restarted');
             } else if (action === 'pull') {
                 if (isRemote) {
-                    result = await api.remoteComposePull(serverId, projectPath);
+                    await api.remoteComposePull(serverId, projectPath);
                 } else {
-                    result = await api.composePull(projectPath);
+                    await api.composePull(projectPath);
                 }
                 toast.success('Images pulled');
             }
@@ -1307,7 +1628,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                             onClick={() => setLogsProject(project)}
                                             disabled={isLoading}
                                         >
-                                            <LogsIcon />
+                                            <FileText size={14} />
                                         </IconAction>
                                         {isRunning ? (
                                             <>
@@ -1316,7 +1637,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                                     onClick={() => handleAction(project, 'restart')}
                                                     disabled={isLoading}
                                                 >
-                                                    <RestartIcon />
+                                                    <RotateCw size={14} />
                                                 </IconAction>
                                                 <IconAction
                                                     title="Stop"
@@ -1324,7 +1645,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                                     disabled={isLoading}
                                                     color="#EF4444"
                                                 >
-                                                    <StopIcon />
+                                                    <Square size={14} />
                                                 </IconAction>
                                             </>
                                         ) : (
@@ -1334,7 +1655,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                                 disabled={isLoading}
                                                 color="#10B981"
                                             >
-                                                <PlayIcon />
+                                                <Play size={14} />
                                             </IconAction>
                                         )}
                                         <IconAction
@@ -1610,6 +1931,7 @@ const RunContainerModal = ({ onClose, onCreated }) => {
 
 const ContainerLogsModal = ({ container, onClose }) => {
     const { serverId, isRemote } = useServer();
+    const containerId = getContainerId(container);
     const [logs, setLogs] = useState('');
     const [loading, setLoading] = useState(true);
     const [tail, setTail] = useState(200);
@@ -1637,10 +1959,10 @@ const ContainerLogsModal = ({ container, onClose }) => {
         try {
             let data;
             if (isRemote) {
-                const result = await api.getRemoteContainerLogs(serverId, container.id, tail);
+                const result = await api.getRemoteContainerLogs(serverId, containerId, tail);
                 data = unwrapRemoteData(result);
             } else {
-                data = await api.getContainerLogs(container.id, tail);
+                data = await api.getContainerLogs(containerId, tail);
             }
             setLogs(data.logs || '');
             if (autoRefresh && contentRef.current) {
@@ -1671,8 +1993,8 @@ const ContainerLogsModal = ({ container, onClose }) => {
                 <header className="preview-drawer-header">
                     <Box size={20} style={{ color: 'var(--accent-primary)' }} />
                     <div className="preview-drawer-title">
-                        <h3>{container.name}</h3>
-                        <p className="preview-drawer-path">{container.image} · {container.id?.substring(0, 12)}</p>
+                        <h3>{getContainerName(container)}</h3>
+                        <p className="preview-drawer-path">{getContainerImage(container)} - {shortId(containerId)}</p>
                     </div>
                     <button className="preview-drawer-close" onClick={onClose}>
                         <X size={18} />
@@ -1682,15 +2004,15 @@ const ContainerLogsModal = ({ container, onClose }) => {
                 <div className="preview-drawer-meta">
                     <div className="meta-item">
                         <span className="meta-label">Status</span>
-                        <span className="meta-value">{container.state || container.status}</span>
+                        <span className="meta-value">{getContainerStatus(container)}</span>
                     </div>
                     <div className="meta-item">
                         <span className="meta-label">Image</span>
-                        <span className="meta-value mono">{container.image}</span>
+                        <span className="meta-value mono">{getContainerImage(container)}</span>
                     </div>
                     <div className="meta-item meta-item-wide">
                         <span className="meta-label">ID</span>
-                        <span className="meta-value mono">{container.id}</span>
+                        <span className="meta-value mono">{containerId}</span>
                     </div>
                     {container.ports && container.ports.length > 0 && (
                         <div className="meta-item meta-item-wide">
@@ -1741,6 +2063,7 @@ const ContainerLogsModal = ({ container, onClose }) => {
 };
 
 const ContainerExecModal = ({ container, onClose }) => {
+    const containerId = getContainerId(container);
     const [command, setCommand] = useState('');
     const [output, setOutput] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -1773,15 +2096,18 @@ const ContainerExecModal = ({ container, onClose }) => {
         setLoading(true);
 
         try {
-            const result = await api.execContainer(container.id, cmd);
-            if (result.output) {
-                setOutput(prev => [...prev, { type: 'output', text: result.output }]);
+            const result = await api.execContainer(containerId, cmd);
+            const stdout = result.output ?? result.stdout;
+            const stderr = result.error ?? result.stderr;
+            const exitCode = result.exit_code ?? result.return_code;
+            if (stdout) {
+                setOutput(prev => [...prev, { type: 'output', text: stdout }]);
             }
-            if (result.error) {
-                setOutput(prev => [...prev, { type: 'error', text: result.error }]);
+            if (stderr) {
+                setOutput(prev => [...prev, { type: 'error', text: stderr }]);
             }
-            if (result.exit_code !== 0) {
-                setOutput(prev => [...prev, { type: 'info', text: `Exit code: ${result.exit_code}` }]);
+            if (exitCode !== undefined && exitCode !== 0) {
+                setOutput(prev => [...prev, { type: 'info', text: `Exit code: ${exitCode}` }]);
             }
         } catch (err) {
             setOutput(prev => [...prev, { type: 'error', text: err.message || 'Failed to execute command' }]);
@@ -1822,14 +2148,14 @@ const ContainerExecModal = ({ container, onClose }) => {
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>Exec: {container.name}</h2>
+                    <h2>Exec: {getContainerName(container)}</h2>
                     <button className="modal-close" onClick={onClose}>&times;</button>
                 </div>
                 <div className="modal-body exec-modal-body">
                     <div className="exec-output" ref={outputRef}>
                         {output.length === 0 ? (
                             <div className="exec-welcome">
-                                <p>Execute commands in container <code>{container.name}</code></p>
+                                <p>Execute commands in container <code>{getContainerName(container)}</code></p>
                                 <p className="text-muted">Type a command and press Enter</p>
                             </div>
                         ) : (
@@ -1874,6 +2200,7 @@ const ContainerExecModal = ({ container, onClose }) => {
 };
 
 const PullImageModal = ({ onClose, onPulled }) => {
+    const { serverId, isRemote } = useServer();
     const [image, setImage] = useState('');
     const [tag, setTag] = useState('latest');
     const [loading, setLoading] = useState(false);
@@ -1885,7 +2212,12 @@ const PullImageModal = ({ onClose, onPulled }) => {
         setLoading(true);
 
         try {
-            await api.pullImage(image, tag);
+            if (isRemote) {
+                const fullImage = tag ? `${image}:${tag}` : image;
+                await api.pullRemoteImage(serverId, fullImage);
+            } else {
+                await api.pullImage(image, tag);
+            }
             onPulled();
             onClose();
         } catch (err) {

@@ -19,6 +19,19 @@ $ft-default:  #94a3b8;
     flex-direction: column;
     gap: $space-2;
     position: relative;
+    height: min(900px, calc(100vh - 72px));
+    min-height: 560px;
+    overflow: hidden;
+
+    &.fullscreen {
+        width: 100%;
+        max-width: none;
+        height: 100vh;
+        min-height: 0;
+        margin: 0;
+        padding: $space-3;
+        box-sizing: border-box;
+    }
 
     // ─── Page header ────────────────────────────────────
     .page-header {
@@ -137,7 +150,8 @@ $ft-default:  #94a3b8;
         border: 1px solid $border-default;
         border-radius: $radius-lg;
         gap: $space-2;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        flex-shrink: 0;
 
         .toolbar-left {
             display: flex;
@@ -150,7 +164,8 @@ $ft-default:  #94a3b8;
             display: flex;
             align-items: center;
             gap: $space-1;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+            min-width: 0;
         }
     }
 
@@ -206,22 +221,6 @@ $ft-default:  #94a3b8;
             &:hover { background: $bg-hover; color: $text-primary; }
             &.crumb-active { color: $text-primary; font-weight: $font-weight-medium; }
         }
-        .crumb-pin {
-            background: transparent;
-            border: none;
-            padding: 4px;
-            margin-left: $space-1;
-            color: $text-tertiary;
-            cursor: pointer;
-            border-radius: $radius-sm;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            @include transition(all);
-
-            &:hover { background: $bg-hover; color: $color-star; }
-            &.pinned { color: $color-star; }
-        }
     }
 
     // ─── Search field ───────────────────────────────────
@@ -232,7 +231,7 @@ $ft-default:  #94a3b8;
         background: $bg-tertiary;
         border: 1px solid transparent;
         border-radius: $radius-md;
-        width: clamp(180px, 24vw, 280px);
+        width: clamp(180px, 22vw, 280px);
         @include transition(all);
 
         &:focus-within {
@@ -402,7 +401,19 @@ $ft-default:  #94a3b8;
         @include transition(all);
 
         &:hover:not(:disabled) { background: $bg-hover; color: $text-primary; }
+        &.active {
+            background: $accent-glow;
+            color: $accent-primary;
+        }
         &.small { padding: 4px; }
+    }
+
+    .file-manager-toolbar .target-picker {
+        flex-shrink: 0;
+
+        .target-picker__select {
+            max-width: 170px;
+        }
     }
 
     // ─── View toggles ───────────────────────────────────
@@ -563,7 +574,9 @@ $ft-default:  #94a3b8;
         grid-template-columns: 248px 1fr;
         gap: $space-3;
         min-height: 0;
-        align-items: start;
+        flex: 1;
+        overflow: hidden;
+        align-items: stretch;
 
         @media (max-width: $breakpoint-lg) {
             grid-template-columns: 1fr;
@@ -577,6 +590,9 @@ $ft-default:  #94a3b8;
     .file-manager-main {
         min-width: 0;
         min-height: 0;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
     }
 
     // ─── Left sidebar ──────────────────────────────────
@@ -584,10 +600,11 @@ $ft-default:  #94a3b8;
         display: flex;
         flex-direction: column;
         gap: $space-2;
-        max-height: calc(100vh - 158px);
+        height: 100%;
+        max-height: none;
         overflow-y: auto;
-        position: sticky;
-        top: $space-2;
+        position: relative;
+        top: auto;
         scrollbar-width: thin;
 
         &::-webkit-scrollbar { width: 4px; }
@@ -704,6 +721,94 @@ $ft-default:  #94a3b8;
 
     .sidebar-section-content { padding: $space-3 $space-4; }
     .tree-content { padding: $space-2; }
+
+    // ─── Type filters ───────────────────────────────────
+    .type-filter-panel {
+        padding: $space-2;
+    }
+
+    .type-filter-list {
+        display: grid;
+        gap: 2px;
+    }
+
+    .type-filter-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-2;
+        width: 100%;
+        padding: 6px $space-2;
+        background: transparent;
+        border: none;
+        border-radius: $radius-md;
+        color: $text-secondary;
+        cursor: pointer;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        text-align: left;
+        @include transition(all);
+
+        &:hover:not(:disabled) {
+            background: $bg-hover;
+            color: $text-primary;
+        }
+
+        &.active {
+            background: $accent-glow;
+            color: $accent-primary;
+        }
+
+        &:disabled {
+            opacity: 0.38;
+            cursor: not-allowed;
+        }
+
+        span:last-child {
+            min-width: 20px;
+            padding: 1px 6px;
+            background: $bg-tertiary;
+            border-radius: $radius-full;
+            color: $text-tertiary;
+            font-family: $font-mono;
+            font-size: 10px;
+            text-align: center;
+        }
+    }
+
+    .sidebar-sort-control {
+        display: grid;
+        gap: $space-1;
+        margin-top: $space-2;
+        padding-top: $space-2;
+        border-top: 1px solid $border-subtle;
+
+        > span {
+            display: flex;
+            align-items: center;
+            gap: $space-1;
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+            font-weight: $font-weight-semibold;
+        }
+
+        select {
+            width: 100%;
+            min-height: 30px;
+            padding: 4px $space-2;
+            background: $bg-tertiary;
+            border: 1px solid $border-subtle;
+            border-radius: $radius-md;
+            color: $text-primary;
+            font-size: $font-size-xs;
+            outline: none;
+            cursor: pointer;
+
+            &:focus {
+                border-color: $accent-primary;
+            }
+        }
+    }
 
     // ─── Folder tree ────────────────────────────────────
     .folder-tree {
@@ -1057,9 +1162,10 @@ $ft-default:  #94a3b8;
         background: $bg-card;
         border: 1px solid $border-default;
         border-radius: $radius-lg;
-        overflow: hidden;
+        overflow: auto;
         position: relative;
-        min-height: calc(100vh - 250px);
+        min-height: 0;
+        height: 100%;
     }
 
     .loading-state, .empty-state {
@@ -1131,9 +1237,9 @@ $ft-default:  #94a3b8;
     // ─── GRID VIEW ──────────────────────────────────────
     .file-grid {
         display: grid;
-        gap: $space-3;
-        padding: $space-4;
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: $space-2;
+        padding: $space-3;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     }
 
     &.grid-sm .file-grid {
@@ -1158,7 +1264,7 @@ $ft-default:  #94a3b8;
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: $space-4 $space-3 $space-3;
+        padding: $space-3 $space-2;
         background: $bg-elevated;
         border: 1px solid transparent;
         border-radius: $radius-lg;
@@ -1226,17 +1332,17 @@ $ft-default:  #94a3b8;
 
     .file-card-thumb {
         position: relative;
-        width: 88px;
-        height: 88px;
+        width: 76px;
+        height: 76px;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-bottom: $space-3;
+        margin-bottom: $space-2;
         border-radius: $radius-md;
         overflow: hidden;
         @include transition(all);
 
-        > svg { width: 50px; height: 50px; }
+        > svg { width: 44px; height: 44px; }
 
         .thumb-image {
             width: 100%;
@@ -1286,7 +1392,7 @@ $ft-default:  #94a3b8;
     }
 
     .file-card-name {
-        font-size: $font-size-sm;
+        font-size: $font-size-xs;
         color: $text-primary;
         font-weight: $font-weight-medium;
         @include truncate();
@@ -1294,7 +1400,7 @@ $ft-default:  #94a3b8;
     }
 
     .file-card-meta {
-        font-size: $font-size-xs;
+        font-size: 11px;
         color: $text-tertiary;
         font-family: $font-mono;
     }
@@ -1355,7 +1461,12 @@ $ft-default:  #94a3b8;
             letter-spacing: 0.04em;
 
             .col-actions { text-align: right; }
-            .col-check { display: flex; align-items: center; justify-content: center; }
+            .col-check {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                opacity: 0;
+            }
         }
 
         .file-item {
@@ -1382,6 +1493,8 @@ $ft-default:  #94a3b8;
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                opacity: 0;
+                @include transition(opacity);
             }
 
             .col-name {
@@ -1418,6 +1531,13 @@ $ft-default:  #94a3b8;
                 justify-content: flex-end;
             }
         }
+    }
+
+    &.select-mode .file-list .file-list-header .col-check,
+    &.select-mode .file-list .file-item .col-check,
+    .file-list .file-item:hover .col-check,
+    .file-list .file-item.selected .col-check {
+        opacity: 1;
     }
 
     .row-action {
@@ -1466,6 +1586,7 @@ $ft-default:  #94a3b8;
         color: $text-tertiary;
         flex-wrap: wrap;
         gap: $space-3;
+        flex-shrink: 0;
 
         .status-bar-left, .status-bar-right {
             display: flex;

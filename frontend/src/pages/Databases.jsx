@@ -9,8 +9,35 @@ import QueryRunner from '../components/QueryRunner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Archive, Box, Database, HardDrive, Server } from 'lucide-react';
 
 const VALID_TABS = ['mysql', 'postgresql', 'docker', 'backups', 'sqlite'];
+
+const getEngineState = (engine) => {
+    if (!engine) return 'unknown';
+    if (!engine.installed) return 'missing';
+    return engine.running ? 'active' : 'inactive';
+};
+
+const getEngineStatusLabel = (engine) => {
+    const state = getEngineState(engine);
+    if (state === 'active') return 'Running';
+    if (state === 'inactive') return 'Stopped';
+    if (state === 'missing') return 'Not installed';
+    return 'Unknown';
+};
+
+const EngineStatusBadge = ({ label, engine, tone }) => {
+    const state = getEngineState(engine);
+
+    return (
+        <span className={`db-status-indicator ${state} ${tone}`}>
+            <span className="status-dot" />
+            <span className="db-status-label">{label}</span>
+            <span className="db-status-value">{getEngineStatusLabel(engine)}</span>
+        </span>
+    );
+};
 
 const Databases = () => {
     const { tab } = useParams();
@@ -43,49 +70,84 @@ const Databases = () => {
     }
 
     return (
-        <div className="page-container">
-            <header className="top-bar">
-                <div>
-                    <h1>Databases</h1>
-                    <div className="subtitle">Manage MySQL and PostgreSQL databases</div>
+        <div className="page-container databases-page">
+            <header className="databases-hero">
+                <div className="databases-hero__main">
+                    <div className="databases-hero__icon">
+                        <Database size={22} />
+                    </div>
+                    <div className="databases-hero__copy">
+                        <div className="databases-hero__eyebrow">Storage engines</div>
+                        <h1>Databases</h1>
+                        <p>Manage SQL engines, app database connections, backups, and local SQLite files.</p>
+                    </div>
                 </div>
-                <div className="top-bar-actions">
-                    <div className="db-status-indicators">
-                        <span className={`db-status-indicator ${status?.mysql?.running ? 'active' : 'inactive'}`}>
-                            <span className="status-dot" />
-                            MySQL
-                        </span>
-                        <span className={`db-status-indicator ${status?.postgresql?.running ? 'active' : 'inactive'}`}>
-                            <span className="status-dot" />
-                            PostgreSQL
-                        </span>
+                <div className="databases-hero__actions">
+                    <div className="db-status-indicators" aria-label="Database engine status">
+                        <EngineStatusBadge label="MySQL" engine={status?.mysql} tone="mysql" />
+                        <EngineStatusBadge label="PostgreSQL" engine={status?.postgresql} tone="postgresql" />
                     </div>
                 </div>
             </header>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList>
-                    <TabsTrigger value="mysql">MySQL / MariaDB</TabsTrigger>
-                    <TabsTrigger value="postgresql">PostgreSQL</TabsTrigger>
-                    <TabsTrigger value="docker">Docker Apps</TabsTrigger>
-                    <TabsTrigger value="backups">Backups</TabsTrigger>
-                    <TabsTrigger value="sqlite">SQLite</TabsTrigger>
+            <div className="database-summary-grid" aria-label="Database workspace summary">
+                <div className="database-summary-card mysql">
+                    <div className="database-summary-card__icon"><Database size={18} /></div>
+                    <div>
+                        <span>MySQL / MariaDB</span>
+                        <strong>{getEngineStatusLabel(status?.mysql)}</strong>
+                        <small>Native database service</small>
+                    </div>
+                </div>
+                <div className="database-summary-card postgresql">
+                    <div className="database-summary-card__icon"><Server size={18} /></div>
+                    <div>
+                        <span>PostgreSQL</span>
+                        <strong>{getEngineStatusLabel(status?.postgresql)}</strong>
+                        <small>Native database service</small>
+                    </div>
+                </div>
+                <div className="database-summary-card docker">
+                    <div className="database-summary-card__icon"><Box size={18} /></div>
+                    <div>
+                        <span>Docker Apps</span>
+                        <strong>App-linked</strong>
+                        <small>Container credentials</small>
+                    </div>
+                </div>
+                <div className="database-summary-card sqlite">
+                    <div className="database-summary-card__icon"><HardDrive size={18} /></div>
+                    <div>
+                        <span>SQLite</span>
+                        <strong>File scan</strong>
+                        <small>Local .db and .sqlite files</small>
+                    </div>
+                </div>
+            </div>
+
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="database-tabs">
+                <TabsList className="database-tabs__list">
+                    <TabsTrigger className="database-tabs__trigger" value="mysql"><Database size={14} /> MySQL / MariaDB</TabsTrigger>
+                    <TabsTrigger className="database-tabs__trigger" value="postgresql"><Server size={14} /> PostgreSQL</TabsTrigger>
+                    <TabsTrigger className="database-tabs__trigger" value="docker"><Box size={14} /> Docker Apps</TabsTrigger>
+                    <TabsTrigger className="database-tabs__trigger" value="backups"><Archive size={14} /> Backups</TabsTrigger>
+                    <TabsTrigger className="database-tabs__trigger" value="sqlite"><HardDrive size={14} /> SQLite</TabsTrigger>
                 </TabsList>
 
-                <div className="tab-content">
-                    <TabsContent value="mysql">
+                <div className="database-tabs__content">
+                    <TabsContent className="database-tabs__pane" value="mysql">
                         <MySQLTab status={status?.mysql} />
                     </TabsContent>
-                    <TabsContent value="postgresql">
+                    <TabsContent className="database-tabs__pane" value="postgresql">
                         <PostgreSQLTab status={status?.postgresql} />
                     </TabsContent>
-                    <TabsContent value="docker">
+                    <TabsContent className="database-tabs__pane" value="docker">
                         <DockerDatabasesTab />
                     </TabsContent>
-                    <TabsContent value="backups">
+                    <TabsContent className="database-tabs__pane" value="backups">
                         <BackupsTab />
                     </TabsContent>
-                    <TabsContent value="sqlite">
+                    <TabsContent className="database-tabs__pane" value="sqlite">
                         <SQLiteTab />
                     </TabsContent>
                 </div>

@@ -1097,3 +1097,637 @@
     border-top: 1px solid $border-subtle;
 }
 
+// Full-width manager shell
+.docker-page-new.dx-page {
+    height: 100vh;
+    min-height: 0;
+    padding: $space-5;
+    overflow: hidden;
+
+    .page-header,
+    .lv-header,
+    .dx-stats-row,
+    .dx-tabs {
+        flex-shrink: 0;
+    }
+
+    .page-header {
+        margin-bottom: 0;
+    }
+}
+
+.dx-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.dx-panel > div {
+    min-height: 0;
+    overflow: auto;
+}
+
+.dx-panel > .dx-tab-pane {
+    overflow: hidden;
+}
+
+.dx-containers-pane {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.dx-filter-chips {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    flex-wrap: wrap;
+
+    .filter-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-2;
+        min-height: 30px;
+        padding: 0 $space-3;
+        border: 1px solid $border-default;
+        border-radius: $radius-full;
+        background: transparent;
+        color: $text-secondary;
+        font-size: $font-size-xs;
+        cursor: pointer;
+        @include transition(all);
+
+        &:hover:not(:disabled),
+        &.active {
+            border-color: $accent-primary;
+            background: $accent-glow;
+            color: $accent-primary;
+        }
+
+        &:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+    }
+
+    .filter-chip-count {
+        font-family: $font-mono;
+        color: inherit;
+        opacity: 0.8;
+    }
+}
+
+.dx-search-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 280px;
+
+    .lv-search-field-icon {
+        position: absolute;
+        left: $space-3;
+        color: $text-tertiary;
+        pointer-events: none;
+    }
+
+    input {
+        width: 100%;
+        height: 32px;
+        border: 1px solid $border-default;
+        border-radius: $radius-md;
+        background: $bg-elevated;
+        color: $text-primary;
+        padding: 0 $space-8 0 $space-8;
+        font-size: $font-size-sm;
+
+        &:focus {
+            outline: none;
+            border-color: $accent-primary;
+            box-shadow: 0 0 0 2px $accent-glow;
+        }
+    }
+
+    .lv-search-field-clear {
+        position: absolute;
+        right: $space-2;
+        width: 22px;
+        height: 22px;
+        border: none;
+        border-radius: $radius-sm;
+        background: transparent;
+        color: $text-tertiary;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+
+        &:hover {
+            background: $bg-hover;
+            color: $text-primary;
+        }
+    }
+}
+
+.dx-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: $space-2;
+    color: $text-secondary;
+    font-size: $font-size-xs;
+    cursor: pointer;
+
+    input {
+        width: 14px;
+        height: 14px;
+        accent-color: $accent-primary;
+    }
+}
+
+.dx-manager-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    gap: $space-3;
+    overflow: hidden;
+}
+
+.dx-resource-list,
+.dx-inspector {
+    min-height: 0;
+    background: $bg-elevated;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+}
+
+.dx-resource-list {
+    overflow: hidden;
+}
+
+.dx-table-wrap {
+    height: 100%;
+    overflow: auto;
+}
+
+.dx-manager-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: $font-size-sm;
+
+    th,
+    td {
+        padding: $space-3 $space-4;
+        border-bottom: 1px solid $border-subtle;
+        vertical-align: middle;
+    }
+
+    th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: $bg-card;
+        color: $text-tertiary;
+        text-align: left;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-semibold;
+    }
+
+    th:nth-child(1) { width: 20%; }
+    th:nth-child(2) { width: 22%; }
+    th:nth-child(3) { width: 17%; }
+    th:nth-child(4) { width: 15%; }
+    th:nth-child(5) { width: 16%; }
+    th:nth-child(6) { width: 10%; }
+    th:nth-child(7) { width: 116px; }
+
+    tbody tr {
+        cursor: pointer;
+        @include transition(background);
+
+        &:hover,
+        &.is-selected {
+            background: $bg-hover;
+        }
+
+        &.is-selected {
+            box-shadow: inset 3px 0 0 $accent-primary;
+        }
+    }
+}
+
+.dx-name-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.dx-name-line {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    min-width: 0;
+    color: $text-primary;
+    font-weight: $font-weight-semibold;
+
+    span:last-child {
+        @include truncate();
+    }
+}
+
+.dx-muted-line {
+    display: block;
+    color: $text-tertiary;
+    font-size: $font-size-xs;
+    @include truncate();
+
+    &.mono {
+        font-family: $font-mono;
+    }
+}
+
+.dx-code-pill {
+    display: inline-flex;
+    max-width: 100%;
+    padding: 2px $space-2;
+    border-radius: $radius-sm;
+    background: $bg-tertiary;
+    color: $text-secondary;
+    font-family: $font-mono;
+    font-size: $font-size-xs;
+    @include truncate();
+}
+
+.dx-port-list {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    min-width: 0;
+
+    .dx-port-pill {
+        max-width: 150px;
+
+        &.is-empty {
+            opacity: 0.55;
+        }
+    }
+}
+
+.dx-mini-resources {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 150px;
+
+    &.is-muted {
+        opacity: 0.55;
+    }
+}
+
+.dx-mini-resource {
+    display: grid;
+    grid-template-columns: 34px minmax(48px, 1fr) 44px;
+    align-items: center;
+    gap: $space-2;
+
+    span {
+        color: $text-tertiary;
+        font-size: 10px;
+        font-weight: $font-weight-semibold;
+    }
+
+    strong {
+        color: $text-secondary;
+        font-family: $font-mono;
+        font-size: 10px;
+        font-weight: $font-weight-medium;
+        text-align: right;
+    }
+}
+
+.dx-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+}
+
+.dx-row-action {
+    width: 28px;
+    height: 28px;
+    border: 1px solid $border-default;
+    border-radius: $radius-sm;
+    background: transparent;
+    color: $text-tertiary;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    @include transition(all);
+
+    &:hover {
+        border-color: $border-hover;
+        background: $bg-hover;
+        color: $text-primary;
+    }
+
+    &.is-danger:hover {
+        border-color: fade($danger, 35%);
+        color: $danger;
+    }
+
+    &.is-success:hover {
+        border-color: fade($success, 35%);
+        color: $success;
+    }
+}
+
+.dx-action-btn {
+    min-height: 30px;
+    border: 1px solid $border-default;
+    border-radius: $radius-sm;
+    background: $bg-card;
+    color: $text-secondary;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: $space-2;
+    padding: 0 $space-3;
+    font-size: $font-size-xs;
+    cursor: pointer;
+    @include transition(all);
+
+    &:hover {
+        border-color: $border-hover;
+        background: $bg-hover;
+        color: $text-primary;
+    }
+
+    &.is-danger:hover {
+        border-color: fade($danger, 35%);
+        color: $danger;
+    }
+
+    &.is-success:hover {
+        border-color: fade($success, 35%);
+        color: $success;
+    }
+}
+
+.dx-inspector {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.dx-inspector-empty {
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: $space-8;
+    color: $text-secondary;
+
+    h3 {
+        margin: $space-3 0 $space-2;
+        color: $text-primary;
+        font-size: $font-size-base;
+    }
+
+    p {
+        margin: 0;
+        max-width: 260px;
+        font-size: $font-size-sm;
+    }
+}
+
+.dx-inspector-header {
+    display: flex;
+    align-items: center;
+    gap: $space-3;
+    padding: $space-4;
+    border-bottom: 1px solid $border-subtle;
+}
+
+.dx-inspector-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: $radius-md;
+    background: rgba(59, 130, 246, 0.12);
+    color: #3b82f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.dx-inspector-title {
+    min-width: 0;
+    flex: 1;
+
+    h3 {
+        margin: 0;
+        color: $text-primary;
+        font-size: $font-size-base;
+        font-weight: $font-weight-semibold;
+        @include truncate();
+    }
+
+    span {
+        color: $text-tertiary;
+        font-family: $font-mono;
+        font-size: $font-size-xs;
+    }
+}
+
+.dx-inspector-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $space-3;
+    padding: $space-3 $space-4;
+    border-bottom: 1px solid $border-subtle;
+    color: $text-tertiary;
+    font-size: $font-size-xs;
+}
+
+.dx-inspector-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: $space-2;
+    padding: $space-4;
+    border-bottom: 1px solid $border-subtle;
+}
+
+.dx-inspector-tabs {
+    display: flex;
+    gap: $space-1;
+    padding: $space-2 $space-4;
+    border-bottom: 1px solid $border-subtle;
+    overflow-x: auto;
+
+    button {
+        border: none;
+        border-radius: $radius-sm;
+        background: transparent;
+        color: $text-secondary;
+        font-size: $font-size-xs;
+        padding: $space-2 $space-3;
+        text-transform: capitalize;
+        cursor: pointer;
+
+        &:hover,
+        &.active {
+            background: $bg-hover;
+            color: $text-primary;
+        }
+    }
+}
+
+.dx-inspector-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: $space-4;
+    display: flex;
+    flex-direction: column;
+    gap: $space-4;
+}
+
+.dx-inspector-loading {
+    color: $text-secondary;
+    font-size: $font-size-sm;
+    padding: $space-4 0;
+}
+
+.dx-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: $space-2;
+
+    div {
+        min-width: 0;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-sm;
+        padding: $space-3;
+        background: $bg-card;
+    }
+
+    span {
+        display: block;
+        color: $text-tertiary;
+        font-size: 10px;
+        margin-bottom: 4px;
+    }
+
+    strong {
+        display: block;
+        color: $text-primary;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        @include truncate();
+    }
+}
+
+.dx-section-title {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    color: $text-secondary;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+}
+
+.dx-details-list {
+    display: grid;
+    grid-template-columns: minmax(90px, 0.42fr) minmax(0, 1fr);
+    gap: $space-2 $space-3;
+    align-items: center;
+
+    span {
+        min-width: 0;
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+        @include truncate();
+    }
+
+    code {
+        min-width: 0;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-sm;
+        color: $text-secondary;
+        font-family: $font-mono;
+        font-size: 10px;
+        padding: 3px $space-2;
+        @include truncate();
+    }
+}
+
+.dx-inspector-list {
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+
+    code {
+        display: block;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-sm;
+        color: $text-secondary;
+        font-family: $font-mono;
+        font-size: 10px;
+        padding: $space-2;
+        white-space: pre-wrap;
+        word-break: break-word;
+
+        &.is-empty {
+            color: $text-tertiary;
+        }
+    }
+}
+
+@media (max-width: $breakpoint-xl) {
+    .dx-manager-layout {
+        grid-template-columns: 1fr;
+        overflow: auto;
+    }
+
+    .dx-resource-list {
+        min-height: 420px;
+    }
+
+    .dx-inspector {
+        min-height: 460px;
+    }
+}
+
+@media (max-width: $breakpoint-md) {
+    .docker-page-new.dx-page {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+        padding: $space-4;
+    }
+
+    .dx-tab-toolbar,
+    .dx-tab-toolbar-right {
+        align-items: stretch;
+    }
+
+    .dx-search-field {
+        min-width: 100%;
+    }
+
+    .dx-manager-table {
+        min-width: 960px;
+    }
+
+    .dx-detail-grid,
+    .dx-inspector-actions {
+        grid-template-columns: 1fr;
+    }
+}

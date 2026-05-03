@@ -4,14 +4,15 @@ import { useToast } from '../contexts/ToastContext';
 import Spinner from '../components/Spinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import {
-    Folder, File, Upload, FolderPlus, FilePlus,
+    Folder, File, Upload, FolderPlus,
     ArrowLeft, ArrowRight, ArrowUp, Search, X, RefreshCw, Eye, EyeOff,
     Download, Edit3, Trash2, ChevronDown, ChevronRight,
     HardDrive, Clock, PanelLeftClose, PanelLeftOpen,
     LayoutGrid, List, Home, CloudUpload,
     Check, Copy, ArrowUpDown,
-    FolderTree as FolderTreeIcon, MousePointer2,
+    FolderTree as FolderTreeIcon,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -70,15 +71,18 @@ const FILTER_OPTIONS = [
 ];
 
 function FileManager() {
+    const [searchParams, setSearchParams] = useSearchParams();
+
     // ─── target ──────────────────────────────────────────
     // Local panel host by default. Switching to an agent re-routes the
     // browse/read/write verbs through /servers/<id>/files/* and disables
     // operations the agent can't serve yet.
     const [target, setTarget] = useState({ kind: 'local' });
     const isRemote = target.kind === 'agent';
+    const previousTargetRef = useRef({ kind: 'local', server_id: null });
 
     // ─── core ────────────────────────────────────────────
-    const [currentPath, setCurrentPath] = useState('/home');
+    const [currentPath, setCurrentPath] = useState(() => searchParams.get('path') || '/home');
     const [entries, setEntries] = useState([]);
     const [parentPath, setParentPath] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -171,6 +175,24 @@ function FileManager() {
         localStorage.setItem(STORAGE.expanded, JSON.stringify([...treeExpanded]));
     }, [treeExpanded]);
 
+    useEffect(() => {
+        const pathFromUrl = searchParams.get('path') || '/home';
+        if (pathFromUrl !== currentPath) {
+            setCurrentPath(pathFromUrl);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
+
+    useEffect(() => {
+        const pathFromUrl = searchParams.get('path') || '/home';
+        if (pathFromUrl === currentPath) return;
+
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.set('path', currentPath);
+        setSearchParams(nextParams, { replace: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentPath]);
+
     // ─── file API adapter ────────────────────────────────
     // Routes the three verbs the agent supports through the remote
     // endpoints when target is an agent; falls back to the panel-local
@@ -211,6 +233,12 @@ function FileManager() {
     // advertised allowed_path so they don't see a "panel /home" view
     // that doesn't exist on the remote host.
     useEffect(() => {
+        const previousTarget = previousTargetRef.current;
+        const targetChanged = previousTarget.kind !== target.kind || previousTarget.server_id !== target.server_id;
+        previousTargetRef.current = { kind: target.kind, server_id: target.server_id };
+
+        if (!targetChanged) return;
+
         if (target.kind === 'agent' && Array.isArray(target.allowedPaths) && target.allowedPaths.length > 0) {
             setCurrentPath(target.allowedPaths[0]);
         } else if (target.kind === 'local') {
@@ -224,6 +252,7 @@ function FileManager() {
         setLoading(true);
         setSearchResults(null);
         setSelectedPaths(new Set());
+        setSelectMode(false);
         try {
             const data = await fileApi.browse(path, showHidden);
             // Agent file:list returns {path, files: [...]} with a flat
@@ -386,17 +415,23 @@ function FileManager() {
             if (a >= 0 && b >= 0) {
                 const [from, to] = [Math.min(a, b), Math.max(a, b)];
                 const rangePaths = list.slice(from, to + 1).map((x) => x.path);
-                setSelectedPaths(new Set([...selectedPaths, ...rangePaths]));
+                const next = new Set([...selectedPaths, ...rangePaths]);
+                setSelectedPaths(next);
+                setSelectMode(next.size > 0);
             }
         } else {
             const next = new Set(selectedPaths);
             if (next.has(path)) next.delete(path); else next.add(path);
             setSelectedPaths(next);
+            setSelectMode(next.size > 0);
             setLastClickedPath(path);
         }
     };
 
-    const clearSelection = () => setSelectedPaths(new Set());
+    const clearSelection = () => {
+        setSelectedPaths(new Set());
+        setSelectMode(false);
+    };
 
     // ─── ops ─────────────────────────────────────────────
     const handleSaveFile = async () => {
@@ -658,6 +693,7 @@ function FileManager() {
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
                 setSelectedPaths(new Set(sortedFiltered.map((x) => x.path)));
+                setSelectMode(sortedFiltered.length > 0);
             }
             if (e.key === 'Backspace' && !e.metaKey && parentPath) { e.preventDefault(); goUp(); }
         };
@@ -678,6 +714,7 @@ function FileManager() {
         e.stopPropagation();
         if (!selectedPaths.has(entry.path)) {
             setSelectedPaths(new Set([entry.path]));
+            setSelectMode(true);
             setLastClickedPath(entry.path);
         }
         setContextMenu({ x: e.clientX, y: e.clientY, entry });
@@ -701,30 +738,19 @@ function FileManager() {
     // ─── render ──────────────────────────────────────────
     return (
         <div
-            className={`page-container file-manager-page file-manager ${sidebarVisible ? 'sidebar-open' : ''} view-${viewMode} grid-${gridSize} ${selectMode ? 'select-mode' : ''}`}
+            className={`page-container page-container--full-bleed file-manager-page file-manager fullscreen ${sidebarVisible ? 'sidebar-open' : ''} view-${viewMode} grid-${gridSize} ${selectMode ? 'select-mode' : ''}`}
             onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
         >
-            <div className="page-header">
-                <div className="page-header-content">
-                    <h1>File Manager</h1>
-                </div>
-                <div className="page-header-actions">
-                    <TargetPicker feature="files" value={target} onChange={setTarget} />
-                    <Button onClick={() => setShowNewFileModal(true)} disabled={isRemote}>
-                        <FilePlus size={16} /> New File
-                    </Button>
-                    <input
-                        type="file"
-                        ref={fileInputRef}
-                        multiple
-                        style={{ display: 'none' }}
-                        onChange={handleUploadInput}
-                    />
-                </div>
-            </div>
+            <input
+                type="file"
+                ref={fileInputRef}
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleUploadInput}
+            />
 
             {isRemote && (
                 <div className="file-manager-target-banner">
@@ -803,6 +829,7 @@ function FileManager() {
                     </div>
                 </div>
                 <div className="toolbar-right">
+                    <TargetPicker feature="files" value={target} onChange={setTarget} />
                     <div className="search-field">
                         <Search size={14} className="search-field-icon" />
                         <input
@@ -826,37 +853,6 @@ function FileManager() {
                         <Upload size={14} />
                         <span>Upload</span>
                     </button>
-                    <label className="toolbar-select">
-                        <span>Type</span>
-                        <select value={activeFilter} onChange={(e) => setActiveFilter(e.target.value)}>
-                            {FILTER_OPTIONS.map((opt) => (
-                                <option key={opt.id} value={opt.id}>
-                                    {opt.label} ({filterCounts[opt.id] ?? 0})
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    <label className="toolbar-select">
-                        <ArrowUpDown size={14} />
-                        <select value={sortValue} onChange={(e) => handleSortChange(e.target.value)}>
-                            <option value="name-asc">Name A-Z</option>
-                            <option value="name-desc">Name Z-A</option>
-                            <option value="modified-desc">Newest</option>
-                            <option value="modified-asc">Oldest</option>
-                            <option value="size-desc">Largest</option>
-                            <option value="size-asc">Smallest</option>
-                            <option value="type-asc">Type</option>
-                            <option value="type-desc">Type Z-A</option>
-                        </select>
-                    </label>
-                    <button
-                        className={`toolbar-chip ${selectMode ? 'active' : ''}`}
-                        onClick={() => { setSelectMode(!selectMode); if (selectMode) clearSelection(); }}
-                        title="Toggle selection mode"
-                    >
-                        <MousePointer2 size={14} />
-                        <span>Select</span>
-                    </button>
                     <div className="view-toggle">
                         <button
                             className={`view-toggle-btn ${viewMode === 'grid' ? 'active' : ''}`}
@@ -874,12 +870,11 @@ function FileManager() {
                         </button>
                     </div>
                     <button
-                        className={`toolbar-chip ${showHidden ? 'active' : ''}`}
+                        className={`toolbar-icon-btn ${showHidden ? 'active' : ''}`}
                         onClick={() => setShowHidden(!showHidden)}
                         title="Toggle hidden files"
                     >
                         {showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
-                        <span>Hidden</span>
                     </button>
                     <button
                         className="toolbar-icon-btn"
@@ -954,6 +949,45 @@ function FileManager() {
                                     />
                                 </div>
                             )}
+                        </div>
+
+                        {/* Types */}
+                        <div className="sidebar-section">
+                            <div className="sidebar-section-header static">
+                                <File size={16} />
+                                <span>Types</span>
+                            </div>
+                            <div className="sidebar-section-content type-filter-panel">
+                                <div className="type-filter-list">
+                                    {FILTER_OPTIONS.map((opt) => {
+                                        const count = filterCounts[opt.id] ?? 0;
+                                        return (
+                                            <button
+                                                key={opt.id}
+                                                className={`type-filter-item ${activeFilter === opt.id ? 'active' : ''}`}
+                                                onClick={() => setActiveFilter(opt.id)}
+                                                disabled={opt.id !== 'all' && count === 0}
+                                            >
+                                                <span>{opt.label}</span>
+                                                <span>{count}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <label className="sidebar-sort-control">
+                                    <span><ArrowUpDown size={12} /> Sort</span>
+                                    <select value={sortValue} onChange={(e) => handleSortChange(e.target.value)}>
+                                        <option value="name-asc">Name A-Z</option>
+                                        <option value="name-desc">Name Z-A</option>
+                                        <option value="modified-desc">Newest</option>
+                                        <option value="modified-asc">Oldest</option>
+                                        <option value="size-desc">Largest</option>
+                                        <option value="size-asc">Smallest</option>
+                                        <option value="type-asc">Type</option>
+                                        <option value="type-desc">Type Z-A</option>
+                                    </select>
+                                </label>
+                            </div>
                         </div>
 
                         {/* Disk Usage */}
@@ -1055,7 +1089,10 @@ function FileManager() {
                                             className="checkbox-btn"
                                             onClick={() => {
                                                 if (selectedPaths.size === sortedFiltered.length) clearSelection();
-                                                else setSelectedPaths(new Set(sortedFiltered.map((x) => x.path)));
+                                                else {
+                                                    setSelectedPaths(new Set(sortedFiltered.map((x) => x.path)));
+                                                    setSelectMode(sortedFiltered.length > 0);
+                                                }
                                             }}
                                         >
                                             <span className={`checkbox ${selectedPaths.size === sortedFiltered.length && sortedFiltered.length > 0 ? 'checked' : ''}`}>

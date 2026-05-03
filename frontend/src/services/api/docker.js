@@ -140,6 +140,10 @@ export async function removeVolume(volumeName, force = false) {
 }
 
 // Docker Compose
+export async function composeList() {
+    return this.request('/docker/compose/list');
+}
+
 export async function composeUp(path, detach = true, build = false) {
     return this.request('/docker/compose/up', {
         method: 'POST',

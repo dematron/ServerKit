@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -9,6 +9,93 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+    Activity,
+    AlertTriangle,
+    CheckCircle2,
+    Copy,
+    ExternalLink,
+    Globe2,
+    PlayCircle,
+    Plus,
+    RefreshCw,
+    Trash2,
+    Wrench,
+    XCircle,
+} from 'lucide-react';
+
+const STATUS_META = {
+    operational: { label: 'Operational', badge: 'success', tone: 'success', icon: CheckCircle2 },
+    degraded: { label: 'Degraded', badge: 'warning', tone: 'warning', icon: AlertTriangle },
+    partial_outage: { label: 'Partial outage', badge: 'warning', tone: 'warning', icon: AlertTriangle },
+    major_outage: { label: 'Major outage', badge: 'destructive', tone: 'danger', icon: XCircle },
+    maintenance: { label: 'Maintenance', badge: 'info', tone: 'info', icon: Wrench },
+};
+
+const INCIDENT_STATUS = [
+    { value: 'investigating', label: 'Investigating' },
+    { value: 'identified', label: 'Identified' },
+    { value: 'monitoring', label: 'Monitoring' },
+    { value: 'resolved', label: 'Resolved' },
+];
+
+const IMPACT_OPTIONS = [
+    { value: 'none', label: 'None' },
+    { value: 'minor', label: 'Minor' },
+    { value: 'major', label: 'Major' },
+    { value: 'critical', label: 'Critical' },
+];
+
+const CHECK_TARGET_PLACEHOLDERS = {
+    http: 'https://example.com/health',
+    tcp: 'example.com:443',
+    dns: 'example.com',
+    ping: 'example.com',
+};
+
+const defaultPageForm = { name: '', slug: '', description: '', primary_color: '#4f46e5' };
+const defaultCompForm = {
+    name: '',
+    group: 'Services',
+    check_type: 'http',
+    check_target: '',
+    check_interval: 60,
+    check_timeout: 10,
+};
+const defaultIncidentForm = { title: '', status: 'investigating', impact: 'minor', body: '' };
+
+function normalizeSlug(value) {
+    return (value || '')
+        .toLowerCase()
+        .trim()
+        .replace(/[\s_]+/g, '-')
+        .replace(/[^a-z0-9-]/g, '')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+}
+
+function formatDate(value) {
+    if (!value) return 'Never';
+    return new Date(value).toLocaleString();
+}
+
+function formatUptime(value) {
+    if (typeof value !== 'number') return '100.00%';
+    return `${value.toFixed(2)}%`;
+}
+
+function getPublicStatusUrl(page) {
+    if (!page) return '';
+    return `${window.location.origin}/status/${page.slug}`;
+}
+
+function getOverallStatus(components) {
+    const statuses = components.map((component) => component.status);
+    if (statuses.some((status) => status === 'major_outage')) return 'major_outage';
+    if (statuses.some((status) => status === 'partial_outage' || status === 'degraded')) return 'degraded';
+    if (statuses.some((status) => status === 'maintenance')) return 'maintenance';
+    return 'operational';
+}
 
 const StatusPages = () => {
     const toast = useToast();
@@ -23,46 +110,101 @@ const StatusPages = () => {
     const [showCreateIncident, setShowCreateIncident] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
 
-    const [pageForm, setPageForm] = useState({ name: '', slug: '', description: '', primary_color: '#4f46e5' });
-    const [compForm, setCompForm] = useState({ name: '', group: 'Services', check_type: 'http', check_target: '', check_interval: 60 });
-    const [incidentForm, setIncidentForm] = useState({ title: '', impact: 'minor', body: '' });
+    const [pageForm, setPageForm] = useState(defaultPageForm);
+    const [compForm, setCompForm] = useState(defaultCompForm);
+    const [incidentForm, setIncidentForm] = useState(defaultIncidentForm);
 
-    const loadPages = useCallback(async () => {
+    const isAdmin = Boolean(user?.is_admin);
+
+    const groupedComponents = useMemo(() => {
+        return components.reduce((groups, component) => {
+            const groupName = component.group || 'Services';
+            groups[groupName] = groups[groupName] || [];
+            groups[groupName].push(component);
+            return groups;
+        }, {});
+    }, [components]);
+
+    const activeIncidents = useMemo(
+        () => incidents.filter((incident) => incident.status !== 'resolved'),
+        [incidents]
+    );
+
+    const overallStatus = useMemo(() => getOverallStatus(components), [components]);
+    const overallMeta = STATUS_META[overallStatus] || STATUS_META.operational;
+    const OverallIcon = overallMeta.icon;
+    const selectedUrl = getPublicStatusUrl(selectedPage);
+
+    const loadPageDetails = async (page) => {
+        if (!page) return;
         try {
-            const data = await api.getStatusPages();
-            setPages(data.pages || []);
+            const [cData, iData] = await Promise.all([
+                api.getStatusPageComponents(page.id),
+                api.getStatusPageIncidents(page.id),
+            ]);
+            setSelectedPage(page);
+            setComponents(cData.components || []);
+            setIncidents(iData.incidents || []);
         } catch (err) {
-            toast.error('Failed to load status pages');
+            toast.error(err.message || 'Failed to load page details');
+        }
+    };
+
+    const loadPages = async () => {
+        try {
+            setLoading(true);
+            const data = await api.getStatusPages();
+            const nextPages = data.pages || [];
+            setPages(nextPages);
+
+            const nextSelected = selectedPage
+                ? nextPages.find((page) => page.id === selectedPage.id) || nextPages[0]
+                : nextPages[0];
+
+            if (nextSelected) {
+                await loadPageDetails(nextSelected);
+            } else {
+                setSelectedPage(null);
+                setComponents([]);
+                setIncidents([]);
+            }
+        } catch (err) {
+            toast.error(err.message || 'Failed to load status pages');
         } finally {
             setLoading(false);
         }
-    }, [toast]);
+    };
 
-    useEffect(() => { loadPages(); }, [loadPages]);
+    useEffect(() => {
+        loadPages();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const loadPageDetails = async (pageId) => {
-        try {
-            const [cData, iData] = await Promise.all([
-                api.getStatusPageComponents(pageId),
-                api.getStatusPageIncidents(pageId),
-            ]);
-            setComponents(cData.components || []);
-            setIncidents(iData.incidents || []);
-            setSelectedPage(pages.find(p => p.id === pageId));
-        } catch (err) {
-            toast.error('Failed to load details');
-        }
+    const handlePageNameChange = (name) => {
+        setPageForm((prev) => {
+            const previousAutoSlug = normalizeSlug(prev.name);
+            const shouldSyncSlug = !prev.slug || prev.slug === previousAutoSlug;
+            return {
+                ...prev,
+                name,
+                slug: shouldSyncSlug ? normalizeSlug(name) : prev.slug,
+            };
+        });
     };
 
     const handleCreatePage = async () => {
         try {
-            const page = await api.createStatusPage(pageForm);
+            const page = await api.createStatusPage({
+                ...pageForm,
+                slug: normalizeSlug(pageForm.slug),
+            });
             toast.success('Status page created');
             setShowCreatePage(false);
-            setPageForm({ name: '', slug: '', description: '', primary_color: '#4f46e5' });
-            loadPages();
+            setPageForm(defaultPageForm);
+            setPages((current) => [...current, page].sort((a, b) => a.name.localeCompare(b.name)));
+            await loadPageDetails(page);
         } catch (err) {
-            toast.error(err.message);
+            toast.error(err.message || 'Failed to create status page');
         }
     };
 
@@ -72,19 +214,21 @@ const StatusPages = () => {
             await api.createStatusComponent(selectedPage.id, compForm);
             toast.success('Component added');
             setShowCreateComponent(false);
-            loadPageDetails(selectedPage.id);
+            setCompForm(defaultCompForm);
+            await loadPageDetails(selectedPage);
+            await loadPages();
         } catch (err) {
-            toast.error(err.message);
+            toast.error(err.message || 'Failed to add component');
         }
     };
 
-    const handleRunCheck = async (compId) => {
+    const handleRunCheck = async (component) => {
         try {
-            const result = await api.runStatusCheck(compId);
-            toast.success(`Check: ${result.status} (${result.response_time}ms)`);
-            if (selectedPage) loadPageDetails(selectedPage.id);
+            const result = await api.runStatusCheck(component.id);
+            toast.success(`Check ${result.status}${result.response_time ? ` in ${result.response_time}ms` : ''}`);
+            if (selectedPage) await loadPageDetails(selectedPage);
         } catch (err) {
-            toast.error(err.message);
+            toast.error(err.message || 'Check failed');
         }
     };
 
@@ -94,25 +238,66 @@ const StatusPages = () => {
             await api.createStatusIncident(selectedPage.id, incidentForm);
             toast.success('Incident created');
             setShowCreateIncident(false);
-            setIncidentForm({ title: '', impact: 'minor', body: '' });
-            loadPageDetails(selectedPage.id);
+            setIncidentForm(defaultIncidentForm);
+            await loadPageDetails(selectedPage);
         } catch (err) {
-            toast.error(err.message);
+            toast.error(err.message || 'Failed to create incident');
         }
     };
 
-    const handleResolveIncident = async (incidentId) => {
+    const handleUpdateIncidentStatus = async (incident, status) => {
         try {
-            await api.updateStatusIncident(incidentId, { status: 'resolved', update_body: 'Issue has been resolved.' });
-            toast.success('Incident resolved');
-            if (selectedPage) loadPageDetails(selectedPage.id);
+            const statusLabel = INCIDENT_STATUS.find((item) => item.value === status)?.label || status;
+            await api.updateStatusIncident(incident.id, {
+                status,
+                update_body: status === 'resolved' ? 'Issue has been resolved.' : `Status changed to ${statusLabel}.`,
+            });
+            toast.success(`Incident set to ${statusLabel}`);
+            if (selectedPage) await loadPageDetails(selectedPage);
         } catch (err) {
-            toast.error(err.message);
+            toast.error(err.message || 'Failed to update incident');
         }
     };
 
-    const statusColors = {
-        operational: 'success', degraded: 'warning', partial_outage: 'warning', major_outage: 'danger', maintenance: 'info'
+    const handleCopyUrl = async () => {
+        if (!selectedUrl) return;
+        try {
+            await navigator.clipboard.writeText(selectedUrl);
+            toast.success('Status page URL copied');
+        } catch {
+            toast.error('Could not copy URL');
+        }
+    };
+
+    const handleConfirmDelete = async () => {
+        if (!deleteConfirm) return;
+        try {
+            if (deleteConfirm.type === 'page') {
+                await api.deleteStatusPage(deleteConfirm.item.id);
+                toast.success('Status page deleted');
+                setDeleteConfirm(null);
+                setSelectedPage(null);
+                setComponents([]);
+                setIncidents([]);
+                await loadPages();
+                return;
+            }
+
+            if (deleteConfirm.type === 'component') {
+                await api.deleteStatusComponent(deleteConfirm.item.id);
+                toast.success('Component deleted');
+            }
+
+            if (deleteConfirm.type === 'incident') {
+                await api.deleteStatusIncident(deleteConfirm.item.id);
+                toast.success('Incident deleted');
+            }
+
+            setDeleteConfirm(null);
+            if (selectedPage) await loadPageDetails(selectedPage);
+        } catch (err) {
+            toast.error(err.message || 'Delete failed');
+        }
     };
 
     if (loading) return <Spinner />;
@@ -125,60 +310,148 @@ const StatusPages = () => {
                     <p className="page-description">{pages.length} page{pages.length !== 1 ? 's' : ''}</p>
                 </div>
                 <div className="page-header-actions">
-                    {user?.is_admin && (
-                        <Button onClick={() => setShowCreatePage(true)}>Create Page</Button>
+                    <Button variant="outline" onClick={loadPages}>
+                        <RefreshCw size={16} />
+                        Refresh
+                    </Button>
+                    {isAdmin && (
+                        <Button onClick={() => setShowCreatePage(true)}>
+                            <Plus size={16} />
+                            Create Page
+                        </Button>
                     )}
                 </div>
             </div>
 
             <div className="status-layout">
-                <div className="status-pages-list">
-                    {pages.map(page => (
-                        <div key={page.id} className={`status-page-item ${selectedPage?.id === page.id ? 'active' : ''}`}
-                            onClick={() => loadPageDetails(page.id)}>
-                            <strong>{page.name}</strong>
-                            <span className="text-muted">/{page.slug} &bull; {page.component_count} components</span>
-                        </div>
+                <aside className="status-pages-list" aria-label="Status pages">
+                    {pages.map((page) => (
+                        <button
+                            key={page.id}
+                            type="button"
+                            className={`status-page-item ${selectedPage?.id === page.id ? 'active' : ''}`}
+                            onClick={() => loadPageDetails(page)}
+                        >
+                            <span className="status-page-item__name">{page.name}</span>
+                            <span className="status-page-item__slug">/{page.slug}</span>
+                            <span className="status-page-item__meta">
+                                <Globe2 size={14} />
+                                {page.component_count} component{page.component_count !== 1 ? 's' : ''}
+                            </span>
+                        </button>
                     ))}
-                    {pages.length === 0 && <div className="empty-state"><p>No status pages yet.</p></div>}
-                </div>
+                    {pages.length === 0 && (
+                        <div className="empty-state status-pages-empty">
+                            <Activity size={32} />
+                            <p>No status pages yet.</p>
+                        </div>
+                    )}
+                </aside>
 
-                {selectedPage && (
-                    <div className="status-detail-panel">
-                        <div className="status-detail-panel__header">
-                            <h2>{selectedPage.name}</h2>
-                            <span className="text-muted">/{selectedPage.slug}</span>
+                {selectedPage ? (
+                    <section className="status-detail-panel">
+                        <div className="status-detail-panel__hero">
+                            <div>
+                                <Badge variant={overallMeta.badge} className="status-overall-badge">
+                                    <OverallIcon size={15} />
+                                    {overallMeta.label}
+                                </Badge>
+                                <h2>{selectedPage.name}</h2>
+                                {selectedPage.description && <p>{selectedPage.description}</p>}
+                            </div>
+                            <div className="status-url-card">
+                                <span>Public URL</span>
+                                <code>{selectedUrl}</code>
+                                <div>
+                                    <Button size="sm" variant="outline" onClick={handleCopyUrl}>
+                                        <Copy size={14} />
+                                        Copy
+                                    </Button>
+                                    <Button size="sm" asChild>
+                                        <a href={selectedUrl} target="_blank" rel="noreferrer">
+                                            <ExternalLink size={14} />
+                                            Open
+                                        </a>
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="status-detail-metrics">
+                            <div>
+                                <span>Components</span>
+                                <strong>{components.length}</strong>
+                            </div>
+                            <div>
+                                <span>Active incidents</span>
+                                <strong>{activeIncidents.length}</strong>
+                            </div>
+                            <div>
+                                <span>30 day uptime</span>
+                                <strong>{formatUptime(
+                                    components.length
+                                        ? components.reduce((total, component) => total + (component.uptime_30d || 100), 0) / components.length
+                                        : 100
+                                )}</strong>
+                            </div>
                         </div>
 
                         <Tabs defaultValue="components">
                             <TabsList>
                                 <TabsTrigger value="components">Components</TabsTrigger>
                                 <TabsTrigger value="incidents">Incidents</TabsTrigger>
+                                <TabsTrigger value="settings">Page</TabsTrigger>
                             </TabsList>
 
                             <TabsContent value="components">
                                 <div className="status-actions-bar">
-                                    {user?.is_admin && (
-                                        <Button size="sm" onClick={() => setShowCreateComponent(true)}>Add Component</Button>
+                                    {isAdmin && (
+                                        <Button size="sm" onClick={() => setShowCreateComponent(true)}>
+                                            <Plus size={14} />
+                                            Add Component
+                                        </Button>
                                     )}
                                 </div>
+
                                 <div className="components-list">
-                                    {components.map(comp => (
-                                        <div key={comp.id} className="component-row">
-                                            <div className="component-row__info">
-                                                <span className={`status-dot status-dot--${statusColors[comp.status] || 'muted'}`} />
-                                                <div>
-                                                    <strong>{comp.name}</strong>
-                                                    <span className="text-muted"> &bull; {comp.group}</span>
-                                                </div>
-                                            </div>
-                                            <div className="component-row__stats">
-                                                <span>{comp.uptime_30d?.toFixed(2)}% uptime</span>
-                                                {comp.last_response_time && <span>{comp.last_response_time}ms</span>}
-                                            </div>
-                                            <div className="component-row__actions">
-                                                <Button size="sm" variant="outline" onClick={() => handleRunCheck(comp.id)}>Check Now</Button>
-                                            </div>
+                                    {Object.entries(groupedComponents).map(([groupName, groupComponents]) => (
+                                        <div key={groupName} className="component-group">
+                                            <h3>{groupName}</h3>
+                                            {groupComponents.map((component) => {
+                                                const meta = STATUS_META[component.status] || STATUS_META.operational;
+                                                const Icon = meta.icon;
+                                                return (
+                                                    <div key={component.id} className="component-row">
+                                                        <div className="component-row__info">
+                                                            <span className={`status-dot status-dot--${meta.tone}`} />
+                                                            <div>
+                                                                <strong>{component.name}</strong>
+                                                                <span>{component.check_type.toUpperCase()} - {component.check_target || 'No target'}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="component-row__stats">
+                                                            <Badge variant={meta.badge}>
+                                                                <Icon size={14} />
+                                                                {meta.label}
+                                                            </Badge>
+                                                            <span>{formatUptime(component.uptime_30d)} uptime</span>
+                                                            <span>{component.last_response_time ? `${component.last_response_time}ms` : 'No response'}</span>
+                                                            <span>{formatDate(component.last_check_at)}</span>
+                                                        </div>
+                                                        {isAdmin && (
+                                                            <div className="component-row__actions">
+                                                                <Button size="sm" variant="outline" onClick={() => handleRunCheck(component)}>
+                                                                    <PlayCircle size={14} />
+                                                                    Check
+                                                                </Button>
+                                                                <Button size="sm" variant="ghost" onClick={() => setDeleteConfirm({ type: 'component', item: component })}>
+                                                                    <Trash2 size={14} />
+                                                                </Button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     ))}
                                     {components.length === 0 && <p className="text-muted">No components yet.</p>}
@@ -187,44 +460,138 @@ const StatusPages = () => {
 
                             <TabsContent value="incidents">
                                 <div className="status-actions-bar">
-                                    {user?.is_admin && (
-                                        <Button size="sm" onClick={() => setShowCreateIncident(true)}>Create Incident</Button>
+                                    {isAdmin && (
+                                        <Button size="sm" onClick={() => setShowCreateIncident(true)}>
+                                            <Plus size={14} />
+                                            Create Incident
+                                        </Button>
                                     )}
                                 </div>
                                 <div className="incidents-list">
-                                    {incidents.map(inc => (
-                                        <div key={inc.id} className="incident-row">
+                                    {incidents.map((incident) => (
+                                        <article key={incident.id} className={`incident-row incident-row--${incident.status}`}>
                                             <div className="incident-row__header">
-                                                <strong>{inc.title}</strong>
-                                                <Badge variant={inc.status === 'resolved' ? 'success' : 'warning'}>{inc.status}</Badge>
+                                                <div>
+                                                    <strong>{incident.title}</strong>
+                                                    <span>{formatDate(incident.created_at)}</span>
+                                                </div>
+                                                <div>
+                                                    <Badge variant={incident.status === 'resolved' ? 'success' : 'warning'}>
+                                                        {incident.status}
+                                                    </Badge>
+                                                    <Badge variant={incident.impact === 'critical' ? 'destructive' : 'secondary'}>
+                                                        {incident.impact}
+                                                    </Badge>
+                                                </div>
                                             </div>
-                                            <span className="text-muted">Impact: {inc.impact}</span>
-                                            {inc.body && <p>{inc.body}</p>}
-                                            {inc.status !== 'resolved' && user?.is_admin && (
-                                                <Button size="sm" variant="secondary" onClick={() => handleResolveIncident(inc.id)}>Resolve</Button>
+                                            {incident.body && <p>{incident.body}</p>}
+                                            {incident.updates?.length > 0 && (
+                                                <div className="incident-timeline">
+                                                    {incident.updates.map((update) => (
+                                                        <div key={update.id}>
+                                                            <span>{formatDate(update.created_at)}</span>
+                                                            <strong>{update.status}</strong>
+                                                            <p>{update.body}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             )}
-                                        </div>
+                                            {isAdmin && (
+                                                <div className="incident-row__actions">
+                                                    {incident.status !== 'resolved' && (
+                                                        <>
+                                                            {INCIDENT_STATUS.filter((status) => status.value !== incident.status).map((status) => (
+                                                                <Button
+                                                                    key={status.value}
+                                                                    size="sm"
+                                                                    variant={status.value === 'resolved' ? 'secondary' : 'outline'}
+                                                                    onClick={() => handleUpdateIncidentStatus(incident, status.value)}
+                                                                >
+                                                                    {status.label}
+                                                                </Button>
+                                                            ))}
+                                                        </>
+                                                    )}
+                                                    <Button size="sm" variant="ghost" onClick={() => setDeleteConfirm({ type: 'incident', item: incident })}>
+                                                        <Trash2 size={14} />
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </article>
                                     ))}
                                     {incidents.length === 0 && <p className="text-muted">No incidents.</p>}
                                 </div>
                             </TabsContent>
+
+                            <TabsContent value="settings">
+                                <div className="status-page-settings">
+                                    <div>
+                                        <span>Slug</span>
+                                        <strong>/{selectedPage.slug}</strong>
+                                    </div>
+                                    <div>
+                                        <span>Visibility</span>
+                                        <Badge variant={selectedPage.is_public ? 'success' : 'secondary'}>
+                                            {selectedPage.is_public ? 'Public' : 'Private'}
+                                        </Badge>
+                                    </div>
+                                    <div>
+                                        <span>Created</span>
+                                        <strong>{formatDate(selectedPage.created_at)}</strong>
+                                    </div>
+                                    {isAdmin && (
+                                        <Button variant="destructive" onClick={() => setDeleteConfirm({ type: 'page', item: selectedPage })}>
+                                            <Trash2 size={16} />
+                                            Delete Page
+                                        </Button>
+                                    )}
+                                </div>
+                            </TabsContent>
                         </Tabs>
-                    </div>
+                    </section>
+                ) : (
+                    <section className="status-detail-panel status-detail-panel--empty">
+                        <Activity size={32} />
+                        <p>Select a status page.</p>
+                    </section>
                 )}
             </div>
 
             {showCreatePage && (
                 <div className="modal-overlay" onClick={() => setShowCreatePage(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h2>Create Status Page</h2><button className="modal-close" onClick={() => setShowCreatePage(false)}>&times;</button></div>
+                    <div className="modal status-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Create Status Page</h2>
+                            <button className="modal-close" onClick={() => setShowCreatePage(false)}>&times;</button>
+                        </div>
                         <div className="modal-body">
-                            <div className="form-group"><label>Name</label><Input value={pageForm.name} onChange={e => setPageForm({...pageForm, name: e.target.value})} /></div>
-                            <div className="form-group"><label>Slug (URL path)</label><Input value={pageForm.slug} onChange={e => setPageForm({...pageForm, slug: e.target.value})} placeholder="my-services" /></div>
-                            <div className="form-group"><label>Description</label><Textarea value={pageForm.description} onChange={e => setPageForm({...pageForm, description: e.target.value})} rows={2} /></div>
+                            <div className="form-group">
+                                <label>Name</label>
+                                <Input value={pageForm.name} onChange={(e) => handlePageNameChange(e.target.value)} autoFocus />
+                            </div>
+                            <div className="form-group">
+                                <label>Slug</label>
+                                <Input
+                                    value={pageForm.slug}
+                                    onChange={(e) => setPageForm({ ...pageForm, slug: normalizeSlug(e.target.value) })}
+                                    placeholder="my-services"
+                                />
+                                <span className="form-help">/status/{pageForm.slug || 'my-services'}</span>
+                            </div>
+                            <div className="form-group">
+                                <label>Description</label>
+                                <Textarea
+                                    value={pageForm.description}
+                                    onChange={(e) => setPageForm({ ...pageForm, description: e.target.value })}
+                                    rows={3}
+                                />
+                            </div>
                         </div>
                         <div className="modal-footer">
                             <Button variant="outline" onClick={() => setShowCreatePage(false)}>Cancel</Button>
-                            <Button onClick={handleCreatePage} disabled={!pageForm.name || !pageForm.slug}>Create</Button>
+                            <Button onClick={handleCreatePage} disabled={!pageForm.name.trim() || !pageForm.slug.trim()}>
+                                Create
+                            </Button>
                         </div>
                     </div>
                 </div>
@@ -232,18 +599,65 @@ const StatusPages = () => {
 
             {showCreateComponent && (
                 <div className="modal-overlay" onClick={() => setShowCreateComponent(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h2>Add Component</h2><button className="modal-close" onClick={() => setShowCreateComponent(false)}>&times;</button></div>
-                        <div className="modal-body">
-                            <div className="form-group"><label>Name</label><Input value={compForm.name} onChange={e => setCompForm({...compForm, name: e.target.value})} /></div>
-                            <div className="form-group"><label>Group</label><Input value={compForm.group} onChange={e => setCompForm({...compForm, group: e.target.value})} /></div>
-                            <div className="form-group"><label>Check Type</label><select className="form-select" value={compForm.check_type} onChange={e => setCompForm({...compForm, check_type: e.target.value})}><option value="http">HTTP</option><option value="tcp">TCP</option><option value="dns">DNS</option><option value="ping">Ping</option></select></div>
-                            <div className="form-group"><label>Check Target</label><Input value={compForm.check_target} onChange={e => setCompForm({...compForm, check_target: e.target.value})} placeholder="https://example.com or host:port" /></div>
-                            <div className="form-group"><label>Check Interval (seconds)</label><Input type="number" value={compForm.check_interval} onChange={e => setCompForm({...compForm, check_interval: parseInt(e.target.value) || 60})} /></div>
+                    <div className="modal status-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Add Component</h2>
+                            <button className="modal-close" onClick={() => setShowCreateComponent(false)}>&times;</button>
+                        </div>
+                        <div className="modal-body status-modal-grid">
+                            <div className="form-group">
+                                <label>Name</label>
+                                <Input value={compForm.name} onChange={(e) => setCompForm({ ...compForm, name: e.target.value })} autoFocus />
+                            </div>
+                            <div className="form-group">
+                                <label>Group</label>
+                                <Input value={compForm.group} onChange={(e) => setCompForm({ ...compForm, group: e.target.value })} />
+                            </div>
+                            <div className="form-group">
+                                <label>Check Type</label>
+                                <select
+                                    className="form-select"
+                                    value={compForm.check_type}
+                                    onChange={(e) => setCompForm({ ...compForm, check_type: e.target.value })}
+                                >
+                                    <option value="http">HTTP</option>
+                                    <option value="tcp">TCP</option>
+                                    <option value="dns">DNS</option>
+                                    <option value="ping">Ping</option>
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label>Target</label>
+                                <Input
+                                    value={compForm.check_target}
+                                    onChange={(e) => setCompForm({ ...compForm, check_target: e.target.value })}
+                                    placeholder={CHECK_TARGET_PLACEHOLDERS[compForm.check_type]}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label>Interval</label>
+                                <Input
+                                    type="number"
+                                    min="30"
+                                    value={compForm.check_interval}
+                                    onChange={(e) => setCompForm({ ...compForm, check_interval: parseInt(e.target.value, 10) || 60 })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label>Timeout</label>
+                                <Input
+                                    type="number"
+                                    min="1"
+                                    value={compForm.check_timeout}
+                                    onChange={(e) => setCompForm({ ...compForm, check_timeout: parseInt(e.target.value, 10) || 10 })}
+                                />
+                            </div>
                         </div>
                         <div className="modal-footer">
                             <Button variant="outline" onClick={() => setShowCreateComponent(false)}>Cancel</Button>
-                            <Button onClick={handleCreateComponent} disabled={!compForm.name}>Add</Button>
+                            <Button onClick={handleCreateComponent} disabled={!compForm.name.trim() || !compForm.check_target.trim()}>
+                                Add Component
+                            </Button>
                         </div>
                     </div>
                 </div>
@@ -251,20 +665,70 @@ const StatusPages = () => {
 
             {showCreateIncident && (
                 <div className="modal-overlay" onClick={() => setShowCreateIncident(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h2>Create Incident</h2><button className="modal-close" onClick={() => setShowCreateIncident(false)}>&times;</button></div>
+                    <div className="modal status-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Create Incident</h2>
+                            <button className="modal-close" onClick={() => setShowCreateIncident(false)}>&times;</button>
+                        </div>
                         <div className="modal-body">
-                            <div className="form-group"><label>Title</label><Input value={incidentForm.title} onChange={e => setIncidentForm({...incidentForm, title: e.target.value})} /></div>
-                            <div className="form-group"><label>Impact</label><select className="form-select" value={incidentForm.impact} onChange={e => setIncidentForm({...incidentForm, impact: e.target.value})}><option value="none">None</option><option value="minor">Minor</option><option value="major">Major</option><option value="critical">Critical</option></select></div>
-                            <div className="form-group"><label>Description</label><Textarea value={incidentForm.body} onChange={e => setIncidentForm({...incidentForm, body: e.target.value})} rows={3} /></div>
+                            <div className="form-group">
+                                <label>Title</label>
+                                <Input value={incidentForm.title} onChange={(e) => setIncidentForm({ ...incidentForm, title: e.target.value })} autoFocus />
+                            </div>
+                            <div className="status-modal-grid">
+                                <div className="form-group">
+                                    <label>Status</label>
+                                    <select
+                                        className="form-select"
+                                        value={incidentForm.status}
+                                        onChange={(e) => setIncidentForm({ ...incidentForm, status: e.target.value })}
+                                    >
+                                        {INCIDENT_STATUS.filter((status) => status.value !== 'resolved').map((status) => (
+                                            <option key={status.value} value={status.value}>{status.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label>Impact</label>
+                                    <select
+                                        className="form-select"
+                                        value={incidentForm.impact}
+                                        onChange={(e) => setIncidentForm({ ...incidentForm, impact: e.target.value })}
+                                    >
+                                        {IMPACT_OPTIONS.map((impact) => (
+                                            <option key={impact.value} value={impact.value}>{impact.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="form-group">
+                                <label>Description</label>
+                                <Textarea
+                                    value={incidentForm.body}
+                                    onChange={(e) => setIncidentForm({ ...incidentForm, body: e.target.value })}
+                                    rows={4}
+                                />
+                            </div>
                         </div>
                         <div className="modal-footer">
                             <Button variant="outline" onClick={() => setShowCreateIncident(false)}>Cancel</Button>
-                            <Button onClick={handleCreateIncident} disabled={!incidentForm.title}>Create</Button>
+                            <Button onClick={handleCreateIncident} disabled={!incidentForm.title.trim()}>
+                                Create Incident
+                            </Button>
                         </div>
                     </div>
                 </div>
             )}
+
+            <ConfirmDialog
+                isOpen={Boolean(deleteConfirm)}
+                title={`Delete ${deleteConfirm?.type || 'item'}?`}
+                message="This removes the selected record and related status data."
+                confirmText="Delete"
+                requireConfirmation={deleteConfirm?.item?.name || deleteConfirm?.item?.title}
+                onConfirm={handleConfirmDelete}
+                onCancel={() => setDeleteConfirm(null)}
+            />
         </div>
     );
 };

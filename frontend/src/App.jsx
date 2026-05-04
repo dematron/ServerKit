@@ -47,6 +47,7 @@ import ServerTemplates from './pages/ServerTemplates';
 import Workspaces from './pages/Workspaces';
 import DNSZones from './pages/DNSZones';
 import StatusPages from './pages/StatusPages';
+import PublicStatusPage from './pages/PublicStatusPage';
 import CloudProvision from './pages/CloudProvision';
 import Marketplace from './pages/Marketplace';
 import StyleGuide from './pages/StyleGuide';
@@ -215,6 +216,7 @@ function AppRoutes() {
                     <SourceConnectionCallback />
                 </PrivateRoute>
             } />
+            <Route path="/status/:slug" element={<PublicStatusPage />} />
             {/* Standalone plugin layouts — bare or custom. Each group is
                 a sibling top-level Route under PrivateRoute, so the
                 plugin owns the chrome (no DashboardLayout sidebar). */}

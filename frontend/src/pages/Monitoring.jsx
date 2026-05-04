@@ -1,147 +1,264 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import useTabParam from '../hooks/useTabParam';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
-import { StatCard, StatsGrid } from '../components/StatCard';
-import { Circle, Bell, Clock, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+    Activity,
+    Bell,
+    CheckCircle2,
+    Clock,
+    Cpu,
+    Gauge,
+    HardDrive,
+    Mail,
+    MemoryStick,
+    PlayCircle,
+    RefreshCw,
+    Settings,
+    Siren,
+    Webhook,
+} from 'lucide-react';
 
 const VALID_TABS = ['overview', 'alerts', 'config', 'thresholds'];
+
+const DEFAULT_THRESHOLDS = {
+    cpu_percent: 80,
+    memory_percent: 85,
+    disk_percent: 90,
+    load_average: 5.0,
+};
+
+const CHANNEL_META = {
+    discord: { label: 'Discord', icon: Webhook },
+    slack: { label: 'Slack', icon: Webhook },
+    telegram: { label: 'Telegram', icon: Bell },
+    email: { label: 'Email', icon: Mail },
+    generic_webhook: { label: 'Webhook', icon: Webhook },
+};
+
+function formatTimestamp(timestamp) {
+    if (!timestamp) return 'Never';
+    return new Date(timestamp).toLocaleString();
+}
+
+function formatNumber(value, digits = 1) {
+    if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+    return value.toFixed(digits);
+}
+
+function formatMetric(value, unit = '%') {
+    if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+    return `${value.toFixed(unit === '' ? 2 : 1)}${unit}`;
+}
+
+function getAlertSeverityVariant(severity) {
+    switch (severity) {
+        case 'critical':
+            return 'destructive';
+        case 'warning':
+            return 'warning';
+        case 'info':
+            return 'info';
+        default:
+            return 'secondary';
+    }
+}
 
 const Monitoring = () => {
     const toast = useToast();
     const [status, setStatus] = useState(null);
-    const [config, setConfig] = useState(null);
-    const [thresholds, setThresholds] = useState(null);
+    const [thresholds, setThresholds] = useState(DEFAULT_THRESHOLDS);
     const [alertHistory, setAlertHistory] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [savingConfig, setSavingConfig] = useState(false);
+    const [savingThresholds, setSavingThresholds] = useState(false);
+    const [checkingAlerts, setCheckingAlerts] = useState(false);
     const [error, setError] = useState(null);
     const [activeTab, setActiveTab] = useTabParam('/monitoring', VALID_TABS);
 
-    // Config form state
     const [configForm, setConfigForm] = useState({
         enabled: false,
         check_interval: 60,
-        alert_email: '',
-        alert_webhook: ''
     });
 
-    // Threshold form state
-    const [thresholdForm, setThresholdForm] = useState({
-        cpu_percent: 90,
-        memory_percent: 90,
-        disk_percent: 90,
-        load_average: 5.0
-    });
-
-    const [testEmail, setTestEmail] = useState('');
-    const [testWebhook, setTestWebhook] = useState('');
-
-    useEffect(() => {
-        loadData();
-    }, []);
+    const [thresholdForm, setThresholdForm] = useState(DEFAULT_THRESHOLDS);
 
     const loadData = async () => {
         try {
             setLoading(true);
+            setError(null);
             const [statusRes, configRes, thresholdsRes, historyRes] = await Promise.all([
                 api.getMonitoringStatus(),
                 api.getMonitoringConfig(),
                 api.getMonitoringThresholds(),
-                api.getAlertHistory(50)
+                api.getAlertHistory(50),
             ]);
 
+            const nextThresholds = { ...DEFAULT_THRESHOLDS, ...(thresholdsRes.thresholds || {}) };
             setStatus(statusRes);
-            setConfig(configRes);
-            setThresholds(thresholdsRes.thresholds);
+            setThresholds(nextThresholds);
+            setThresholdForm(nextThresholds);
             setAlertHistory(historyRes.alerts || []);
-
-            if (configRes) {
-                setConfigForm({
-                    enabled: configRes.enabled || false,
-                    check_interval: configRes.check_interval || 60,
-                    alert_email: configRes.alert_email || '',
-                    alert_webhook: configRes.alert_webhook || ''
-                });
-            }
-
-            if (thresholdsRes.thresholds) {
-                setThresholdForm(thresholdsRes.thresholds);
-            }
+            setConfigForm({
+                enabled: Boolean(configRes.enabled),
+                check_interval: configRes.check_interval || 60,
+            });
         } catch (err) {
-            setError(err.message);
+            setError(err.message || 'Failed to load monitoring data');
         } finally {
             setLoading(false);
         }
     };
 
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    const metricRules = useMemo(() => {
+        const metrics = status?.current_metrics || {};
+        return [
+            {
+                key: 'cpu_percent',
+                label: 'CPU usage',
+                description: 'cpu',
+                icon: Cpu,
+                unit: '%',
+                current: metrics.cpu?.percent,
+                threshold: thresholdForm.cpu_percent,
+                persistedThreshold: thresholds.cpu_percent,
+            },
+            {
+                key: 'memory_percent',
+                label: 'Memory usage',
+                description: 'memory',
+                icon: MemoryStick,
+                unit: '%',
+                current: metrics.memory?.percent,
+                threshold: thresholdForm.memory_percent,
+                persistedThreshold: thresholds.memory_percent,
+            },
+            {
+                key: 'disk_percent',
+                label: 'Disk usage',
+                description: 'disk',
+                icon: HardDrive,
+                unit: '%',
+                current: metrics.disk?.percent,
+                threshold: thresholdForm.disk_percent,
+                persistedThreshold: thresholds.disk_percent,
+            },
+            {
+                key: 'load_average',
+                label: 'Load average',
+                description: 'load',
+                icon: Gauge,
+                unit: '',
+                current: metrics.load_average?.['1min'],
+                threshold: thresholdForm.load_average,
+                persistedThreshold: thresholds.load_average,
+            },
+        ];
+    }, [status, thresholdForm, thresholds]);
+
+    const notificationChannels = useMemo(() => {
+        return Object.entries(status?.notifications || {}).map(([key, channel]) => ({
+            key,
+            ...channel,
+            ...(CHANNEL_META[key] || { label: key, icon: Bell }),
+        }));
+    }, [status]);
+
+    const activeAlerts = status?.active_alerts || [];
+    const enabledChannelCount = notificationChannels.filter((channel) => channel.enabled && channel.configured).length;
+    const alertRuleCount = metricRules.length;
+
     const handleToggleMonitoring = async () => {
         try {
-            if (status?.monitoring_active) {
+            if (status?.enabled) {
                 await api.stopMonitoring();
+                toast.success('Monitoring stopped');
             } else {
                 await api.startMonitoring();
+                toast.success('Monitoring started');
             }
-            loadData();
+            await loadData();
         } catch (err) {
-            setError(err.message);
+            setError(err.message || 'Failed to update monitoring state');
         }
     };
 
     const handleSaveConfig = async (e) => {
         e.preventDefault();
         try {
-            await api.updateMonitoringConfig(configForm);
-            loadData();
+            setSavingConfig(true);
+            const wasEnabled = Boolean(status?.enabled);
+            await api.updateMonitoringConfig({
+                enabled: configForm.enabled,
+                check_interval: Number(configForm.check_interval) || 60,
+            });
+
+            if (configForm.enabled !== wasEnabled) {
+                if (configForm.enabled) {
+                    await api.startMonitoring();
+                } else {
+                    await api.stopMonitoring();
+                }
+            }
+
+            toast.success('Monitoring delivery saved');
+            await loadData();
         } catch (err) {
-            setError(err.message);
+            toast.error(err.message || 'Failed to save monitoring settings');
+        } finally {
+            setSavingConfig(false);
         }
     };
 
     const handleSaveThresholds = async (e) => {
         e.preventDefault();
         try {
-            await api.updateMonitoringThresholds(thresholdForm);
-            loadData();
+            setSavingThresholds(true);
+            await api.updateMonitoringThresholds({
+                cpu_percent: Number(thresholdForm.cpu_percent),
+                memory_percent: Number(thresholdForm.memory_percent),
+                disk_percent: Number(thresholdForm.disk_percent),
+                load_average: Number(thresholdForm.load_average),
+            });
+            toast.success('Alert rules saved');
+            await loadData();
         } catch (err) {
-            setError(err.message);
+            toast.error(err.message || 'Failed to save alert rules');
+        } finally {
+            setSavingThresholds(false);
         }
     };
 
-    const handleTestEmail = async () => {
+    const handleCheckAlerts = async () => {
         try {
-            await api.testEmailAlert(testEmail || configForm.alert_email);
-            toast.success('Test email sent successfully');
+            setCheckingAlerts(true);
+            const result = await api.checkAlerts();
+            const count = result.alerts?.length || 0;
+            toast[count > 0 ? 'warning' : 'success'](`${count} active alert${count !== 1 ? 's' : ''}`);
+            await loadData();
         } catch (err) {
-            toast.error(err.message);
+            toast.error(err.message || 'Alert check failed');
+        } finally {
+            setCheckingAlerts(false);
         }
     };
 
-    const handleTestWebhook = async () => {
-        try {
-            await api.testWebhookAlert(testWebhook || configForm.alert_webhook);
-            toast.success('Test webhook sent successfully');
-        } catch (err) {
-            toast.error(err.message);
-        }
-    };
-
-    const getAlertSeverityVariant = (severity) => {
-        switch (severity) {
-            case 'critical': return 'destructive';
-            case 'warning': return 'warning';
-            case 'info': return 'info';
-            default: return 'secondary';
-        }
-    };
-
-    const formatTimestamp = (timestamp) => {
-        return new Date(timestamp).toLocaleString();
+    const updateThreshold = (key, value) => {
+        setThresholdForm((current) => ({
+            ...current,
+            [key]: value,
+        }));
     };
 
     if (loading) {
@@ -153,26 +270,25 @@ const Monitoring = () => {
             <div className="page-header">
                 <div>
                     <h1>Monitoring & Alerts</h1>
-                    <p className="page-subtitle">System monitoring and alert configuration</p>
+                    <p className="page-subtitle">System resource alerts and delivery</p>
                 </div>
                 <div className="page-actions">
+                    <Button variant="outline" onClick={loadData}>
+                        <RefreshCw size={16} />
+                        Refresh
+                    </Button>
                     <Button
-                        variant={status?.monitoring_active ? 'destructive' : 'default'}
+                        variant={status?.enabled ? 'destructive' : 'default'}
                         onClick={handleToggleMonitoring}
                     >
-                        {status?.monitoring_active ? (
+                        {status?.enabled ? (
                             <>
-                                <svg viewBox="0 0 24 24" width="16" height="16">
-                                    <rect x="6" y="4" width="4" height="16"/>
-                                    <rect x="14" y="4" width="4" height="16"/>
-                                </svg>
+                                <Activity size={16} />
                                 Stop Monitoring
                             </>
                         ) : (
                             <>
-                                <svg viewBox="0 0 24 24" width="16" height="16">
-                                    <polygon points="5 3 19 12 5 21 5 3"/>
-                                </svg>
+                                <PlayCircle size={16} />
                                 Start Monitoring
                             </>
                         )}
@@ -190,280 +306,249 @@ const Monitoring = () => {
             <Tabs value={activeTab} onValueChange={setActiveTab}>
                 <TabsList>
                     <TabsTrigger value="overview">Overview</TabsTrigger>
-                    <TabsTrigger value="alerts">Alert History</TabsTrigger>
-                    <TabsTrigger value="config">Configuration</TabsTrigger>
-                    <TabsTrigger value="thresholds">Thresholds</TabsTrigger>
+                    <TabsTrigger value="thresholds">Alert Rules</TabsTrigger>
+                    <TabsTrigger value="config">Delivery</TabsTrigger>
+                    <TabsTrigger value="alerts">History</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="overview">
                     <div className="monitoring-overview">
-                        <StatsGrid>
-                            <StatCard
-                                icon={Circle}
-                                iconVariant="status"
-                                label="Monitoring Status"
-                                value={status?.monitoring_active ? 'Active' : 'Inactive'}
-                                valueClassName={status?.monitoring_active ? 'text-success' : 'text-muted'}
-                            />
-                            <StatCard icon={Bell} iconVariant="alerts" label="Recent Alerts" value={alertHistory.length} />
-                            <StatCard icon={Clock} iconVariant="interval" label="Check Interval" value={`${config?.check_interval || 60}s`} />
-                            <StatCard
-                                icon={Mail}
-                                iconVariant="notifications"
-                                label="Notifications"
-                                value={
-                                    config?.alert_email && config?.alert_webhook
-                                        ? 'Email + Webhook'
-                                        : config?.alert_email
-                                            ? 'Email'
-                                            : config?.alert_webhook
-                                                ? 'Webhook'
-                                                : 'None'
-                                }
-                            />
-                        </StatsGrid>
-
-                        <div className="card">
-                            <div className="card-header">
-                                <h3>Current Thresholds</h3>
+                        <section className={`monitoring-hero ${status?.enabled ? 'is-active' : ''}`}>
+                            <div>
+                                <Badge variant={status?.enabled ? 'success' : 'secondary'}>
+                                    {status?.enabled ? <CheckCircle2 size={14} /> : <Clock size={14} />}
+                                    {status?.enabled ? 'Monitoring active' : 'Monitoring paused'}
+                                </Badge>
+                                <h2>{activeAlerts.length > 0 ? `${activeAlerts.length} active alert${activeAlerts.length !== 1 ? 's' : ''}` : 'No active alerts'}</h2>
+                                <p>
+                                    Checks run every {status?.check_interval || configForm.check_interval || 60} seconds.
+                                </p>
                             </div>
-                            <div className="card-body">
-                                <div className="threshold-grid">
-                                    <div className="threshold-item">
-                                        <span className="threshold-label">CPU Usage</span>
-                                        <span className="threshold-value">{thresholds?.cpu_percent || 90}%</span>
-                                    </div>
-                                    <div className="threshold-item">
-                                        <span className="threshold-label">Memory Usage</span>
-                                        <span className="threshold-value">{thresholds?.memory_percent || 90}%</span>
-                                    </div>
-                                    <div className="threshold-item">
-                                        <span className="threshold-label">Disk Usage</span>
-                                        <span className="threshold-value">{thresholds?.disk_percent || 90}%</span>
-                                    </div>
-                                    <div className="threshold-item">
-                                        <span className="threshold-label">Load Average</span>
-                                        <span className="threshold-value">{thresholds?.load_average || 5.0}</span>
-                                    </div>
-                                </div>
+                            <div className="monitoring-hero__actions">
+                                <Button variant="outline" onClick={handleCheckAlerts} disabled={checkingAlerts}>
+                                    <Siren size={16} />
+                                    {checkingAlerts ? 'Checking...' : 'Check Now'}
+                                </Button>
+                            </div>
+                        </section>
+
+                        <div className="monitoring-summary-grid">
+                            <div>
+                                <span>Alert rules</span>
+                                <strong>{alertRuleCount}</strong>
+                            </div>
+                            <div>
+                                <span>Delivery channels</span>
+                                <strong>{enabledChannelCount}</strong>
+                            </div>
+                            <div>
+                                <span>History</span>
+                                <strong>{alertHistory.length}</strong>
                             </div>
                         </div>
 
-                        {alertHistory.length > 0 && (
-                            <div className="card">
-                                <div className="card-header">
-                                    <h3>Recent Alerts</h3>
-                                </div>
-                                <div className="card-body">
-                                    <div className="alert-list">
-                                        {alertHistory.slice(0, 5).map((alert, index) => (
-                                            <div key={index} className="alert-item">
-                                                <Badge variant={getAlertSeverityVariant(alert.severity)}>
-                                                    {alert.severity}
-                                                </Badge>
-                                                <span className="alert-message">{alert.message}</span>
-                                                <span className="alert-time">{formatTimestamp(alert.timestamp)}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+                        <section className="monitoring-panel">
+                            <div className="monitoring-panel__header">
+                                <h3>Current Metrics</h3>
+                                <Button size="sm" variant="outline" onClick={() => setActiveTab('thresholds')}>
+                                    <Settings size={14} />
+                                    Rules
+                                </Button>
                             </div>
+                            <div className="metric-rule-grid metric-rule-grid--compact">
+                                {metricRules.map((rule) => {
+                                    const Icon = rule.icon;
+                                    const isTriggered = typeof rule.current === 'number' && rule.current > rule.persistedThreshold;
+                                    return (
+                                        <article key={rule.key} className={`metric-rule-card ${isTriggered ? 'is-triggered' : ''}`}>
+                                            <div className="metric-rule-card__icon">
+                                                <Icon size={18} />
+                                            </div>
+                                            <div>
+                                                <span>{rule.label}</span>
+                                                <strong>{formatMetric(rule.current, rule.unit)}</strong>
+                                            </div>
+                                            <Badge variant={isTriggered ? 'warning' : 'success'}>
+                                                {isTriggered ? 'Alerting' : `Under ${formatMetric(rule.persistedThreshold, rule.unit)}`}
+                                            </Badge>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        </section>
+
+                        {activeAlerts.length > 0 && (
+                            <section className="monitoring-panel monitoring-panel--warning">
+                                <div className="monitoring-panel__header">
+                                    <h3>Active Alerts</h3>
+                                </div>
+                                <div className="alert-list">
+                                    {activeAlerts.map((alert, index) => (
+                                        <div key={`${alert.type}-${index}`} className="alert-item">
+                                            <Badge variant={getAlertSeverityVariant(alert.severity)}>
+                                                {alert.severity}
+                                            </Badge>
+                                            <span className="alert-message">{alert.message}</span>
+                                            <span className="alert-time">{formatNumber(alert.value)} / {alert.threshold}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
                         )}
                     </div>
                 </TabsContent>
 
-                <TabsContent value="alerts">
-                    <div className="card">
-                        <div className="card-header">
-                            <h3>Alert History</h3>
-                            <Button variant="outline" size="sm" onClick={loadData}>
-                                Refresh
+                <TabsContent value="thresholds">
+                    <form className="monitoring-panel" onSubmit={handleSaveThresholds}>
+                        <div className="monitoring-panel__header">
+                            <h3>Alert Rules</h3>
+                            <Button type="submit" disabled={savingThresholds}>
+                                {savingThresholds ? 'Saving...' : 'Save Rules'}
                             </Button>
                         </div>
-                        <div className="card-body">
-                            {alertHistory.length === 0 ? (
-                                <div className="empty-state">
-                                    <svg viewBox="0 0 24 24" width="48" height="48">
-                                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-                                        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-                                    </svg>
-                                    <h3>No Alerts</h3>
-                                    <p>No alerts have been triggered yet.</p>
-                                </div>
-                            ) : (
-                                <table className="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Severity</th>
-                                            <th>Type</th>
-                                            <th>Message</th>
-                                            <th>Value</th>
-                                            <th>Threshold</th>
-                                            <th>Time</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {alertHistory.map((alert, index) => (
-                                            <tr key={index}>
-                                                <td>
-                                                    <Badge variant={getAlertSeverityVariant(alert.severity)}>
-                                                        {alert.severity}
-                                                    </Badge>
-                                                </td>
-                                                <td>{alert.type}</td>
-                                                <td>{alert.message}</td>
-                                                <td>{alert.value?.toFixed(1)}</td>
-                                                <td>{alert.threshold}</td>
-                                                <td>{formatTimestamp(alert.timestamp)}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            )}
+                        <div className="metric-rule-grid">
+                            {metricRules.map((rule) => {
+                                const Icon = rule.icon;
+                                const isTriggered = typeof rule.current === 'number' && rule.current > rule.threshold;
+                                return (
+                                    <article key={rule.key} className={`metric-rule-editor ${isTriggered ? 'is-triggered' : ''}`}>
+                                        <div className="metric-rule-editor__main">
+                                            <div className="metric-rule-card__icon">
+                                                <Icon size={18} />
+                                            </div>
+                                            <div>
+                                                <h4>{rule.label}</h4>
+                                                <span>Current: {formatMetric(rule.current, rule.unit)}</span>
+                                            </div>
+                                        </div>
+                                        <div className="metric-rule-editor__threshold">
+                                            <Label htmlFor={`threshold-${rule.key}`}>Trigger above</Label>
+                                            <Input
+                                                id={`threshold-${rule.key}`}
+                                                type="number"
+                                                min={rule.key === 'load_average' ? '0.1' : '1'}
+                                                max={rule.key === 'load_average' ? '100' : '100'}
+                                                step={rule.key === 'load_average' ? '0.1' : '1'}
+                                                value={rule.threshold}
+                                                onChange={(e) => updateThreshold(rule.key, e.target.value)}
+                                            />
+                                        </div>
+                                        <Badge variant={isTriggered ? 'warning' : 'secondary'}>
+                                            {isTriggered ? 'Would alert now' : 'Quiet'}
+                                        </Badge>
+                                    </article>
+                                );
+                            })}
                         </div>
-                    </div>
+                    </form>
                 </TabsContent>
 
                 <TabsContent value="config">
-                    <div className="card">
-                        <div className="card-header">
-                            <h3>Monitoring Configuration</h3>
-                        </div>
-                        <div className="card-body">
-                            <form onSubmit={handleSaveConfig}>
-                                <div className="form-group">
-                                    <label className="checkbox-label">
-                                        <Checkbox
-                                            checked={configForm.enabled}
-                                            onCheckedChange={(checked) => setConfigForm({...configForm, enabled: checked})}
-                                        />
-                                        <span>Enable Monitoring</span>
-                                    </label>
+                    <div className="monitoring-delivery-layout">
+                        <form className="monitoring-panel" onSubmit={handleSaveConfig}>
+                            <div className="monitoring-panel__header">
+                                <h3>Scheduler</h3>
+                                <Button type="submit" disabled={savingConfig}>
+                                    {savingConfig ? 'Saving...' : 'Save Delivery'}
+                                </Button>
+                            </div>
+                            <div className="monitoring-switch-row">
+                                <div>
+                                    <strong>Run resource checks</strong>
+                                    <span>{configForm.enabled ? 'Enabled' : 'Paused'}</span>
                                 </div>
+                                <Switch
+                                    checked={configForm.enabled}
+                                    onCheckedChange={(checked) => setConfigForm({ ...configForm, enabled: checked })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <Label htmlFor="monitoring-interval">Check interval</Label>
+                                <Input
+                                    id="monitoring-interval"
+                                    type="number"
+                                    min="10"
+                                    max="3600"
+                                    value={configForm.check_interval}
+                                    onChange={(e) => setConfigForm({ ...configForm, check_interval: e.target.value })}
+                                />
+                                <span className="form-help">Seconds between checks.</span>
+                            </div>
+                        </form>
 
-                                <div className="form-group">
-                                    <Label>Check Interval (seconds)</Label>
-                                    <Input
-                                        type="number"
-                                        value={configForm.check_interval}
-                                        onChange={(e) => setConfigForm({...configForm, check_interval: parseInt(e.target.value)})}
-                                        min="10"
-                                        max="3600"
-                                    />
-                                </div>
-
-                                <div className="form-group">
-                                    <Label>Alert Email</Label>
-                                    <div className="input-group">
-                                        <Input
-                                            type="email"
-                                            value={configForm.alert_email}
-                                            onChange={(e) => setConfigForm({...configForm, alert_email: e.target.value})}
-                                            placeholder="alerts@example.com"
-                                        />
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            onClick={handleTestEmail}
-                                            disabled={!configForm.alert_email}
-                                        >
-                                            Test
-                                        </Button>
-                                    </div>
-                                </div>
-
-                                <div className="form-group">
-                                    <Label>Webhook URL</Label>
-                                    <div className="input-group">
-                                        <Input
-                                            type="url"
-                                            value={configForm.alert_webhook}
-                                            onChange={(e) => setConfigForm({...configForm, alert_webhook: e.target.value})}
-                                            placeholder="https://hooks.slack.com/..."
-                                        />
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            onClick={handleTestWebhook}
-                                            disabled={!configForm.alert_webhook}
-                                        >
-                                            Test
-                                        </Button>
-                                    </div>
-                                </div>
-
-                                <div className="form-actions">
-                                    <Button type="submit">Save Configuration</Button>
-                                </div>
-                            </form>
-                        </div>
+                        <section className="monitoring-panel">
+                            <div className="monitoring-panel__header">
+                                <h3>Notification Channels</h3>
+                                <Button size="sm" asChild>
+                                    <Link to="/settings/notifications">
+                                        <Settings size={14} />
+                                        Configure
+                                    </Link>
+                                </Button>
+                            </div>
+                            <div className="notification-channel-grid">
+                                {notificationChannels.map((channel) => {
+                                    const Icon = channel.icon;
+                                    const ready = channel.enabled && channel.configured;
+                                    return (
+                                        <article key={channel.key} className={`notification-channel-tile ${ready ? 'is-ready' : ''}`}>
+                                            <Icon size={18} />
+                                            <div>
+                                                <strong>{channel.label}</strong>
+                                                <span>{ready ? 'Enabled' : channel.configured ? 'Configured' : 'Not configured'}</span>
+                                            </div>
+                                            <Badge variant={ready ? 'success' : 'secondary'}>
+                                                {ready ? 'Ready' : 'Off'}
+                                            </Badge>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        </section>
                     </div>
                 </TabsContent>
 
-                <TabsContent value="thresholds">
-                    <div className="card">
-                        <div className="card-header">
-                            <h3>Alert Thresholds</h3>
+                <TabsContent value="alerts">
+                    <section className="monitoring-panel">
+                        <div className="monitoring-panel__header">
+                            <h3>Alert History</h3>
+                            <div>
+                                <Button variant="outline" size="sm" onClick={handleCheckAlerts} disabled={checkingAlerts}>
+                                    <Siren size={14} />
+                                    Check Now
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={loadData}>
+                                    <RefreshCw size={14} />
+                                    Refresh
+                                </Button>
+                            </div>
                         </div>
-                        <div className="card-body">
-                            <form onSubmit={handleSaveThresholds}>
-                                <div className="threshold-form-grid">
-                                    <div className="form-group">
-                                        <Label>CPU Usage (%)</Label>
-                                        <Input
-                                            type="number"
-                                            value={thresholdForm.cpu_percent}
-                                            onChange={(e) => setThresholdForm({...thresholdForm, cpu_percent: parseInt(e.target.value)})}
-                                            min="1"
-                                            max="100"
-                                        />
-                                        <span className="form-help">Alert when CPU exceeds this percentage</span>
-                                    </div>
-
-                                    <div className="form-group">
-                                        <Label>Memory Usage (%)</Label>
-                                        <Input
-                                            type="number"
-                                            value={thresholdForm.memory_percent}
-                                            onChange={(e) => setThresholdForm({...thresholdForm, memory_percent: parseInt(e.target.value)})}
-                                            min="1"
-                                            max="100"
-                                        />
-                                        <span className="form-help">Alert when memory exceeds this percentage</span>
-                                    </div>
-
-                                    <div className="form-group">
-                                        <Label>Disk Usage (%)</Label>
-                                        <Input
-                                            type="number"
-                                            value={thresholdForm.disk_percent}
-                                            onChange={(e) => setThresholdForm({...thresholdForm, disk_percent: parseInt(e.target.value)})}
-                                            min="1"
-                                            max="100"
-                                        />
-                                        <span className="form-help">Alert when disk exceeds this percentage</span>
-                                    </div>
-
-                                    <div className="form-group">
-                                        <Label>Load Average</Label>
-                                        <Input
-                                            type="number"
-                                            step="0.1"
-                                            value={thresholdForm.load_average}
-                                            onChange={(e) => setThresholdForm({...thresholdForm, load_average: parseFloat(e.target.value)})}
-                                            min="0.1"
-                                            max="100"
-                                        />
-                                        <span className="form-help">Alert when load average exceeds this value</span>
-                                    </div>
-                                </div>
-
-                                <div className="form-actions">
-                                    <Button type="submit">Save Thresholds</Button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
+                        {alertHistory.length === 0 ? (
+                            <div className="empty-state monitoring-empty">
+                                <Bell size={40} />
+                                <h3>No Alerts</h3>
+                                <p>No alerts have been triggered yet.</p>
+                            </div>
+                        ) : (
+                            <div className="monitoring-history-list">
+                                {alertHistory.map((alert, index) => (
+                                    <article key={`${alert.timestamp}-${index}`} className="monitoring-history-row">
+                                        <Badge variant={getAlertSeverityVariant(alert.severity)}>
+                                            {alert.severity}
+                                        </Badge>
+                                        <div>
+                                            <strong>{alert.type}</strong>
+                                            <span>{alert.message}</span>
+                                        </div>
+                                        <div className="monitoring-history-row__meta">
+                                            <span>{formatNumber(alert.value)} / {alert.threshold}</span>
+                                            <span>{formatTimestamp(alert.timestamp)}</span>
+                                        </div>
+                                    </article>
+                                ))}
+                            </div>
+                        )}
+                    </section>
                 </TabsContent>
             </Tabs>
         </div>

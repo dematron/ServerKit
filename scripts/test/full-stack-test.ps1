@@ -53,7 +53,8 @@ $DistroMap = @{
     'ubuntu22' = @{ backend = 'multipass'; image = '22.04';              user = 'ubuntu'  }
     'ubuntu24' = @{ backend = 'multipass'; image = '24.04';              user = 'ubuntu'  }
     'debian12' = @{ backend = 'vagrant';   image = 'generic/debian12';   user = 'vagrant' }
-    'fedora'   = @{ backend = 'vagrant';   image = 'generic/fedora39';   user = 'vagrant' }
+    # fedora39 went EOL Nov 2024; use fedora40 which is supported.
+    'fedora'   = @{ backend = 'vagrant';   image = 'generic/fedora40';   user = 'vagrant' }
     'rocky9'   = @{ backend = 'vagrant';   image = 'generic/rocky9';     user = 'vagrant' }
 }
 
@@ -171,14 +172,16 @@ function Test-VmInstall {
 
     & $MpExe transfer "${Vm}:/var/log/serverkit-test-install.log" "$VmOut\vm-install.log" 2>&1 | Out-Null
     & $MpExe transfer "${Vm}:/tmp/serverkit-install-status" $statusFile 2>&1 | Out-Null
-    if (-not (Test-Path $statusFile) -or (Get-Content $statusFile -Raw -ErrorAction SilentlyContinue).Trim() -eq '') {
+    $rawStatus = if (Test-Path $statusFile) { Get-Content $statusFile -Raw -ErrorAction SilentlyContinue } else { $null }
+    if (-not $rawStatus -or "$rawStatus".Trim() -eq '') {
         $fallback = if ($installRC -eq 0) { 'OK' } else { 'FAIL' }
         Set-Content -Path $statusFile -Value $fallback -Encoding ascii
     }
     & $MpExe exec $Vm -- sudo journalctl -u serverkit --no-pager -n 500 2>&1 `
         | Out-File (Join-Path $VmOut 'journalctl.log') -Encoding utf8
 
-    $status = (Get-Content $statusFile -Raw).Trim()
+    $rawStatus = Get-Content $statusFile -Raw -ErrorAction SilentlyContinue
+    $status = if ($rawStatus) { "$rawStatus".Trim() } else { 'FAIL' }
     Write-Host "  [$Vm] install status: $status" -ForegroundColor $(if ($status -eq 'OK') { 'Green' } else { 'Red' })
     Save-State  # regenerate so install log + journalctl show up
 
@@ -257,14 +260,18 @@ function Test-VagrantInstall {
         | Out-File (Join-Path $VmOut 'vm-install.log') -Encoding utf8
     & $VgExe ssh -c "sudo cat /tmp/serverkit-install-status" 2>$null `
         | Out-File $statusFile -Encoding ascii
-    if (-not (Test-Path $statusFile) -or (Get-Content $statusFile -Raw -ErrorAction SilentlyContinue).Trim() -eq '') {
+    # Get-Content -Raw returns $null for empty/missing files; guard before
+    # calling .Trim() so a failed status capture doesn't crash the run.
+    $rawStatus = if (Test-Path $statusFile) { Get-Content $statusFile -Raw -ErrorAction SilentlyContinue } else { $null }
+    if (-not $rawStatus -or "$rawStatus".Trim() -eq '') {
         $fallback = if ($installRC -eq 0) { 'OK' } else { 'FAIL' }
         Set-Content -Path $statusFile -Value $fallback -Encoding ascii
     }
     & $VgExe ssh -c "sudo journalctl -u serverkit --no-pager -n 500" 2>$null `
         | Out-File (Join-Path $VmOut 'journalctl.log') -Encoding utf8
 
-    $status = (Get-Content $statusFile -Raw).Trim()
+    $rawStatus = Get-Content $statusFile -Raw -ErrorAction SilentlyContinue
+    $status = if ($rawStatus) { "$rawStatus".Trim() } else { 'FAIL' }
     Write-Host "  [$Vm] install status: $status" -ForegroundColor $(if ($status -eq 'OK') { 'Green' } else { 'Red' })
     Save-State
 

@@ -108,8 +108,11 @@ if [ -f /etc/os-release ]; then
         OS_FAMILY="debian"
     elif [ "$ID" = "fedora" ]; then
         OS_FAMILY="fedora"
+    elif [ "$ID" = "rocky" ] || [ "$ID" = "almalinux" ] || [ "$ID" = "rhel" ] || [ "$ID" = "centos" ]; then
+        # Rocky / Alma / RHEL / CentOS share dnf + the docker-ce rhel repo.
+        OS_FAMILY="rhel"
     else
-        print_warning "Unsupported OS ($ID). This script is designed for Ubuntu/Debian/Fedora."
+        print_warning "Unsupported OS ($ID). This script is designed for Ubuntu/Debian/Fedora/Rocky."
     fi
 else
     print_warning "Cannot detect OS. Proceeding with caution."
@@ -183,7 +186,12 @@ if [ "$OS_FAMILY" = "debian" ] || [ "$OS_FAMILY" = "unknown" ]; then
         print_success "Python 3.12 installed"
     fi
 
-elif [ "$OS_FAMILY" = "fedora" ]; then
+elif [ "$OS_FAMILY" = "fedora" ] || [ "$OS_FAMILY" = "rhel" ]; then
+    # Rocky/Alma/RHEL need EPEL for some packages (python3.12 on RHEL 9, etc.)
+    if [ "$OS_FAMILY" = "rhel" ] && ! rpm -q epel-release >/dev/null 2>&1; then
+        dnf install -y epel-release || true
+    fi
+
     dnf update -y
 
     dnf install -y \
@@ -233,10 +241,31 @@ fi
 
 print_success "System dependencies installed"
 
-# Install Docker if not present
+# Install Docker if not present.
+#
+# Why not just `curl get.docker.com | sh` on Fedora/RHEL?
+# Docker recently added `docker-model-plugin` to that script's package
+# list, but the package only ships in the docker-ce apt repos — on
+# Fedora/RHEL dnf, the install aborts with "Unable to find a match:
+# docker-model-plugin". We add the repo and install the core packages
+# explicitly to avoid that.
 if ! command -v docker &> /dev/null; then
     print_info "Installing Docker..."
-    curl -fsSL https://get.docker.com | sh
+
+    if [ "$OS_FAMILY" = "fedora" ]; then
+        dnf install -y dnf-plugins-core
+        dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+        dnf install -y docker-ce docker-ce-cli containerd.io \
+            docker-compose-plugin docker-buildx-plugin
+    elif [ "$OS_FAMILY" = "rhel" ]; then
+        dnf install -y dnf-plugins-core
+        dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+        dnf install -y docker-ce docker-ce-cli containerd.io \
+            docker-compose-plugin docker-buildx-plugin
+    else
+        curl -fsSL https://get.docker.com | sh
+    fi
+
     systemctl enable docker
     systemctl start docker
     print_success "Docker installed"
@@ -244,10 +273,11 @@ else
     print_success "Docker already installed"
 fi
 
-# Install Docker Compose plugin if not present
+# Install Docker Compose plugin if not present (Debian/Ubuntu only — the
+# RHEL-family install above already pulled it in via the docker-ce repo).
 if ! docker compose version &> /dev/null; then
     print_info "Installing Docker Compose..."
-    if [ "$OS_FAMILY" = "fedora" ]; then
+    if [ "$OS_FAMILY" = "fedora" ] || [ "$OS_FAMILY" = "rhel" ]; then
         dnf install -y docker-compose-plugin
     else
         apt-get install -y docker-compose-plugin
@@ -260,7 +290,7 @@ fi
 # Install Node.js for frontend build (builds on host to avoid Docker memory issues)
 if ! command -v node &> /dev/null; then
     print_info "Installing Node.js..."
-    if [ "$OS_FAMILY" = "fedora" ]; then
+    if [ "$OS_FAMILY" = "fedora" ] || [ "$OS_FAMILY" = "rhel" ]; then
         curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
         dnf install -y nodejs
     else
@@ -382,7 +412,7 @@ print_success "CLI installed"
 
 # Install and configure host nginx as reverse proxy
 print_info "Setting up nginx reverse proxy..."
-if [ "$OS_FAMILY" = "fedora" ]; then
+if [ "$OS_FAMILY" = "fedora" ] || [ "$OS_FAMILY" = "rhel" ]; then
     dnf install -y nginx
 else
     apt-get install -y nginx
@@ -423,8 +453,8 @@ ln -sf /etc/nginx/sites-available/serverkit.conf /etc/nginx/sites-enabled/
 # Copy site template
 cp "$INSTALL_DIR/nginx/sites-available/example.conf.template" /etc/nginx/sites-available/
 
-# Configure SELinux to allow nginx reverse proxying (Fedora)
-if [ "$OS_FAMILY" = "fedora" ] && command -v setsebool &> /dev/null; then
+# Configure SELinux to allow nginx reverse proxying (Fedora/Rocky/RHEL)
+if { [ "$OS_FAMILY" = "fedora" ] || [ "$OS_FAMILY" = "rhel" ]; } && command -v setsebool &> /dev/null; then
     setsebool -P httpd_can_network_connect 1 2>/dev/null || true
 fi
 

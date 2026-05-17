@@ -79,8 +79,20 @@ def install_plugin():
         return jsonify(plugin.to_dict()), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        return jsonify({'error': f'Installation failed: {e}'}), 500
+    except Exception:
+        # Log full traceback server-side; details go to the InstalledPlugin
+        # row's error_message field. Don't echo raw exceptions to the
+        # client — they can leak filesystem paths, library versions, or
+        # SQL fragments.
+        import logging, uuid
+        ref = uuid.uuid4().hex[:8]
+        logging.getLogger(__name__).exception(
+            'Plugin install failed (ref=%s)', ref
+        )
+        return jsonify({
+            'error': 'Installation failed. Check server logs.',
+            'ref': ref,
+        }), 500
 
 
 @plugins_bp.route('/install-local', methods=['POST'])
@@ -118,8 +130,20 @@ def install_plugin_local():
         return jsonify(plugin.to_dict()), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        return jsonify({'error': f'Installation failed: {e}'}), 500
+    except Exception:
+        # Log full traceback server-side; details go to the InstalledPlugin
+        # row's error_message field. Don't echo raw exceptions to the
+        # client — they can leak filesystem paths, library versions, or
+        # SQL fragments.
+        import logging, uuid
+        ref = uuid.uuid4().hex[:8]
+        logging.getLogger(__name__).exception(
+            'Plugin install failed (ref=%s)', ref
+        )
+        return jsonify({
+            'error': 'Installation failed. Check server logs.',
+            'ref': ref,
+        }), 500
 
 
 @plugins_bp.route('/install-upload', methods=['POST'])
@@ -164,8 +188,20 @@ def install_plugin_upload():
         return jsonify(plugin.to_dict()), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        return jsonify({'error': f'Installation failed: {e}'}), 500
+    except Exception:
+        # Log full traceback server-side; details go to the InstalledPlugin
+        # row's error_message field. Don't echo raw exceptions to the
+        # client — they can leak filesystem paths, library versions, or
+        # SQL fragments.
+        import logging, uuid
+        ref = uuid.uuid4().hex[:8]
+        logging.getLogger(__name__).exception(
+            'Plugin install failed (ref=%s)', ref
+        )
+        return jsonify({
+            'error': 'Installation failed. Check server logs.',
+            'ref': ref,
+        }), 500
 
 
 @plugins_bp.route('/<int:plugin_id>', methods=['DELETE'])
@@ -276,8 +312,20 @@ def install_builtin(slug):
         return jsonify(plugin.to_dict()), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        return jsonify({'error': f'Installation failed: {e}'}), 500
+    except Exception:
+        # Log full traceback server-side; details go to the InstalledPlugin
+        # row's error_message field. Don't echo raw exceptions to the
+        # client — they can leak filesystem paths, library versions, or
+        # SQL fragments.
+        import logging, uuid
+        ref = uuid.uuid4().hex[:8]
+        logging.getLogger(__name__).exception(
+            'Plugin install failed (ref=%s)', ref
+        )
+        return jsonify({
+            'error': 'Installation failed. Check server logs.',
+            'ref': ref,
+        }), 500
 
 
 @plugins_bp.route('/manifest-spec', methods=['GET'])

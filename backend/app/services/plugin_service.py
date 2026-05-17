@@ -191,6 +191,47 @@ def _validate_manifest(manifest):
     return True
 
 
+def _safe_extract_path(dest_root, rel_path):
+    """Resolve `rel_path` under `dest_root` and assert it stays inside.
+
+    Defense against Zip Slip: a malicious archive can carry entries like
+    `../../etc/cron.d/foo` or absolute paths. Without this check, the
+    extract loop happily writes outside the plugin directory and into
+    anything the backend process can touch.
+
+    Returns the validated absolute output path, or raises ValueError.
+    """
+    if not rel_path:
+        raise ValueError('empty path in archive')
+    normalized = rel_path.replace('\\', '/').lstrip('/')
+    if normalized.startswith('/') or ':' in normalized.split('/')[0]:
+        raise ValueError(f'absolute path in archive: {rel_path!r}')
+    if '..' in normalized.split('/'):
+        raise ValueError(f'path traversal in archive: {rel_path!r}')
+    out = os.path.normpath(os.path.join(dest_root, normalized))
+    root = os.path.normpath(dest_root) + os.sep
+    if not (out + os.sep).startswith(root):
+        raise ValueError(f'archive entry escapes destination: {rel_path!r}')
+    return out
+
+
+def _update_plugin_metadata(plugin, manifest):
+    """Sync mutable manifest-derived fields onto an existing plugin row.
+
+    Used on reinstall: the new manifest may have a fresh display_name,
+    author, description, etc. Without this, those fields go stale and
+    the UI keeps showing the original values.
+    """
+    plugin.name = manifest['name']
+    plugin.display_name = manifest['display_name']
+    plugin.description = manifest.get('description', '')
+    plugin.author = manifest.get('author', '')
+    plugin.homepage = manifest.get('homepage', '')
+    plugin.repository = manifest.get('repository', '')
+    plugin.license = manifest.get('license', '')
+    plugin.category = manifest.get('category', 'utility')
+
+
 def install_from_url(url, user_id=None):
     """Download and install a plugin from a URL.
 
@@ -330,6 +371,9 @@ def _install_from_buffer(buf, source_url, source_type, user_id=None):
         plugin.source_url = source_url
         plugin.source_type = source_type
         plugin.manifest = manifest
+        # Refresh display/description/author/etc from the new manifest so
+        # the UI reflects the just-installed version, not the original.
+        _update_plugin_metadata(plugin, manifest)
     else:
         plugin = InstalledPlugin(
             name=manifest['name'],
@@ -386,21 +430,46 @@ def _install_from_buffer(buf, source_url, source_type, user_id=None):
                 continue
 
             if rel_path.startswith('backend/'):
-                out_path = os.path.join(backend_dest, rel_path[len('backend/'):])
+                # Zip Slip defense: _safe_extract_path rejects absolute
+                # paths, .. segments, and anything that resolves outside
+                # backend_dest after normalization.
+                out_path = _safe_extract_path(
+                    backend_dest, rel_path[len('backend/'):]
+                )
                 os.makedirs(os.path.dirname(out_path), exist_ok=True)
                 with zf.open(member) as src, open(out_path, 'wb') as dst:
                     dst.write(src.read())
 
             elif rel_path.startswith('frontend/'):
-                out_path = os.path.join(frontend_dest, rel_path[len('frontend/'):])
+                out_path = _safe_extract_path(
+                    frontend_dest, rel_path[len('frontend/'):]
+                )
                 os.makedirs(os.path.dirname(out_path), exist_ok=True)
                 with zf.open(member) as src, open(out_path, 'wb') as dst:
                     dst.write(src.read())
 
             elif rel_path == 'requirements.txt':
-                # Install Python dependencies
+                # Plugin Python deps are sandboxed by default: installing
+                # them runs pip with the backend's privileges, which means
+                # arbitrary code via setup.py hooks. Operators must opt in
+                # by setting SERVERKIT_ALLOW_PLUGIN_PIP=1.
                 req_content = zf.read(member).decode('utf-8')
-                _install_requirements(req_content, slug)
+                if req_content.strip() and os.environ.get(
+                    'SERVERKIT_ALLOW_PLUGIN_PIP', ''
+                ).lower() in ('1', 'true', 'yes'):
+                    _install_requirements(req_content, slug)
+                elif req_content.strip():
+                    # Persist the requirements file so the admin can review
+                    # and install it manually if they want.
+                    req_out = _safe_extract_path(backend_dest, 'requirements.txt')
+                    os.makedirs(os.path.dirname(req_out), exist_ok=True)
+                    with open(req_out, 'w', encoding='utf-8') as f:
+                        f.write(req_content)
+                    logger.warning(
+                        f"Plugin {slug} ships requirements.txt; skipping install "
+                        f"(set SERVERKIT_ALLOW_PLUGIN_PIP=1 to enable). "
+                        f"File saved to {req_out} for manual review."
+                    )
 
         # Also write the manifest into the backend plugin dir for runtime access
         if has_backend:
@@ -485,6 +554,26 @@ def _install_requirements(req_content, plugin_name):
         os.unlink(req_path)
 
 
+def _attach_status_guard(bp, slug):
+    """Attach a before_request that 503s if the plugin is disabled.
+
+    Flask blueprints can't be unregistered from a running app, so once a
+    plugin's routes are loaded they stay reachable until restart. This
+    guard makes the in-DB status authoritative at request time, so
+    disabling a plugin actually stops serving its routes.
+    """
+    def _check():
+        from flask import jsonify
+        p = InstalledPlugin.query.filter_by(slug=slug).first()
+        if not p or p.status != InstalledPlugin.STATUS_ACTIVE:
+            return jsonify({
+                'error': f"Plugin '{slug}' is not active",
+                'status': p.status if p else 'uninstalled',
+            }), 503
+        return None
+    bp.before_request(_check)
+
+
 def _register_plugin_blueprint(plugin):
     """Dynamically register a plugin's Flask blueprint into the running app."""
     from flask import current_app
@@ -504,6 +593,7 @@ def _register_plugin_blueprint(plugin):
     try:
         mod = importlib.import_module(full_module)
         bp = getattr(mod, bp_name)
+        _attach_status_guard(bp, plugin.slug)
         current_app.register_blueprint(bp, url_prefix=plugin.url_prefix)
         logger.info(f'Registered blueprint {bp_name} at {plugin.url_prefix}')
     except Exception as e:
@@ -587,6 +677,7 @@ def load_all_plugins(app):
                 import importlib
                 mod = importlib.import_module(full_module)
                 bp = getattr(mod, bp_name)
+                _attach_status_guard(bp, plugin.slug)
                 app.register_blueprint(bp, url_prefix=plugin.url_prefix)
                 logger.info(f'Loaded plugin: {plugin.display_name} v{plugin.version} at {plugin.url_prefix}')
             except Exception as e:

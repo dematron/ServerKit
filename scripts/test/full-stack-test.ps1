@@ -83,12 +83,29 @@ Write-Host "========================================" -ForegroundColor Cyan
 # NB: 'mp' is a built-in PS alias for Move-ItemProperty, so we must NOT
 # define a helper function named Mp. Use $MpExe directly everywhere.
 
+# --- live state + report regen ------------------------------------------
+$script:State = @{ running = $true; vms = @{} }
+function Save-State {
+    $json = $script:State | ConvertTo-Json -Depth 5 -Compress
+    Set-Content -Path (Join-Path $OutDir 'state.json') -Value $json -Encoding utf8
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        & python (Join-Path $PSScriptRoot 'report.py') $OutDir 2>&1 | Out-Null
+    }
+}
+function Set-VmStage {
+    param([string]$Vm, [string]$Stage)
+    if (-not $script:State.vms.ContainsKey($Vm)) { $script:State.vms[$Vm] = @{} }
+    $script:State.vms[$Vm].stage = $Stage
+    Save-State
+}
+
 function Test-VmInstall {
     param([string]$Vm, [string]$VmOut, [string]$Tarball, [string]$VmInstallScript, [string]$HarnessDir)
 
     New-Item -ItemType Directory -Force -Path $VmOut | Out-Null
     $statusFile = Join-Path $VmOut 'install-status'
 
+    Set-VmStage -Vm $Vm -Stage 'transferring source'
     Write-Host "  [$Vm] transferring source ($([math]::Round((Get-Item $Tarball).Length/1MB,1)) MB)..." -ForegroundColor DarkCyan
     & $MpExe transfer $Tarball "${Vm}:/tmp/serverkit-src.tar.gz" 2>&1 | Out-Null
     & $MpExe transfer $VmInstallScript "${Vm}:/tmp/vm-install.sh" 2>&1 | Out-Null
@@ -96,14 +113,12 @@ function Test-VmInstall {
     & $MpExe exec $Vm -- sudo tar -xzf /tmp/serverkit-src.tar.gz -C /opt/serverkit-src 2>&1 | Out-Null
     & $MpExe exec $Vm -- sudo chmod +x /tmp/vm-install.sh 2>&1 | Out-Null
 
+    Set-VmStage -Vm $Vm -Stage 'installing (npm ci + build, ~10 min)'
     Write-Host "  [$Vm] running install (this is the long part)..." -ForegroundColor DarkCyan
-    # NB: multipass exec's stdout pipe can hang on Windows when piped through
-    # PS. Redirect everything to a file on the VM and only check exit code.
     & $MpExe exec $Vm -- sh -c "sudo bash /tmp/vm-install.sh > /tmp/vm-install-stdout.log 2>&1; rc=`$?; echo EXIT_RC=`$rc; exit `$rc" `
         | Out-File (Join-Path $VmOut 'install.log') -Encoding utf8
     $installRC = $LASTEXITCODE
 
-    # Capture canonical logs + status
     & $MpExe transfer "${Vm}:/var/log/serverkit-test-install.log" "$VmOut\vm-install.log" 2>&1 | Out-Null
     & $MpExe transfer "${Vm}:/tmp/serverkit-install-status" $statusFile 2>&1 | Out-Null
     if (-not (Test-Path $statusFile) -or (Get-Content $statusFile -Raw -ErrorAction SilentlyContinue).Trim() -eq '') {
@@ -115,9 +130,14 @@ function Test-VmInstall {
 
     $status = (Get-Content $statusFile -Raw).Trim()
     Write-Host "  [$Vm] install status: $status" -ForegroundColor $(if ($status -eq 'OK') { 'Green' } else { 'Red' })
+    Save-State  # regenerate so install log + journalctl show up
 
-    if ($status -ne 'OK') { return $status }
+    if ($status -ne 'OK') {
+        Set-VmStage -Vm $Vm -Stage 'install failed'
+        return $status
+    }
 
+    Set-VmStage -Vm $Vm -Stage 'running pytest'
     Write-Host "  [$Vm] running pytest harness..." -ForegroundColor DarkCyan
     & $MpExe exec $Vm -- sudo mkdir -p /opt/serverkit-test 2>&1 | Out-Null
     & $MpExe exec $Vm -- sudo chown ubuntu:ubuntu /opt/serverkit-test 2>&1 | Out-Null
@@ -131,6 +151,7 @@ function Test-VmInstall {
     & $MpExe transfer "${Vm}:/tmp/pytest-stdout.log" (Join-Path $VmOut 'pytest-stdout.log') 2>&1 | Out-Null
     & $MpExe transfer "${Vm}:/opt/serverkit-test/pytest-report.json" (Join-Path $VmOut 'pytest-report.json') 2>&1 | Out-Null
 
+    Set-VmStage -Vm $Vm -Stage 'done'
     return $status
 }
 
@@ -166,6 +187,19 @@ $vmInstallScript = Join-Path $PSScriptRoot 'vm-install.sh'
 $cloudInit = Join-Path $PSScriptRoot 'cloud-init\base.yaml'
 $harnessDir = Join-Path $PSScriptRoot 'harness'
 
+# Pre-populate stages and seed the live report, then open it in the browser.
+foreach ($d in $Distros) {
+    $vmName = if ($ReuseVm) { $ReuseVm } else { "sk-test-$d-$RunId" }
+    $script:State.vms[$vmName] = @{ stage = 'pending' }
+    if ($ReuseVm) { break }
+}
+Save-State
+$reportPath = Join-Path $OutDir 'report.html'
+if (Test-Path $reportPath) {
+    Write-Host "`nLive report: $reportPath (opening in browser)" -ForegroundColor Cyan
+    Start-Process $reportPath
+}
+
 if ($ReuseVm) {
     Write-Host "`n[2-3/4] Reusing VM: $ReuseVm" -ForegroundColor Yellow
     $vmOut = Join-Path $OutDir $ReuseVm
@@ -199,14 +233,15 @@ if ($ReuseVm) {
 }
 
 # --- report -------------------------------------------------------------
-Write-Host "`n[4/4] Generating HTML report..." -ForegroundColor Yellow
-$reportHtml = $null
-$reportPy = Join-Path $PSScriptRoot 'report.py'
-if (Get-Command python -ErrorAction SilentlyContinue) {
-    $reportHtml = & python $reportPy $OutDir
+Write-Host "`n[4/4] Finalizing HTML report..." -ForegroundColor Yellow
+$script:State.running = $false
+Save-State
+$reportHtml = Join-Path $OutDir 'report.html'
+if (Test-Path $reportHtml) {
     Write-Host "    Report: $reportHtml" -ForegroundColor Green
 } else {
     Write-Host "    python not on PATH. Raw output: $OutDir" -ForegroundColor Yellow
+    $reportHtml = $null
 }
 
 # --- teardown -----------------------------------------------------------
@@ -224,11 +259,9 @@ $failed = @($results | Where-Object { $_.Status -ne 'OK' })
 Write-Host ""
 if ($failed.Count -eq 0 -and $results.Count -gt 0) {
     Write-Host "ALL GREEN - $($results.Count) VM(s) passed." -ForegroundColor Green
-    if ($reportHtml) { Start-Process $reportHtml }
     exit 0
 } else {
     Write-Host "FAILURES on $($failed.Count) VM(s):" -ForegroundColor Red
     $failed | ForEach-Object { Write-Host "  - $($_.Name): $($_.Status)" -ForegroundColor Red }
-    if ($reportHtml) { Start-Process $reportHtml }
     exit 1
 }

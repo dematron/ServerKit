@@ -303,15 +303,8 @@ def create_app(config_name=None):
     from app.api.pairing import pairing_bp
     app.register_blueprint(pairing_bp, url_prefix='/api/v1/pairing')
 
-    # Load installed plugins (dynamic blueprints)
-    try:
-        from app.services.plugin_service import load_all_plugins
-        load_all_plugins(app)
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f'Plugin loader: {e}')
-
-    # Handle database migrations (Alembic)
+    # Handle database migrations (Alembic) — must run before plugin loader
+    # since the loader queries the installed_plugins table.
     with app.app_context():
         from app.services.migration_service import MigrationService
         MigrationService.check_and_prepare(app)
@@ -320,6 +313,15 @@ def create_app(config_name=None):
         from app.services.settings_service import SettingsService
         SettingsService.initialize_defaults()
         SettingsService.migrate_legacy_roles()
+
+        # Load installed plugins (dynamic blueprints) AFTER migrations,
+        # so the installed_plugins table exists.
+        try:
+            from app.services.plugin_service import load_all_plugins
+            load_all_plugins(app)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f'Plugin loader: {e}')
 
         # Start metrics history collection in background
         from app.services.metrics_history_service import MetricsHistoryService

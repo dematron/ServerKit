@@ -1,240 +1,204 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  One-click full-stack E2E test for ServerKit on Windows.
+  One-click full-stack E2E test for ServerKit on Windows. Sequential edition.
 
 .DESCRIPTION
-  Spins up fresh Ubuntu/Debian VMs via Multipass in parallel, uploads the
-  current local working tree (including uncommitted changes), runs the
-  installer, then runs a pytest harness against the live API. Aggregates
-  everything into a single HTML report.
+  For each distro, in turn: launch VM via Multipass, upload local working
+  tree, run installer, run pytest harness, collect results. Aggregates into
+  a single HTML report.
 
-  Designed to be slow but unattended -- 1-2 hours is expected on first run
-  (cloud images download). Subsequent runs are ~15-30 min.
+  Sequential by design — Start-Job's separate runspace makes parameter
+  passing and command resolution fragile enough that parallel is not worth
+  the debugging cost.
 
 .PARAMETER Distros
-  Which distros to test. Default: ubuntu22, ubuntu24, debian12.
-
-.PARAMETER Keep
-  Don't tear down VMs at the end (for debugging).
+  Distros to test. Default: ubuntu22, ubuntu24, debian12.
 
 .PARAMETER Only
-  Comma-separated subset of distros to run (e.g. -Only "ubuntu24").
+  Comma-separated subset (e.g. -Only "ubuntu24").
 
-.PARAMETER Cpus
-  CPUs per VM (default 2).
+.PARAMETER Keep
+  Don't delete VMs at end.
 
-.PARAMETER MemoryGB
-  Memory per VM in GB (default 4).
-
-.PARAMETER DiskGB
-  Disk per VM in GB (default 15).
-
-.EXAMPLE
-  .\scripts\test\full-stack-test.ps1
-
-.EXAMPLE
-  .\scripts\test\full-stack-test.ps1 -Only ubuntu24 -Keep
+.PARAMETER ReuseVm
+  Skip launch + install; use an already-running sk-test-* VM. Useful for
+  re-running just the harness after an install succeeded.
 #>
 [CmdletBinding()]
 param(
     [string[]] $Distros = @('ubuntu22','ubuntu24','debian12'),
     [string]   $Only,
     [switch]   $Keep,
+    [string]   $ReuseVm,
     [int]      $Cpus = 2,
     [int]      $MemoryGB = 4,
     [int]      $DiskGB = 15
 )
 
-$ErrorActionPreference = 'Stop'
+# NB: keep ErrorActionPreference at Continue. Multipass writes harmless
+# warnings to stderr (e.g. "cannot set permissions" when transferring to
+# NTFS) and 'Stop' turns those into fatal script errors.
+$ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
-# --- distro -> multipass image map ---------------------------------------
 $ImageMap = @{
     'ubuntu22' = '22.04'
     'ubuntu24' = '24.04'
-    'debian12' = 'daily:debian12'  # not always available; fallback to 22.04 if launch fails
+    'debian12' = 'daily:debian12'
 }
 
 if ($Only) {
     $requested = $Only -split ','
     $Distros = $Distros | Where-Object { $_ -in $requested }
 }
-if (-not $Distros) {
-    Write-Error "No distros selected."
-    exit 2
-}
 
-# --- paths ---------------------------------------------------------------
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
 $RunId    = Get-Date -Format 'yyyyMMdd-HHmmss'
 $OutDir   = Join-Path $PSScriptRoot "output\$RunId"
 $null     = New-Item -ItemType Directory -Force -Path $OutDir
 
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " ServerKit E2E Test - run $RunId" -ForegroundColor Cyan
-Write-Host " Repo:    $RepoRoot" -ForegroundColor Cyan
-Write-Host " Distros: $($Distros -join ', ')" -ForegroundColor Cyan
-Write-Host " Output:  $OutDir" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-
-# --- prerequisites -------------------------------------------------------
-if (-not (Get-Command multipass -ErrorAction SilentlyContinue)) {
-    Write-Host ""
-    Write-Host "Multipass is not installed." -ForegroundColor Red
-    Write-Host "Install from: https://multipass.run/download/windows"
-    Write-Host "Or via winget: winget install Canonical.Multipass"
+# --- locate multipass ----------------------------------------------------
+$MpExe = $null
+$candidates = @(
+    'C:\Program Files\Multipass\bin\multipass.exe',
+    "$env:LOCALAPPDATA\Programs\Multipass\bin\multipass.exe"
+)
+foreach ($c in $candidates) { if (Test-Path $c) { $MpExe = $c; break } }
+if (-not $MpExe) {
+    $MpExe = (Get-Command multipass -ErrorAction SilentlyContinue).Source
+}
+if (-not $MpExe) {
+    Write-Host "Multipass not found. Install via: winget install Canonical.Multipass" -ForegroundColor Red
     exit 2
 }
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Warning "python not on PATH - report.py won't run automatically; will print raw paths."
+
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host " ServerKit E2E Test - run $RunId" -ForegroundColor Cyan
+Write-Host " Multipass: $MpExe" -ForegroundColor Cyan
+Write-Host " Distros:   $($Distros -join ', ')" -ForegroundColor Cyan
+Write-Host " Output:    $OutDir" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+
+# NB: 'mp' is a built-in PS alias for Move-ItemProperty, so we must NOT
+# define a helper function named Mp. Use $MpExe directly everywhere.
+
+function Test-VmInstall {
+    param([string]$Vm, [string]$VmOut, [string]$Tarball, [string]$VmInstallScript, [string]$HarnessDir)
+
+    New-Item -ItemType Directory -Force -Path $VmOut | Out-Null
+    $statusFile = Join-Path $VmOut 'install-status'
+
+    Write-Host "  [$Vm] transferring source ($([math]::Round((Get-Item $Tarball).Length/1MB,1)) MB)..." -ForegroundColor DarkCyan
+    & $MpExe transfer $Tarball "${Vm}:/tmp/serverkit-src.tar.gz" 2>&1 | Out-Null
+    & $MpExe transfer $VmInstallScript "${Vm}:/tmp/vm-install.sh" 2>&1 | Out-Null
+    & $MpExe exec $Vm -- sudo mkdir -p /opt/serverkit-src 2>&1 | Out-Null
+    & $MpExe exec $Vm -- sudo tar -xzf /tmp/serverkit-src.tar.gz -C /opt/serverkit-src 2>&1 | Out-Null
+    & $MpExe exec $Vm -- sudo chmod +x /tmp/vm-install.sh 2>&1 | Out-Null
+
+    Write-Host "  [$Vm] running install (this is the long part)..." -ForegroundColor DarkCyan
+    # NB: multipass exec's stdout pipe can hang on Windows when piped through
+    # PS. Redirect everything to a file on the VM and only check exit code.
+    & $MpExe exec $Vm -- sh -c "sudo bash /tmp/vm-install.sh > /tmp/vm-install-stdout.log 2>&1; rc=`$?; echo EXIT_RC=`$rc; exit `$rc" `
+        | Out-File (Join-Path $VmOut 'install.log') -Encoding utf8
+    $installRC = $LASTEXITCODE
+
+    # Capture canonical logs + status
+    & $MpExe transfer "${Vm}:/var/log/serverkit-test-install.log" "$VmOut\vm-install.log" 2>&1 | Out-Null
+    & $MpExe transfer "${Vm}:/tmp/serverkit-install-status" $statusFile 2>&1 | Out-Null
+    if (-not (Test-Path $statusFile) -or (Get-Content $statusFile -Raw -ErrorAction SilentlyContinue).Trim() -eq '') {
+        $fallback = if ($installRC -eq 0) { 'OK' } else { 'FAIL' }
+        Set-Content -Path $statusFile -Value $fallback -Encoding ascii
+    }
+    & $MpExe exec $Vm -- sudo journalctl -u serverkit --no-pager -n 500 2>&1 `
+        | Out-File (Join-Path $VmOut 'journalctl.log') -Encoding utf8
+
+    $status = (Get-Content $statusFile -Raw).Trim()
+    Write-Host "  [$Vm] install status: $status" -ForegroundColor $(if ($status -eq 'OK') { 'Green' } else { 'Red' })
+
+    if ($status -ne 'OK') { return $status }
+
+    Write-Host "  [$Vm] running pytest harness..." -ForegroundColor DarkCyan
+    & $MpExe exec $Vm -- sudo mkdir -p /opt/serverkit-test 2>&1 | Out-Null
+    & $MpExe exec $Vm -- sudo chown ubuntu:ubuntu /opt/serverkit-test 2>&1 | Out-Null
+    Get-ChildItem $HarnessDir -File | ForEach-Object {
+        & $MpExe transfer $_.FullName "${Vm}:/opt/serverkit-test/$($_.Name)" 2>&1 | Out-Null
+    }
+    & $MpExe exec $Vm -- sudo /opt/serverkit/venv/bin/pip install -r /opt/serverkit-test/requirements.txt 2>&1 `
+        | Out-File (Join-Path $VmOut 'harness-deps.log') -Encoding utf8
+    & $MpExe exec $Vm -- sh -c "sudo /opt/serverkit/venv/bin/python -m pytest /opt/serverkit-test --json-report --json-report-file=/opt/serverkit-test/pytest-report.json -v > /tmp/pytest-stdout.log 2>&1; rc=`$?; echo EXIT_RC=`$rc; exit `$rc" `
+        | Out-File (Join-Path $VmOut 'pytest.log') -Encoding utf8
+    & $MpExe transfer "${Vm}:/tmp/pytest-stdout.log" (Join-Path $VmOut 'pytest-stdout.log') 2>&1 | Out-Null
+    & $MpExe transfer "${Vm}:/opt/serverkit-test/pytest-report.json" (Join-Path $VmOut 'pytest-report.json') 2>&1 | Out-Null
+
+    return $status
 }
 
-# --- build source tarball once -------------------------------------------
+# --- pack source --------------------------------------------------------
 $Tarball = Join-Path $OutDir 'serverkit-src.tar.gz'
 Write-Host "`n[1/4] Packing local working tree -> $Tarball" -ForegroundColor Yellow
-
-# Use tar (Windows 10+ has bsdtar). Exclude heavy/irrelevant dirs.
-$excludes = @(
-    '--exclude=./.git',
-    '--exclude=./backend/venv',
-    '--exclude=./backend/.venv',
-    '--exclude=./backend/.venv-wsl',
-    '--exclude=./backend/instance',
-    '--exclude=./frontend/node_modules',
-    '--exclude=./frontend/dist',
-    '--exclude=./scripts/test/output'
-)
 Push-Location $RepoRoot
 try {
-    & tar -czf $Tarball @excludes -C $RepoRoot .
+    & tar --exclude='.git' `
+          --exclude='venv' `
+          --exclude='.venv' `
+          --exclude='.venv-wsl' `
+          --exclude='node_modules' `
+          --exclude='dist' `
+          --exclude='__pycache__' `
+          --exclude='instance' `
+          --exclude='target' `
+          --exclude='build' `
+          --exclude='*.exe' `
+          --exclude='*.msi' `
+          --exclude='scripts/test/output' `
+          -czf $Tarball -C $RepoRoot .
     if ($LASTEXITCODE -ne 0) { throw "tar failed (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
 }
-$tarSize = (Get-Item $Tarball).Length / 1MB
-Write-Host ("    Tarball: {0:N1} MB" -f $tarSize)
+Write-Host ("    Tarball: {0:N1} MB" -f ((Get-Item $Tarball).Length / 1MB))
 
-# --- launch VMs in parallel ---------------------------------------------
-Write-Host "`n[2/4] Launching $($Distros.Count) VM(s) in parallel..." -ForegroundColor Yellow
-
-$cloudInit = Join-Path $PSScriptRoot 'cloud-init\base.yaml'
-$vmInstall = Join-Path $PSScriptRoot 'vm-install.sh'
-
-$jobs = foreach ($d in $Distros) {
-    $vmName = "sk-test-$d-$RunId"
-    $image  = $ImageMap[$d]
-    if (-not $image) { Write-Warning "Unknown distro $d, skipping"; continue }
-
-    Start-Job -Name $vmName -ArgumentList $vmName,$image,$cloudInit,$Cpus,$MemoryGB,$DiskGB -ScriptBlock {
-        param($name,$image,$cloudInit,$cpu,$mem,$disk)
-        $log = @()
-        $log += "Launching $name (image=$image, cpu=$cpu, mem=${mem}G, disk=${disk}G)"
-        & multipass launch $image `
-            --name $name `
-            --cpus $cpu `
-            --memory "${mem}G" `
-            --disk "${disk}G" `
-            --cloud-init $cloudInit 2>&1 | ForEach-Object { $log += $_ }
-        @{ Name=$name; Image=$image; RC=$LASTEXITCODE; Log=$log }
-    }
-}
-
-$launchResults = $jobs | Wait-Job | Receive-Job
-$jobs | Remove-Job
-
+# --- main loop ----------------------------------------------------------
+$results = @()
 $liveVMs = @()
-foreach ($r in $launchResults) {
-    if ($r.RC -eq 0) {
-        Write-Host "  [OK] $($r.Name) launched" -ForegroundColor Green
-        $liveVMs += $r.Name
-    } else {
-        Write-Host "  [FAIL] $($r.Name) failed to launch (rc=$($r.RC))" -ForegroundColor Red
-        $r.Log | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-    }
-}
-
-if (-not $liveVMs) {
-    Write-Error "No VMs launched successfully."
-    exit 1
-}
-
-# --- per-VM: transfer source + run installer + harness in parallel ------
-Write-Host "`n[3/4] Installing + testing on $($liveVMs.Count) VM(s) in parallel..." -ForegroundColor Yellow
-Write-Host "    (This typically takes 20-60 min per VM. Go make coffee.)" -ForegroundColor DarkGray
-
+$vmInstallScript = Join-Path $PSScriptRoot 'vm-install.sh'
+$cloudInit = Join-Path $PSScriptRoot 'cloud-init\base.yaml'
 $harnessDir = Join-Path $PSScriptRoot 'harness'
 
-$testJobs = foreach ($vm in $liveVMs) {
-    Start-Job -Name "test-$vm" -ArgumentList $vm,$Tarball,$vmInstall,$harnessDir,$OutDir -ScriptBlock {
-        param($vm,$tarball,$vmInstall,$harnessDir,$outDir)
+if ($ReuseVm) {
+    Write-Host "`n[2-3/4] Reusing VM: $ReuseVm" -ForegroundColor Yellow
+    $vmOut = Join-Path $OutDir $ReuseVm
+    $status = Test-VmInstall -Vm $ReuseVm -VmOut $vmOut -Tarball $Tarball `
+                              -VmInstallScript $vmInstallScript -HarnessDir $harnessDir
+    $results += @{ Name = $ReuseVm; Status = $status }
+    $liveVMs += $ReuseVm
+} else {
+    Write-Host "`n[2/4] Launching + testing $($Distros.Count) VM(s) sequentially..." -ForegroundColor Yellow
+    foreach ($d in $Distros) {
+        $vmName = "sk-test-$d-$RunId"
+        $image = $ImageMap[$d]
+        if (-not $image) { Write-Warning "Unknown distro $d, skipping"; continue }
 
-        $vmOut = Join-Path $outDir $vm
-        New-Item -ItemType Directory -Force -Path $vmOut | Out-Null
-        $installLog = Join-Path $vmOut 'install.log'
-        $statusFile = Join-Path $vmOut 'install-status'
-
-        function Mp { & multipass @args 2>&1 }
-
-        # 1. Transfer tarball + vm-install.sh
-        Mp transfer $tarball "${vm}:/tmp/serverkit-src.tar.gz" | Out-Null
-        Mp transfer $vmInstall "${vm}:/tmp/vm-install.sh"      | Out-Null
-
-        # 2. Extract on VM
-        Mp exec $vm -- sudo mkdir -p /opt/serverkit-src | Out-Null
-        Mp exec $vm -- sudo tar -xzf /tmp/serverkit-src.tar.gz -C /opt/serverkit-src | Out-Null
-        Mp exec $vm -- sudo chmod +x /tmp/vm-install.sh | Out-Null
-
-        # 3. Run install (long)
-        $installOut = Mp exec $vm -- sudo bash /tmp/vm-install.sh
-        $installRC  = $LASTEXITCODE
-        $installOut | Out-File -FilePath $installLog -Encoding utf8
-
-        # Pull the canonical install log + status from VM
-        Mp transfer "${vm}:/var/log/serverkit-test-install.log" "$vmOut\vm-install.log" 2>&1 | Out-Null
-        Mp transfer "${vm}:/tmp/serverkit-install-status"        $statusFile             2>&1 | Out-Null
-        if (-not (Test-Path $statusFile)) {
-            $fallback = if ($installRC -eq 0) { 'OK' } else { 'FAIL' }
-            $fallback | Out-File $statusFile -Encoding ascii
+        Write-Host "`n--- $d ---" -ForegroundColor Yellow
+        Write-Host "  Launching $vmName from image $image..." -ForegroundColor DarkCyan
+        & $MpExe launch $image --name $vmName --cpus $Cpus --memory "${MemoryGB}G" --disk "${DiskGB}G" --cloud-init $cloudInit
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [FAIL] $vmName launch failed" -ForegroundColor Red
+            $results += @{ Name = $vmName; Status = 'LAUNCH_FAILED' }
+            continue
         }
+        Write-Host "  [OK] $vmName launched" -ForegroundColor Green
+        $liveVMs += $vmName
 
-        # 4. Capture journalctl for backend regardless of install outcome
-        Mp exec $vm -- sudo journalctl -u serverkit --no-pager -n 500 2>$null `
-            | Out-File (Join-Path $vmOut 'journalctl.log') -Encoding utf8
-
-        # 5. If install ok, copy harness and run pytest
-        $statusContent = (Get-Content $statusFile -Raw).Trim()
-        if ($statusContent -eq 'OK') {
-            # Push harness
-            Mp exec $vm -- sudo mkdir -p /opt/serverkit-test | Out-Null
-            Mp exec $vm -- sudo chown ubuntu:ubuntu /opt/serverkit-test 2>$null | Out-Null
-            Get-ChildItem $harnessDir -File | ForEach-Object {
-                Mp transfer $_.FullName "${vm}:/opt/serverkit-test/$($_.Name)" | Out-Null
-            }
-            # Install pytest in the panel's venv (already has python)
-            Mp exec $vm -- sudo /opt/serverkit/venv/bin/pip install -r /opt/serverkit-test/requirements.txt 2>&1 `
-                | Out-File (Join-Path $vmOut 'harness-deps.log') -Encoding utf8
-
-            $reportJson = '/opt/serverkit-test/pytest-report.json'
-            Mp exec $vm -- sudo /opt/serverkit/venv/bin/python -m pytest /opt/serverkit-test `
-                --json-report --json-report-file=$reportJson -v 2>&1 `
-                | Out-File (Join-Path $vmOut 'pytest.log') -Encoding utf8
-            Mp transfer "${vm}:$reportJson" (Join-Path $vmOut 'pytest-report.json') 2>&1 | Out-Null
-        }
-
-        @{ Name=$vm; Status=$statusContent }
+        $vmOut = Join-Path $OutDir $vmName
+        $status = Test-VmInstall -Vm $vmName -VmOut $vmOut -Tarball $Tarball `
+                                  -VmInstallScript $vmInstallScript -HarnessDir $harnessDir
+        $results += @{ Name = $vmName; Status = $status }
     }
 }
 
-$results = $testJobs | Wait-Job | Receive-Job
-$testJobs | Remove-Job
-
-foreach ($r in $results) {
-    $color = if ($r.Status -eq 'OK') { 'Green' } else { 'Red' }
-    Write-Host "  $($r.Name): install=$($r.Status)" -ForegroundColor $color
-}
-
-# --- generate report -----------------------------------------------------
+# --- report -------------------------------------------------------------
 Write-Host "`n[4/4] Generating HTML report..." -ForegroundColor Yellow
 $reportHtml = $null
 $reportPy = Join-Path $PSScriptRoot 'report.py'
@@ -242,31 +206,29 @@ if (Get-Command python -ErrorAction SilentlyContinue) {
     $reportHtml = & python $reportPy $OutDir
     Write-Host "    Report: $reportHtml" -ForegroundColor Green
 } else {
-    Write-Host "    Skipped (python not on PATH). Raw output in: $OutDir" -ForegroundColor Yellow
+    Write-Host "    python not on PATH. Raw output: $OutDir" -ForegroundColor Yellow
 }
 
-# --- teardown ------------------------------------------------------------
-if ($Keep) {
-    Write-Host "`n-Keep set: VMs left running. Connect with: multipass shell <name>" -ForegroundColor Yellow
+# --- teardown -----------------------------------------------------------
+if ($Keep -or $ReuseVm) {
+    Write-Host "`nVMs left running:" -ForegroundColor Yellow
     $liveVMs | ForEach-Object { Write-Host "  - $_" }
 } else {
     Write-Host "`nTearing down VMs..." -ForegroundColor Yellow
-    foreach ($vm in $liveVMs) {
-        & multipass delete $vm 2>&1 | Out-Null
-    }
-    & multipass purge 2>&1 | Out-Null
+    foreach ($vm in $liveVMs) { & $MpExe delete $vm 2>&1 | Out-Null }
+    & $MpExe purge 2>&1 | Out-Null
 }
 
-# --- final summary -------------------------------------------------------
+# --- summary ------------------------------------------------------------
 $failed = @($results | Where-Object { $_.Status -ne 'OK' })
 Write-Host ""
-if ($failed.Count -eq 0) {
-    Write-Host "ALL GREEN - $($liveVMs.Count) VM(s) installed and passed tests." -ForegroundColor Green
+if ($failed.Count -eq 0 -and $results.Count -gt 0) {
+    Write-Host "ALL GREEN - $($results.Count) VM(s) passed." -ForegroundColor Green
     if ($reportHtml) { Start-Process $reportHtml }
     exit 0
 } else {
     Write-Host "FAILURES on $($failed.Count) VM(s):" -ForegroundColor Red
-    $failed | ForEach-Object { Write-Host "  - $($_.Name)" -ForegroundColor Red }
+    $failed | ForEach-Object { Write-Host "  - $($_.Name): $($_.Status)" -ForegroundColor Red }
     if ($reportHtml) { Start-Process $reportHtml }
     exit 1
 }

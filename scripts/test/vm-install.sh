@@ -56,8 +56,9 @@ if [ -d "$INSTALL_DIR/venv" ]; then
     || log "WARN: pip install had non-zero exit"
 fi
 
-# Rebuild frontend
+# Reinstall + rebuild frontend (package.json may have changed in the overlay)
 cd "$INSTALL_DIR/frontend" || fail "cd frontend"
+npm ci --prefer-offline >> "$LOG" 2>&1 || fail "npm ci failed"
 NODE_OPTIONS="--max-old-space-size=1024" npm run build >> "$LOG" 2>&1 \
   || fail "frontend build failed"
 

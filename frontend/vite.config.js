@@ -27,6 +27,27 @@ export default defineConfig(({ mode }) => {
                 // to plugins as long as the named exports stay stable.
                 'serverkit-sdk': fileURLToPath(new URL('./src/plugins/sdk/index.js', import.meta.url)),
             },
+            // Force every `react` / `react-dom` / `react-router-dom`
+            // import (host code AND plugin code loaded via
+            // import.meta.glob) to resolve to one copy. Without this
+            // Vite can hand plugins a different React instance if dep
+            // optimization runs mid-session, producing the
+            // "Invalid hook call / ReactCurrentDispatcher is null"
+            // crash inside the contributions hook.
+            //
+            // Do NOT add resolve.alias entries for these — aliasing to
+            // the package directory bypasses Vite's optimizeDeps and
+            // serves raw ESM, which (combined with pre-bundled
+            // react-dom) recreates the same two-copies problem from the
+            // other direction.
+            dedupe: ['react', 'react-dom', 'react-router-dom'],
+        },
+        optimizeDeps: {
+            // Pre-bundle the renderer at server start instead of
+            // discovering it lazily. Lazy discovery is what triggers the
+            // mid-session re-bundle that strands the open browser tab
+            // on a stale React URL.
+            include: ['react', 'react-dom', 'react-router-dom'],
         },
         server: {
             port: frontendPort,

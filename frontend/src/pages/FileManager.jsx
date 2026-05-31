@@ -32,10 +32,18 @@ const REMOTE_SUPPORTED = new Set(['browse', 'read', 'write']);
 
 function deriveParent(path) {
     if (!path || path === '/' || path === '') return null;
+    // A Windows drive root ("C:/" or "C:") sits directly under the agent's
+    // drive list, which the agent serves for the "/" path. Remote agents
+    // emit forward-slash paths on the wire, so we only ever see "/" here.
+    if (/^[A-Za-z]:\/?$/.test(path)) return '/';
     const trimmed = path.replace(/\/+$/, '');
     const idx = trimmed.lastIndexOf('/');
     if (idx <= 0) return '/';
-    return trimmed.slice(0, idx);
+    const parent = trimmed.slice(0, idx);
+    // Keep a bare drive letter as a drive root ("C:" -> "C:/") so navigating
+    // up doesn't hit Windows' "current directory on C:" semantics.
+    if (/^[A-Za-z]:$/.test(parent)) return parent + '/';
+    return parent;
 }
 
 function unwrapAgentData(res) {
@@ -618,6 +626,20 @@ function FileManager() {
     // ─── derived ─────────────────────────────────────────
     const breadcrumbs = useMemo(() => {
         const parts = currentPath.split('/').filter(Boolean);
+        // Windows drive-rooted path ("C:/Users/Juan"): the first segment is
+        // the drive and the root crumb is the agent's drive list. Building
+        // crumbs with a leading "/" (the POSIX branch below) would produce
+        // bogus "/C:" paths that the agent can't resolve.
+        if (/^[A-Za-z]:$/.test(parts[0] || '')) {
+            const crumbs = [{ name: 'Drives', path: '/' }];
+            let acc = parts[0];
+            crumbs.push({ name: parts[0], path: acc + '/' });
+            for (let i = 1; i < parts.length; i++) {
+                acc += '/' + parts[i];
+                crumbs.push({ name: parts[i], path: acc });
+            }
+            return crumbs;
+        }
         const crumbs = [{ name: '/', path: '/' }];
         let acc = '';
         parts.forEach((p) => { acc += '/' + p; crumbs.push({ name: p, path: acc }); });

@@ -115,19 +115,43 @@ func (a *Agent) handleFileList(ctx context.Context, params json.RawMessage) (int
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if p.Path == "" {
-		p.Path = "/"
+
+	// The panel speaks forward-slash paths on the wire regardless of the
+	// agent's OS. Convert to the native separator before any filesystem
+	// call so os.ReadDir and the allowlist validation behave on Windows.
+	reqPath := filepath.FromSlash(p.Path)
+
+	// An empty (or bare-root) request has no single filesystem root on
+	// Windows. Enumerate the logical drives as virtual directory entries
+	// so the panel's file browser can pick a drive instead of silently
+	// listing only the agent process's working drive. On non-Windows
+	// enumerateDriveRoots() returns nil and we fall through to "/".
+	if reqPath == "" || reqPath == "/" || reqPath == `\` {
+		if drives := enumerateDriveRoots(); drives != nil {
+			return map[string]interface{}{
+				"path":  "/",
+				"files": drives,
+			}, nil
+		}
+		reqPath = "/"
 	}
-	if err := a.validateFileAccess(p.Path); err != nil {
+
+	if err := a.validateFileAccess(reqPath); err != nil {
 		return nil, err
 	}
 
-	entries, err := os.ReadDir(p.Path)
+	entries, err := os.ReadDir(reqPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list directory: %w", err)
 	}
 
-	var files []map[string]interface{}
+	// Each entry carries an absolute, forward-slash path. The frontend
+	// keys/selects/navigates on entry.path, and the agent is the only
+	// party that knows the host separator, so it emits the canonical
+	// path. (It was previously omitted, which broke remote browse
+	// navigation on every OS — Windows additionally needs the separator
+	// normalized.)
+	files := make([]map[string]interface{}, 0, len(entries))
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
@@ -135,6 +159,7 @@ func (a *Agent) handleFileList(ctx context.Context, params json.RawMessage) (int
 		}
 		files = append(files, map[string]interface{}{
 			"name":     entry.Name(),
+			"path":     filepath.ToSlash(filepath.Join(reqPath, entry.Name())),
 			"is_dir":   entry.IsDir(),
 			"size":     info.Size(),
 			"modified": info.ModTime().UnixMilli(),
@@ -142,7 +167,7 @@ func (a *Agent) handleFileList(ctx context.Context, params json.RawMessage) (int
 	}
 
 	return map[string]interface{}{
-		"path":  p.Path,
+		"path":  filepath.ToSlash(reqPath),
 		"files": files,
 	}, nil
 }

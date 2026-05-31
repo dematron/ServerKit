@@ -208,6 +208,23 @@ class Server(db.Model):
             print(f"Error decrypting API secret: {e}")
             return None
 
+    def get_pending_api_secret(self):
+        """Decrypt and return the pending API secret used during key rotation.
+
+        Mirrors get_api_secret() for the api_secret_pending_encrypted column so
+        an agent that authenticates with the pending key during a rotation
+        window can have its signature verified against the right secret.
+        Returns None when there is no pending secret or it can't be decrypted.
+        """
+        if not self.api_secret_pending_encrypted:
+            return None
+        try:
+            from app.utils.crypto import decrypt_secret
+            return decrypt_secret(self.api_secret_pending_encrypted)
+        except Exception as e:
+            print(f"Error decrypting pending API secret: {e}")
+            return None
+
     def start_key_rotation(self):
         """
         Start API key rotation process.

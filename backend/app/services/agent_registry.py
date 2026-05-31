@@ -90,6 +90,11 @@ class AgentRegistry:
     _instance = None
     _lock = threading.Lock()
 
+    # How long an agent can go without a heartbeat before the reaper
+    # considers it dead (3 missed 30s heartbeats). Shared between the scan
+    # and the re-validation done just before eviction so the two can't drift.
+    HEARTBEAT_TIMEOUT = timedelta(seconds=90)
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
@@ -156,64 +161,90 @@ class AgentRegistry:
         while not self._stop_heartbeat.is_set():
             try:
                 now = datetime.utcnow()
-                timeout = timedelta(seconds=90)  # 3 missed heartbeats
+                timeout = self.HEARTBEAT_TIMEOUT
 
+                # Snapshot (server_id, socket_id) for stale agents. The
+                # socket_id is part of the snapshot so the eviction step can
+                # tell whether the agent it's about to drop is still the same
+                # connection we flagged, or a fresh reconnect that landed
+                # after we released the lock.
                 with self._lock:
-                    dead_agents = []
-                    for server_id, agent in self._agents.items():
-                        if now - agent.last_heartbeat > timeout:
-                            dead_agents.append(server_id)
+                    dead_agents = [
+                        (server_id, agent.socket_id)
+                        for server_id, agent in self._agents.items()
+                        if now - agent.last_heartbeat > timeout
+                    ]
 
                 # Wrap DB access in an app context — the timeout
                 # handler queries Server / AgentSession and commits.
                 # In a thread there's no implicit context.
                 if dead_agents and self._app is not None:
                     with self._app.app_context():
-                        for server_id in dead_agents:
-                            self._handle_agent_timeout(server_id)
+                        for server_id, socket_id in dead_agents:
+                            self._handle_agent_timeout(server_id, socket_id)
                 elif dead_agents:
-                    # No app captured (test environment); just remove
-                    # from in-memory registry without touching DB.
-                    for server_id in dead_agents:
+                    # No app captured (test environment); just remove from the
+                    # in-memory registry without touching DB — but still
+                    # re-validate so a reconnect isn't clobbered.
+                    now2 = datetime.utcnow()
+                    for server_id, socket_id in dead_agents:
                         with self._lock:
-                            agent = self._agents.pop(server_id, None)
-                            if agent:
-                                self._socket_to_server.pop(agent.socket_id, None)
+                            agent = self._agents.get(server_id)
+                            if (agent and agent.socket_id == socket_id
+                                    and now2 - agent.last_heartbeat > timeout):
+                                self._agents.pop(server_id, None)
+                                self._socket_to_server.pop(socket_id, None)
 
             except Exception as e:
                 logger.error("Error in heartbeat checker: %s", e)
 
             self._stop_heartbeat.wait(30)  # Check every 30 seconds
 
-    def _handle_agent_timeout(self, server_id: str):
-        """Handle agent that hasn't sent heartbeats"""
+    def _handle_agent_timeout(self, server_id: str, socket_id: str):
+        """Handle agent that hasn't sent heartbeats.
+
+        Re-validates under the lock before evicting. The reaper snapshots
+        stale agents in _check_heartbeats and releases the lock before calling
+        this, so an agent can reconnect in between — register_agent installs a
+        fresh ConnectedAgent (new socket_id) and marks the server online.
+        Without re-checking, we'd pop that healthy new connection and flip the
+        server offline right after it reconnected — the reconnection-stability
+        bug. Only evict when the entry still refers to the same socket we
+        flagged AND it is still stale.
+        """
         with self._lock:
-            agent = self._agents.pop(server_id, None)
-            if agent:
-                self._socket_to_server.pop(agent.socket_id, None)
+            agent = self._agents.get(server_id)
+            if not agent or agent.socket_id != socket_id:
+                # Already gone, or replaced by a reconnect — leave it alone.
+                return
+            if datetime.utcnow() - agent.last_heartbeat <= self.HEARTBEAT_TIMEOUT:
+                # A heartbeat landed after the snapshot — no longer stale.
+                return
+            self._agents.pop(server_id, None)
+            self._socket_to_server.pop(socket_id, None)
 
-        if agent:
-            # Update server status in database
-            try:
-                server = Server.query.get(server_id)
-                if server:
-                    server.status = 'offline'
-                    server.last_error = 'Agent heartbeat timeout'
-                    db.session.commit()
+        # Update server status in database
+        try:
+            server = Server.query.get(server_id)
+            if server:
+                server.status = 'offline'
+                server.last_error = 'Agent heartbeat timeout'
+                db.session.commit()
 
-                # Mark session as inactive
-                session = AgentSession.query.filter_by(
-                    server_id=server_id,
-                    socket_id=agent.socket_id,
-                    is_active=True
-                ).first()
-                if session:
-                    session.is_active = False
-                    session.disconnected_at = datetime.utcnow()
-                    session.disconnect_reason = 'heartbeat_timeout'
-                    db.session.commit()
-            except Exception as e:
-                logger.exception("Error updating server status")
+            # Mark session as inactive
+            session = AgentSession.query.filter_by(
+                server_id=server_id,
+                socket_id=socket_id,
+                is_active=True
+            ).first()
+            if session:
+                session.is_active = False
+                session.disconnected_at = datetime.utcnow()
+                session.disconnect_reason = 'heartbeat_timeout'
+                db.session.commit()
+        except Exception as e:
+            logger.exception("Error updating server status")
+            db.session.rollback()
 
     # ==================== Connection Management ====================
 
@@ -702,26 +733,45 @@ class AgentRegistry:
                 anomaly_detection_service.track_replay_attack(server.id, ip_address, nonce)
                 return None
 
-        # Verify HMAC signature if we have the encrypted secret
-        api_secret = server.get_api_secret()
-        if api_secret:
-            # Construct the message that was signed
-            # Format: agent_id:timestamp:nonce (nonce is optional for backward compatibility)
-            if nonce:
-                message = f"{agent_id}:{timestamp}:{nonce}"
-            else:
-                message = f"{agent_id}:{timestamp}"
+        # Verify HMAC signature. This is MANDATORY — a server whose shared
+        # secret is missing or no longer decryptable must FAIL authentication,
+        # never fall through to "authenticated". Skipping it would reduce agent
+        # auth to agent_id + api_key_prefix, both of which are non-secret,
+        # observable values (an attacker who has seen one connect could forge
+        # auth). Select the secret matching whichever prefix matched: the
+        # pending secret during a key-rotation window, otherwise the active
+        # one. get_*_api_secret() returns None on missing/undecryptable
+        # ciphertext, which fails closed below.
+        if pending_prefix_matches and not prefix_matches:
+            api_secret = server.get_pending_api_secret()
+        else:
+            api_secret = server.get_api_secret()
 
-            # Calculate expected signature
-            expected_signature = hmac.new(
-                api_secret.encode(),
-                message.encode(),
-                hashlib.sha256
-            ).hexdigest()
+        if not api_secret:
+            logger.error(
+                "Agent auth rejected for server %s: no decryptable API secret "
+                "on file (re-registration or re-pairing required)", server.id
+            )
+            anomaly_detection_service.track_auth_attempt(server.id, False, ip_address)
+            return None
 
-            if not hmac.compare_digest(signature, expected_signature):
-                anomaly_detection_service.track_auth_attempt(server.id, False, ip_address)
-                return None
+        # Construct the message that was signed.
+        # Format: agent_id:timestamp:nonce (nonce omitted only by legacy agents)
+        if nonce:
+            message = f"{agent_id}:{timestamp}:{nonce}"
+        else:
+            message = f"{agent_id}:{timestamp}"
+
+        # Calculate expected signature
+        expected_signature = hmac.new(
+            api_secret.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature, expected_signature):
+            anomaly_detection_service.track_auth_attempt(server.id, False, ip_address)
+            return None
 
         # Authentication successful
         if ip_address:

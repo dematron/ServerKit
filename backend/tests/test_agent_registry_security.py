@@ -1,0 +1,172 @@
+"""
+Regression tests for two agent_registry defects found in the deep-dive review:
+
+1. verify_agent_auth() must FAIL CLOSED when no decryptable API secret is on
+   file. Previously the HMAC check was wrapped in `if api_secret:`, so a server
+   with a missing/undecryptable secret authenticated on agent_id + api_key_prefix
+   alone (both non-secret, observable values).
+
+2. The heartbeat reaper must NOT evict an agent that reconnected between the
+   stale-scan snapshot and eviction. _check_heartbeats snapshots under the lock
+   then releases it; _handle_agent_timeout used to pop unconditionally, so a
+   fresh reconnect (new socket_id) got clobbered and flipped offline.
+"""
+import time
+import hmac
+import hashlib
+from datetime import datetime, timedelta
+
+import pytest
+
+from app import db as _db
+from app.models.server import Server
+from app.services.agent_registry import agent_registry
+
+
+@pytest.fixture(autouse=True)
+def _silence_side_effects(monkeypatch):
+    """No-op the anomaly/nonce side-effects so these tests exercise only the
+    auth decision logic, not unrelated subsystems."""
+    import app.services.anomaly_detection_service as ad
+    monkeypatch.setattr(ad.anomaly_detection_service, "track_auth_attempt",
+                        lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(ad.anomaly_detection_service, "track_replay_attack",
+                        lambda *a, **k: None, raising=False)
+
+
+# --------------------------------------------------------------------------
+# Bug #1 — mandatory signature verification
+# --------------------------------------------------------------------------
+
+def _signed(agent_id, secret, ts, nonce=None):
+    msg = f"{agent_id}:{ts}:{nonce}" if nonce else f"{agent_id}:{ts}"
+    return hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()
+
+
+def test_auth_fails_closed_when_no_decryptable_secret(app, monkeypatch):
+    """The critical fix: no secret on file => auth rejected, never bypassed."""
+    monkeypatch.setattr(Server, "get_api_secret", lambda self: None)
+    monkeypatch.setattr(Server, "get_pending_api_secret", lambda self: None)
+
+    s = Server(name="t", agent_id="agent-nosecret", api_key_prefix="sk_test12345")
+    _db.session.add(s)
+    _db.session.commit()
+
+    ts = int(time.time() * 1000)
+    # Attacker knows the (non-secret) agent_id + prefix and sends any signature.
+    result = agent_registry.verify_agent_auth(
+        agent_id="agent-nosecret",
+        api_key_prefix="sk_test12345",
+        signature="deadbeef" * 8,
+        timestamp=ts,
+        nonce=None,
+        ip_address="203.0.113.7",
+    )
+    assert result is None
+
+
+def test_auth_succeeds_with_valid_signature(app, monkeypatch):
+    secret = "shared-secret-value-123"
+    monkeypatch.setattr(Server, "get_api_secret", lambda self: secret)
+
+    s = Server(name="t", agent_id="agent-ok", api_key_prefix="sk_okokokok12")
+    _db.session.add(s)
+    _db.session.commit()
+
+    ts = int(time.time() * 1000)
+    sig = _signed("agent-ok", secret, ts)
+    result = agent_registry.verify_agent_auth(
+        agent_id="agent-ok",
+        api_key_prefix="sk_okokokok12",
+        signature=sig,
+        timestamp=ts,
+        nonce=None,
+        ip_address="203.0.113.7",
+    )
+    assert result is not None
+    assert result.agent_id == "agent-ok"
+
+
+def test_auth_fails_with_wrong_signature(app, monkeypatch):
+    monkeypatch.setattr(Server, "get_api_secret", lambda self: "the-real-secret")
+
+    s = Server(name="t", agent_id="agent-wrong", api_key_prefix="sk_wrongwrong")
+    _db.session.add(s)
+    _db.session.commit()
+
+    ts = int(time.time() * 1000)
+    bad_sig = _signed("agent-wrong", "a-different-secret", ts)
+    result = agent_registry.verify_agent_auth(
+        agent_id="agent-wrong",
+        api_key_prefix="sk_wrongwrong",
+        signature=bad_sig,
+        timestamp=ts,
+        nonce=None,
+        ip_address="203.0.113.7",
+    )
+    assert result is None
+
+
+# --------------------------------------------------------------------------
+# Bug #2 — reaper must not clobber a reconnected agent
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def clean_registry():
+    """Isolate the in-memory singleton registry per test."""
+    with agent_registry._lock:
+        agent_registry._agents.clear()
+        agent_registry._socket_to_server.clear()
+    yield
+    with agent_registry._lock:
+        agent_registry._agents.clear()
+        agent_registry._socket_to_server.clear()
+
+
+def _make_stale(server_id):
+    with agent_registry._lock:
+        agent_registry._agents[server_id].last_heartbeat = (
+            datetime.utcnow() - timedelta(seconds=120)
+        )
+
+
+def test_reaper_does_not_evict_reconnected_agent(app, clean_registry):
+    agent_registry._app = app
+
+    s = Server(name="t", agent_id="agent-recon")
+    _db.session.add(s)
+    _db.session.commit()
+    sid = s.id
+
+    # Original connection, then it goes stale.
+    agent_registry.register_agent(sid, "socket-OLD", "203.0.113.7", "1.0.0")
+    _make_stale(sid)
+
+    # Agent reconnects on a NEW socket (fresh heartbeat, server online again).
+    agent_registry.register_agent(sid, "socket-NEW", "203.0.113.7", "1.0.0")
+
+    # Reaper fires for the OLD snapshot it took before the reconnect.
+    agent_registry._handle_agent_timeout(sid, "socket-OLD")
+
+    # The fresh connection must survive and the server must stay online.
+    assert agent_registry.is_agent_connected(sid) is True
+    assert agent_registry.get_agent(sid).socket_id == "socket-NEW"
+    assert Server.query.get(sid).status != "offline"
+
+
+def test_reaper_evicts_genuinely_stale_agent(app, clean_registry):
+    agent_registry._app = app
+
+    s = Server(name="t", agent_id="agent-stale")
+    _db.session.add(s)
+    _db.session.commit()
+    sid = s.id
+
+    agent_registry.register_agent(sid, "socket-1", "203.0.113.7", "1.0.0")
+    _make_stale(sid)
+
+    # Same socket, genuinely stale -> evicted and marked offline.
+    agent_registry._handle_agent_timeout(sid, "socket-1")
+
+    assert agent_registry.is_agent_connected(sid) is False
+    assert Server.query.get(sid).status == "offline"

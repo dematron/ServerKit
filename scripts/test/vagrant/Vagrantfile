@@ -44,15 +44,30 @@ Vagrant.configure("2") do |config|
   # Bootstrap: ensure rsync + curl are present (mirrors the multipass
   # cloud-init). Best effort — different distros use different package
   # managers, so try them in order.
+  #
+  # IMPORTANT — on Rocky/RHEL, calling `dnf install` here pulls in
+  # the latest libcurl as a dep upgrade, which transitively upgrades
+  # openssl-libs from 3.0.x to 3.5.x. The box's openssh-server
+  # (openssh-server-8.7p1-34.el9) was built against the 3.0.x ABI and
+  # there is currently no matching el9 rebuild against 3.5.x in the
+  # repos. Every new sshd fork then dies with "OpenSSL version
+  # mismatch", TCP accepts then RSTs before the banner, and every
+  # subsequent `vagrant upload` / `vagrant ssh -c` from the harness
+  # fails silently. So skip dnf entirely when rsync+curl are already
+  # present (they ship preinstalled in generic/rocky9). If a future
+  # RHEL-family box drops them, we'll fail loudly here rather than
+  # silently corrupting the run downstream.
   config.vm.provision "shell", inline: <<-SHELL
     set -e
     if command -v apt-get >/dev/null 2>&1; then
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -qq && apt-get install -y -qq rsync curl
-    elif command -v dnf >/dev/null 2>&1; then
-      dnf install -y -q rsync curl
-    elif command -v yum >/dev/null 2>&1; then
-      yum install -y -q rsync curl
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+      if ! command -v rsync >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        echo "ERROR: rsync/curl missing on RHEL-family box — running dnf install"
+        echo "       would upgrade openssl and break sshd. See Vagrantfile comment."
+        exit 1
+      fi
     fi
   SHELL
 end

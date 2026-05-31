@@ -20,14 +20,62 @@ fail() { echo "[vm-install] FAIL: $*" | tee -a "$LOG"; exit 1; }
 mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 
+# Capture sshd/firewall/network state at named checkpoints so post-mortems
+# work even when install.sh leaves SSH unreachable (Rocky 9 has done this).
+# Output goes to $LOG which is later copied back to the host by the harness.
+snapshot() {
+  local label="$1"
+  {
+    echo
+    echo "===== SNAPSHOT: $label ($(date -Iseconds)) ====="
+    echo "--- systemctl status sshd ---"
+    systemctl status sshd --no-pager 2>&1 | head -30
+    echo "--- ss -tlnp (listeners) ---"
+    ss -tlnp 2>&1 | head -30
+    echo "--- firewall-cmd state ---"
+    if command -v firewall-cmd >/dev/null 2>&1; then
+      systemctl is-active firewalld 2>&1
+      firewall-cmd --state 2>&1
+      firewall-cmd --get-default-zone 2>&1
+      firewall-cmd --list-all 2>&1
+    else
+      echo "firewall-cmd not present"
+    fi
+    echo "--- iptables -L INPUT ---"
+    iptables -L INPUT -n 2>&1 | head -40 || true
+    echo "--- ip addr ---"
+    ip -4 addr 2>&1
+    echo "===== END SNAPSHOT: $label ====="
+    echo
+  } >> "$LOG" 2>&1
+}
+
+# Snapshot system state on every exit path. Snapshot only — we deliberately
+# do NOT `systemctl restart sshd` here. On Rocky 9 the running sshd is
+# linked against an older libssl than what `dnf` ends up with on disk, so
+# a restart spawns a fresh sshd that segfaults on OpenSSL version mismatch
+# and the host can't reconnect for the pytest phase. The running sshd
+# parent keeps working with its mapped-in libssl, so leaving it alone is
+# the right move.
+cleanup() {
+  local rc=$?
+  echo "[vm-install] cleanup: exit rc=$rc" >> "$LOG" 2>&1
+  snapshot "cleanup (rc=$rc)"
+  return $rc
+}
+trap cleanup EXIT
+
 [ -d "$SRC" ] || fail "source dir $SRC missing — multipass transfer broken"
 [ -f "$SRC/install.sh" ] || fail "install.sh not found in source"
+
+snapshot "pre-install"
 
 log "Step 1/4: running install.sh (this clones origin/main, installs deps)"
 # install.sh clones from GitHub — we let it, then overlay our local code.
 bash "$SRC/install.sh" >> "$LOG" 2>&1
 INSTALL_RC=$?
 log "install.sh exit=$INSTALL_RC"
+snapshot "post-install.sh"
 
 if [ ! -d "$INSTALL_DIR" ]; then
   fail "install.sh did not create $INSTALL_DIR (rc=$INSTALL_RC)"

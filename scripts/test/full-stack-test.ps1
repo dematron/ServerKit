@@ -27,10 +27,12 @@
 #>
 [CmdletBinding()]
 param(
-    # Default suite: Ubuntu LTSes via Multipass + non-Ubuntu via Vagrant
-    # + Hyper-V provider. Vagrant boxes are heavier (first launch downloads
-    # ~600 MB each), so first full run is long. -Only to subset.
-    [string[]] $Distros = @('ubuntu22','ubuntu24','debian12','fedora','rocky9'),
+    # Default suite: Ubuntu LTSes via Multipass + Debian 12 / Rocky 9
+    # via Vagrant + Hyper-V. Fedora is *not* in the default — Vagrant
+    # Cloud's generic/fedora boxes stop at fedora39 (EOL Nov 2024) and no
+    # newer pre-built Hyper-V box exists. Use `-Only fedora` to opt in
+    # once you've pinned a box you trust.
+    [string[]] $Distros = @('ubuntu22','ubuntu24','debian12','rocky9'),
     [string]   $Only,
     [switch]   $Keep,
     [string]   $ReuseVm,

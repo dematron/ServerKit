@@ -210,13 +210,13 @@ These are the features that make a user say "this is a managed platform, not a f
 
 The headline value of a managed platform, and the most net-new — but it leans on existing nginx/cache/health/metrics/notification primitives. **Estimated cluster: 4–7 days.**
 
-### #22 — Page cache with WP-aware skip rules `[L]` ❌
+### #22 — Page cache with WP-aware skip rules `[L]` ❌ — ✅ Done (Docker-correct: in-container cache-enabler plugin, NOT nginx fastcgi_cache which doesn't apply to the apache-container model)
 - **Today:** `nginx_advanced_service` can emit `proxy_cache_path`/`proxy_cache`/`proxy_cache_bypass` zones with config-test + diff, but the WP location template (`services/nginx_service.py:215-237`) has **no** cache and the WP UI has no cache controls.
 - **Do:** Add `fastcgi_cache`/`proxy_cache` to the per-site vhost with skip rules (`wp-admin`/`wp-login`/preview, auth/cart/checkout cookies, query strings) + a single-URL purge action wired to the existing `flush-cache` (#5).
 - **Reuse:** `nginx_advanced_service`, `nginx_service` WP template.
 - **Done when:** Anonymous hits are cached; logged-in/cart paths bypass; purge works.
 
-### #23 — Per-site Redis object cache `[L]` ❌
+### #23 — Per-site Redis object cache `[L]` ❌ — ✅ Done (adds a redis service to the compose stack + redis-cache plugin via wp_cli; new sites ship redis, existing sites get it injected on enable)
 - **Today:** Only a blind `wp cache flush` with nothing behind it.
 - **Do:** Add a Redis service to the compose stack (or a shared Redis DB index per env); `wp plugin install redis-cache --activate`; write `WP_REDIS_HOST`/`WP_REDIS_DATABASE` into `wp-config`; surface enable/status/flush on the site.
 - **Reuse:** `wp_cli`, `wordpress.yaml` compose template, `flush_cache`.

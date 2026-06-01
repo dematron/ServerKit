@@ -681,6 +681,144 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
         result = cls.wp_cli(path, ['db', 'optimize'])
         return result
 
+    PAGE_CACHE_PLUGIN = 'cache-enabler'
+
+    @classmethod
+    def get_page_cache_status(cls, path: str) -> Dict:
+        """Report whether the full-page cache plugin is installed/active."""
+        res = cls.wp_cli(path, ['plugin', 'get', cls.PAGE_CACHE_PLUGIN, '--field=status'])
+        status = (res.get('output') or '').strip() if res.get('success') else ''
+        return {
+            'success': True,
+            'plugin': cls.PAGE_CACHE_PLUGIN,
+            'installed': res.get('success', False),
+            'active': status == 'active',
+            'status': status,
+        }
+
+    @classmethod
+    def enable_page_cache(cls, path: str) -> Dict:
+        """Install + activate a full-page disk cache plugin with WP-aware skip rules."""
+        inst = cls.install_plugin(path, cls.PAGE_CACHE_PLUGIN, activate=True)
+        if not inst.get('success'):
+            return {'success': False, 'error': 'Failed to install page-cache plugin: ' + (inst.get('error') or '')}
+        opts = {
+            'cache_expires': 1,
+            'clear_on_upgrade': 1,
+            'excl_regexp': '/(wp-admin|wp-login|cart|checkout|my-account)/',
+            'excl_cookies': 'comment_author|wordpress_logged_in|wp-postpass|woocommerce_cart_hash|woocommerce_items_in_cart',
+        }
+        cls.wp_cli(path, ['option', 'update', cls.PAGE_CACHE_PLUGIN, json.dumps(opts), '--format=json'])
+        cls.wp_cli(path, ['rewrite', 'flush'])
+        return {'success': True, 'message': 'Page cache enabled', 'plugin': cls.PAGE_CACHE_PLUGIN}
+
+    @classmethod
+    def disable_page_cache(cls, path: str) -> Dict:
+        """Purge then deactivate the page-cache plugin."""
+        cls.purge_page_cache(path)
+        res = cls.deactivate_plugin(path, cls.PAGE_CACHE_PLUGIN)
+        if res.get('success'):
+            return {'success': True, 'message': 'Page cache disabled'}
+        return {'success': False, 'error': res.get('error') or 'Failed to disable page cache'}
+
+    @classmethod
+    def purge_page_cache(cls, path: str) -> bool:
+        """Best-effort full-page cache purge. Never raises."""
+        try:
+            res = cls.wp_cli(path, ['cache-enabler', 'clear'])
+            if res.get('success'):
+                return True
+            res = cls.wp_cli(path, ['eval', 'if (function_exists("cache_enabler_clear_complete_cache")) cache_enabler_clear_complete_cache();'])
+            return bool(res.get('success'))
+        except Exception:
+            return False
+
+    @classmethod
+    def _ensure_redis_in_stack(cls, path: str) -> Dict:
+        """Ensure the site's compose stack has a redis service, recreating the
+        stack (additive compose up -d, no downtime) if one had to be injected.
+        Idempotent — short-circuits when redis already present.
+        """
+        import yaml
+        compose_file = os.path.join(path, 'docker-compose.yml')
+        if not os.path.exists(compose_file):
+            return {'success': False, 'error': 'Not a Docker-stack site (no docker-compose.yml)'}
+        try:
+            with open(compose_file, 'r') as f:
+                compose = yaml.safe_load(f) or {}
+            services = compose.setdefault('services', {})
+            if 'redis' in services:
+                return {'success': True, 'created': False}
+            app_name = os.path.basename(path)
+            from app.models import Application
+            app = Application.query.filter_by(root_path=path).first()
+            if app:
+                app_name = app.name
+            services['redis'] = {
+                'image': 'redis:7-alpine',
+                'container_name': f'{app_name}-redis',
+                'restart': 'unless-stopped',
+            }
+            wp = services.get('wordpress')
+            if isinstance(wp, dict):
+                deps = wp.get('depends_on') or []
+                if isinstance(deps, list) and 'redis' not in deps:
+                    deps.append('redis')
+                    wp['depends_on'] = deps
+            with open(compose_file, 'w') as f:
+                yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
+            from app.services.docker_service import DockerService
+            up = DockerService.compose_up(path, detach=True)
+            if not up.get('success'):
+                return {'success': False, 'error': 'Failed to recreate stack with redis: ' + (up.get('error') or '')}
+            cls._wait_for_wp_ready(path)
+            return {'success': True, 'created': True}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    @classmethod
+    def enable_object_cache(cls, path: str) -> Dict:
+        """Enable a Redis object cache: ensure a redis container, install+activate
+        the redis-cache plugin, point WP at redis, and turn the drop-in on.
+        """
+        ensure = cls._ensure_redis_in_stack(path)
+        if not ensure.get('success'):
+            return ensure
+        actions = []
+        if ensure.get('created'):
+            actions.append('Added redis container to stack')
+        inst = cls.wp_cli(path, ['plugin', 'install', 'redis-cache', '--activate'])
+        if not inst.get('success'):
+            return {'success': False, 'error': 'Failed to install redis-cache plugin: ' + (inst.get('error') or '')}
+        actions.append('Installed redis-cache plugin')
+        cls.wp_cli(path, ['config', 'set', 'WP_REDIS_HOST', 'redis'])
+        cls.wp_cli(path, ['config', 'set', 'WP_REDIS_PORT', '6379', '--raw'])
+        enable = cls.wp_cli(path, ['redis', 'enable'])
+        if not enable.get('success'):
+            return {'success': False, 'error': 'Plugin installed but enabling the drop-in failed: ' + (enable.get('error') or ''), 'actions': actions}
+        actions.append('Enabled Redis object cache drop-in')
+        return {'success': True, 'message': 'Redis object cache enabled', 'actions': actions, 'status': cls.object_cache_status(path)}
+
+    @classmethod
+    def disable_object_cache(cls, path: str) -> Dict:
+        """Turn the Redis object-cache drop-in off (keeps the container + plugin)."""
+        res = cls.wp_cli(path, ['redis', 'disable'])
+        if res.get('success'):
+            return {'success': True, 'message': 'Redis object cache disabled'}
+        return {'success': False, 'error': res.get('error') or 'Failed to disable object cache'}
+
+    @classmethod
+    def object_cache_status(cls, path: str) -> Dict:
+        """Report object-cache state via `wp redis status`. Never raises."""
+        compose_file = os.path.join(path, 'docker-compose.yml')
+        if not os.path.exists(compose_file):
+            return {'enabled': False, 'available': False, 'reason': 'not a Docker-stack site'}
+        res = cls.wp_cli(path, ['redis', 'status'])
+        if not res.get('success'):
+            return {'enabled': False, 'available': False}
+        out = (res.get('output') or '').lower()
+        return {'enabled': 'connected' in out, 'available': True, 'raw': res.get('output', '').strip()}
+
     @classmethod
     def flush_cache(cls, path: str) -> Dict:
         """Flush WordPress cache."""
@@ -698,6 +836,15 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
         cache_result = cls.wp_cli(path, ['cache', 'flush'])
         if cache_result['success']:
             results.append('Flushed object cache')
+
+        # Flush the Redis object-cache drop-in if the plugin is active (Roadmap #23)
+        redis_flush = cls.wp_cli(path, ['redis', 'flush'])
+        if redis_flush.get('success'):
+            results.append('Flushed Redis object cache')
+
+        # Purge the full-page cache plugin if present (Roadmap #22)
+        if cls.purge_page_cache(path):
+            results.append('Purged page cache')
 
         return {'success': True, 'message': 'Cache flushed', 'actions': results}
 

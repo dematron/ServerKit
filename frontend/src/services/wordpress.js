@@ -149,6 +149,11 @@ const wordpressApi = {
         method: 'POST'
     }),
 
+    // Full-page cache (plugin-backed) — status / enable / disable
+    getPageCache: (siteId) => api.request(`${BASE_PATH}/${siteId}/page-cache`),
+    enablePageCache: (siteId) => api.request(`${BASE_PATH}/${siteId}/page-cache`, { method: 'POST' }),
+    disablePageCache: (siteId) => api.request(`${BASE_PATH}/${siteId}/page-cache`, { method: 'DELETE' }),
+
     searchReplace: (siteId, data) => api.request(`${BASE_PATH}/${siteId}/search-replace`, {
         method: 'POST',
         body: data
@@ -157,6 +162,11 @@ const wordpressApi = {
     harden: (siteId) => api.request(`${BASE_PATH}/${siteId}/harden`, {
         method: 'POST'
     }),
+
+    // Object cache (Redis) — status / enable / disable
+    getObjectCacheStatus: (siteId) => api.request(`${BASE_PATH}/${siteId}/object-cache`),
+    enableObjectCache: (siteId) => api.request(`${BASE_PATH}/${siteId}/object-cache`, { method: 'POST' }),
+    disableObjectCache: (siteId) => api.request(`${BASE_PATH}/${siteId}/object-cache`, { method: 'DELETE' }),
 
     // Mint a one-time passwordless wp-admin login URL for the current operator.
     autoLogin: (siteId) => api.request(`${BASE_PATH}/${siteId}/login`, {

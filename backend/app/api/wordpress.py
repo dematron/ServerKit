@@ -1,3 +1,4 @@
+import json
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, Application, WordPressSite
@@ -672,6 +673,88 @@ def optimize_database(app_id):
 
     result = WordPressService.optimize_database(app.root_path)
     return jsonify(result), 200 if result['success'] else 400
+
+
+@wordpress_bp.route('/sites/<int:app_id>/page-cache', methods=['GET'])
+@jwt_required()
+def get_page_cache(app_id):
+    """Report full-page cache plugin status for a site."""
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    return jsonify(WordPressService.get_page_cache_status(app.root_path)), 200
+
+
+@wordpress_bp.route('/sites/<int:app_id>/page-cache', methods=['POST'])
+@jwt_required()
+@admin_required
+def enable_page_cache(app_id):
+    """Enable the full-page cache for a site."""
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    result = WordPressService.enable_page_cache(app.root_path)
+    if result.get('success'):
+        wp_site = WordPressSite.query.filter_by(application_id=app.id).first()
+        if wp_site:
+            cfg = json.loads(wp_site.sync_config) if wp_site.sync_config else {}
+            cfg['page_cache_enabled'] = True
+            wp_site.sync_config = json.dumps(cfg)
+            db.session.commit()
+    return jsonify(result), 200 if result.get('success') else 400
+
+
+@wordpress_bp.route('/sites/<int:app_id>/page-cache', methods=['DELETE'])
+@jwt_required()
+@admin_required
+def disable_page_cache(app_id):
+    """Disable the full-page cache for a site."""
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    result = WordPressService.disable_page_cache(app.root_path)
+    if result.get('success'):
+        wp_site = WordPressSite.query.filter_by(application_id=app.id).first()
+        if wp_site:
+            cfg = json.loads(wp_site.sync_config) if wp_site.sync_config else {}
+            cfg['page_cache_enabled'] = False
+            wp_site.sync_config = json.dumps(cfg)
+            db.session.commit()
+    return jsonify(result), 200 if result.get('success') else 400
+
+
+@wordpress_bp.route('/sites/<int:app_id>/object-cache', methods=['GET'])
+@jwt_required()
+def object_cache_status(app_id):
+    """Report Redis object-cache state for a site."""
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    return jsonify(WordPressService.object_cache_status(app.root_path)), 200
+
+
+@wordpress_bp.route('/sites/<int:app_id>/object-cache', methods=['POST'])
+@jwt_required()
+@admin_required
+def enable_object_cache(app_id):
+    """Enable Redis object cache (adds a redis container if needed, activates plugin)."""
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    result = WordPressService.enable_object_cache(app.root_path)
+    return jsonify(result), 200 if result.get('success') else 400
+
+
+@wordpress_bp.route('/sites/<int:app_id>/object-cache', methods=['DELETE'])
+@jwt_required()
+@admin_required
+def disable_object_cache(app_id):
+    """Disable Redis object cache (keeps the container + plugin)."""
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    result = WordPressService.disable_object_cache(app.root_path)
+    return jsonify(result), 200 if result.get('success') else 400
 
 
 @wordpress_bp.route('/sites/<int:app_id>/flush-cache', methods=['POST'])

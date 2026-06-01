@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ExternalLink, Settings, RefreshCw, Plus, Database, GitBranch, Package, Palette, Archive, Trash2, Replace, ShieldCheck, FolderOpen, FileText, Lock, Copy } from 'lucide-react';
+import { ExternalLink, Settings, RefreshCw, Plus, Database, GitBranch, Package, Palette, Archive, Trash2, Replace, ShieldCheck, FolderOpen, FileText, Lock, Copy, Zap } from 'lucide-react';
 import useTabParam from '../hooks/useTabParam';
 import wordpressApi from '../services/wordpress';
 import api from '../services/api';
@@ -397,6 +397,10 @@ const OverviewTab = ({ site, onUpdate }) => {
     const [syncingAll, setSyncingAll] = useState(false);
     const [flushingCache, setFlushingCache] = useState(false);
     const [hardening, setHardening] = useState(false);
+    const [pageCacheActive, setPageCacheActive] = useState(false);
+    const [togglingPageCache, setTogglingPageCache] = useState(false);
+    const [objectCache, setObjectCache] = useState(null);
+    const [togglingCache, setTogglingCache] = useState(false);
     const [showSearchReplace, setShowSearchReplace] = useState(false);
     const [health, setHealth] = useState(null);
     const [diskUsage, setDiskUsage] = useState(null);
@@ -507,6 +511,60 @@ const OverviewTab = ({ site, onUpdate }) => {
             onUpdate?.();
         } catch (err) {
             toast.error(err.message || 'Failed to create environment');
+        }
+    }
+
+    useEffect(() => {
+        let active = true;
+        wordpressApi.getPageCache(site.id)
+            .then(r => { if (active) setPageCacheActive(Boolean(r?.active)); })
+            .catch(() => { /* best-effort; control just shows Enable */ });
+        wordpressApi.getObjectCacheStatus(site.id)
+            .then(s => { if (active) setObjectCache(s); })
+            .catch(() => {});
+        return () => { active = false; };
+    }, [site.id]);
+
+    async function handleTogglePageCache() {
+        setTogglingPageCache(true);
+        const enabling = !pageCacheActive;
+        toast.info(enabling ? 'Enabling page cache...' : 'Disabling page cache...', { duration: 4000 });
+        try {
+            const res = enabling
+                ? await wordpressApi.enablePageCache(site.id)
+                : await wordpressApi.disablePageCache(site.id);
+            if (res.success === false) {
+                toast.error(res.error || 'Page cache change failed');
+            } else {
+                toast.success(res.message || (enabling ? 'Page cache enabled' : 'Page cache disabled'));
+                setPageCacheActive(enabling);
+            }
+        } catch (err) {
+            toast.error(err.message || 'Page cache change failed');
+        } finally {
+            setTogglingPageCache(false);
+        }
+    }
+
+    async function handleToggleObjectCache() {
+        setTogglingCache(true);
+        const enabling = !objectCache?.enabled;
+        toast.info(enabling ? 'Enabling Redis object cache...' : 'Disabling object cache...', { duration: 4000 });
+        try {
+            const res = enabling
+                ? await wordpressApi.enableObjectCache(site.id)
+                : await wordpressApi.disableObjectCache(site.id);
+            if (res.success === false) {
+                toast.error(res.error || 'Object cache change failed');
+            } else {
+                toast.success(res.message || (enabling ? 'Object cache enabled' : 'Object cache disabled'));
+                const fresh = await wordpressApi.getObjectCacheStatus(site.id).catch(() => null);
+                if (fresh) setObjectCache(fresh);
+            }
+        } catch (err) {
+            toast.error(err.message || 'Object cache change failed');
+        } finally {
+            setTogglingCache(false);
         }
     }
 
@@ -878,6 +936,17 @@ const OverviewTab = ({ site, onUpdate }) => {
                             </button>
                             <button
                                 className="quick-action-btn"
+                                onClick={handleTogglePageCache}
+                                disabled={togglingPageCache}
+                                title={pageCacheActive ? 'Full-page cache is active' : 'Enable a full-page cache for this site'}
+                            >
+                                <Zap size={16} />
+                                {togglingPageCache
+                                    ? 'Working...'
+                                    : (pageCacheActive ? 'Page Cache: On' : 'Enable Page Cache')}
+                            </button>
+                            <button
+                                className="quick-action-btn"
                                 onClick={() => setShowSearchReplace(true)}
                             >
                                 <Replace size={16} />
@@ -890,6 +959,17 @@ const OverviewTab = ({ site, onUpdate }) => {
                             >
                                 <ShieldCheck size={16} />
                                 {hardening ? 'Hardening...' : 'Harden'}
+                            </button>
+                            <button
+                                className="quick-action-btn"
+                                onClick={handleToggleObjectCache}
+                                disabled={togglingCache}
+                                title={objectCache?.enabled ? 'Redis object cache is active' : 'Enable a Redis object cache for this site'}
+                            >
+                                <Database size={16} />
+                                {togglingCache
+                                    ? (objectCache?.enabled ? 'Disabling...' : 'Enabling...')
+                                    : (objectCache?.enabled ? 'Object Cache: On' : 'Enable Object Cache')}
                             </button>
                         </div>
                     </div>

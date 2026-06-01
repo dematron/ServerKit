@@ -33,6 +33,7 @@ from app.models.cloud_server import CloudProvider, CloudServer, CloudSnapshot
 from app.models.marketplace import Extension, ExtensionInstall
 from app.models.pending_agent import PendingAgent
 from app.models.plugin import InstalledPlugin
+from app.models.ai import AiConversation, AiMessage, AiPendingAction
 
 __all__ = [
     'User', 'Application', 'Domain', 'EnvironmentVariable', 'EnvironmentVariableHistory',
@@ -54,4 +55,5 @@ __all__ = [
     'Extension', 'ExtensionInstall',
     'PendingAgent',
     'InstalledPlugin',
+    'AiConversation', 'AiMessage', 'AiPendingAction',
 ]

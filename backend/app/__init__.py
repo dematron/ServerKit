@@ -303,6 +303,10 @@ def create_app(config_name=None):
     from app.api.pairing import pairing_bp
     app.register_blueprint(pairing_bp, url_prefix='/api/v1/pairing')
 
+    # Register blueprints - AI Assistant (core primitive, powered by Prompture)
+    from app.api.ai import ai_bp
+    app.register_blueprint(ai_bp, url_prefix='/api/v1/ai')
+
     # Handle database migrations (Alembic) — must run before plugin loader
     # since the loader queries the installed_plugins table.
     with app.app_context():

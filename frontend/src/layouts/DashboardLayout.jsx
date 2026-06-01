@@ -5,6 +5,8 @@ import MobileTopBar from '../components/MobileTopBar';
 import CommandPalette from '../components/CommandPalette';
 import LogsDrawer from '../components/LogsDrawer';
 import { LogsDrawerProvider } from '../contexts/LogsDrawerContext';
+import { AIProvider } from '../contexts/AIContext';
+import AIAssistant from '../components/ai/AIAssistant';
 import PluginLoader from '../plugins/PluginLoader';
 import { refreshContributions, useContributions } from '../plugins/contributions';
 import useMediaQuery from '../hooks/useMediaQuery';
@@ -77,6 +79,7 @@ const DashboardLayout = () => {
 
     return (
         <LogsDrawerProvider>
+            <AIProvider>
             <div className="dashboard-layout">
                 <MobileTopBar navOpen={navOpen} onToggle={() => setNavOpen(prev => !prev)} />
                 <Sidebar
@@ -96,8 +99,10 @@ const DashboardLayout = () => {
                 </main>
                 <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
                 <LogsDrawer />
+                <AIAssistant />
                 <PluginLoader api={api} />
             </div>
+            </AIProvider>
         </LogsDrawerProvider>
     );
 };

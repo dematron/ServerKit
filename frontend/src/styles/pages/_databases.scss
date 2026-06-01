@@ -35,9 +35,7 @@
     height: 44px;
     flex-shrink: 0;
     color: $text-primary;
-    background:
-        linear-gradient(135deg, fade($color-mysql, 18%), fade($color-postgresql-secondary, 18%)),
-        $bg-card;
+    background: $bg-card;
     border: 1px solid $border-active;
     border-radius: $radius-lg;
 }
@@ -347,12 +345,12 @@
     font-weight: $font-weight-bold;
 
     &.mysql {
-        background: linear-gradient(135deg, $color-mysql-secondary, $color-mysql);
+        background: $color-mysql;
         color: white;
     }
 
     &.postgresql {
-        background: linear-gradient(135deg, $color-postgresql, $color-postgresql-secondary);
+        background: $color-postgresql;
         color: white;
     }
 }

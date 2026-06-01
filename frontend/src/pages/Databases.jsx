@@ -6,10 +6,11 @@ import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../hooks/useConfirm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import QueryRunner from '../components/QueryRunner';
+import EmptyState from '../components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Archive, Box, Database, HardDrive, Server } from 'lucide-react';
+import { Archive, Box, Database, HardDrive, Server, Users } from 'lucide-react';
 
 const VALID_TABS = ['mysql', 'postgresql', 'docker', 'backups', 'sqlite'];
 
@@ -248,19 +249,21 @@ const MySQLTab = ({ status }) => {
 
     if (!status?.installed) {
         return (
-            <div className="empty-state">
-                <h3>MySQL is not installed</h3>
-                <p>Install MySQL or MariaDB on your server to manage databases.</p>
-            </div>
+            <EmptyState
+                icon={Database}
+                title="MySQL is not installed"
+                description="Install MySQL or MariaDB on your server to manage databases."
+            />
         );
     }
 
     if (!status?.running) {
         return (
-            <div className="empty-state">
-                <h3>MySQL is not running</h3>
-                <p>Start the MySQL server to manage databases.</p>
-            </div>
+            <EmptyState
+                icon={Database}
+                title="MySQL is not running"
+                description="Start the MySQL server to manage databases."
+            />
         );
     }
 
@@ -300,10 +303,11 @@ const MySQLTab = ({ status }) => {
 
             {view === 'databases' ? (
                 databases.length === 0 ? (
-                    <div className="empty-state">
-                        <h3>No databases</h3>
-                        <p>Create your first MySQL database.</p>
-                    </div>
+                    <EmptyState
+                        icon={Database}
+                        title="No databases"
+                        description="Create your first MySQL database."
+                    />
                 ) : (
                     <div className="db-list">
                         {databases.map(db => (
@@ -344,10 +348,11 @@ const MySQLTab = ({ status }) => {
                 )
             ) : (
                 users.length === 0 ? (
-                    <div className="empty-state">
-                        <h3>No users</h3>
-                        <p>Create your first MySQL user.</p>
-                    </div>
+                    <EmptyState
+                        icon={Users}
+                        title="No users"
+                        description="Create your first MySQL user."
+                    />
                 ) : (
                     <div className="db-list">
                         {users.map(user => (
@@ -499,19 +504,21 @@ const PostgreSQLTab = ({ status }) => {
 
     if (!status?.installed) {
         return (
-            <div className="empty-state">
-                <h3>PostgreSQL is not installed</h3>
-                <p>Install PostgreSQL on your server to manage databases.</p>
-            </div>
+            <EmptyState
+                icon={Database}
+                title="PostgreSQL is not installed"
+                description="Install PostgreSQL on your server to manage databases."
+            />
         );
     }
 
     if (!status?.running) {
         return (
-            <div className="empty-state">
-                <h3>PostgreSQL is not running</h3>
-                <p>Start the PostgreSQL server to manage databases.</p>
-            </div>
+            <EmptyState
+                icon={Database}
+                title="PostgreSQL is not running"
+                description="Start the PostgreSQL server to manage databases."
+            />
         );
     }
 
@@ -551,10 +558,11 @@ const PostgreSQLTab = ({ status }) => {
 
             {view === 'databases' ? (
                 databases.length === 0 ? (
-                    <div className="empty-state">
-                        <h3>No databases</h3>
-                        <p>Create your first PostgreSQL database.</p>
-                    </div>
+                    <EmptyState
+                        icon={Database}
+                        title="No databases"
+                        description="Create your first PostgreSQL database."
+                    />
                 ) : (
                     <div className="db-list">
                         {databases.map(db => (
@@ -595,10 +603,11 @@ const PostgreSQLTab = ({ status }) => {
                 )
             ) : (
                 users.length === 0 ? (
-                    <div className="empty-state">
-                        <h3>No users</h3>
-                        <p>Create your first PostgreSQL user.</p>
-                    </div>
+                    <EmptyState
+                        icon={Users}
+                        title="No users"
+                        description="Create your first PostgreSQL user."
+                    />
                 ) : (
                     <div className="db-list">
                         {users.map(user => (
@@ -728,10 +737,11 @@ const BackupsTab = () => {
             </div>
 
             {backups.length === 0 ? (
-                <div className="empty-state">
-                    <h3>No backups</h3>
-                    <p>Database backups will appear here.</p>
-                </div>
+                <EmptyState
+                    icon={Archive}
+                    title="No backups"
+                    description="Database backups will appear here."
+                />
             ) : (
                 <div className="db-list">
                     {backups.map(backup => (
@@ -1435,10 +1445,11 @@ const SQLiteTab = () => {
             </div>
 
             {databases.length === 0 ? (
-                <div className="empty-state">
-                    <h3>No SQLite databases found</h3>
-                    <p>No .db, .sqlite, or .sqlite3 files were found in the scanned directories.</p>
-                </div>
+                <EmptyState
+                    icon={HardDrive}
+                    title="No SQLite databases found"
+                    description="No .db, .sqlite, or .sqlite3 files were found in the scanned directories."
+                />
             ) : (
                 <div className="db-list">
                     {databases.map(db => (
@@ -1598,10 +1609,11 @@ const DockerDatabasesTab = () => {
             </div>
 
             {apps.length === 0 ? (
-                <div className="empty-state">
-                    <h3>No Docker apps</h3>
-                    <p>Deploy an app from a template to see its databases here.</p>
-                </div>
+                <EmptyState
+                    icon={Box}
+                    title="No Docker apps"
+                    description="Deploy an app from a template to see its databases here."
+                />
             ) : (
                 <div className="db-list">
                     {apps.map(app => (

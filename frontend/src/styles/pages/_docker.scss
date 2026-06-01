@@ -928,16 +928,8 @@
     @include transition(all);
     overflow: hidden;
 
-    &::before {
-        content: '';
-        position: absolute;
-        left: 0; top: 0; bottom: 0;
-        width: 3px;
-        background: $border-default;
-    }
-
-    &.is-running::before { background: $success; }
-    &.is-stopped::before { background: $text-tertiary; }
+    &.is-running { border-color: fade($success, 40%); }
+    &.is-stopped { border-color: $border-default; }
 
     &:hover {
         border-color: $border-hover;

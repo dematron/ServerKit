@@ -139,6 +139,12 @@ class WpUpdateService:
                     run.details = json.dumps(details)
                     run.finished_at = datetime.utcnow()
                     db.session.commit()
+                    try:
+                        from app.services.event_service import EventService
+                        evt = 'wordpress.update_rolled_back' if rolled_back else 'wordpress.updated'
+                        EventService.emit_wp(evt, site, updated=updated, health_after=health_after)
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.error(f'Safe update failed for site {site_id}: {e}')
                     keep_snapshot = True  # leave the snapshot for recovery

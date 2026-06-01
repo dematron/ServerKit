@@ -1547,6 +1547,12 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
             db.session.add(wp_site)
             db.session.commit()
 
+            try:
+                from app.services.event_service import EventService
+                EventService.emit_wp('wordpress.created', wp_site, php_version=php_version)
+            except Exception:
+                pass
+
             result = {
                 'success': True,
                 'message': 'WordPress site created successfully',

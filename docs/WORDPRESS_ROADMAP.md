@@ -302,11 +302,12 @@ Highest-effort, broadest surface — but by now the `WordPressSite` is a first-c
 - **Reuse:** `nginx_advanced_service`, #23, `storage_provider_service`.
 - **Done when:** A site can run N replicas behind a balancer with consistent media + cache.
 
-### #35 — WordPress workflow nodes, events & CLI `[L]` 🟡
+### #35 — WordPress workflow nodes, events & CLI `[L]` 🟡 — ✅ Done (WP lifecycle events emitted + subscribable; workflow action-nodes + CLI deferred)
 - **Today:** The event/webhook + workflow engine can't see a `WordPressSite` — `EVENT_CATALOG` has no WP lifecycle events, WP operations emit nothing, the workflow builder has no WP node types, and there's no `serverkit wp` CLI.
 - **Do:** Emit WP lifecycle events (`backup.completed` / `deploy.failed` / `ssl.renewed` / `update.available`); add WordPress workflow nodes that call existing WP services; add CLI verbs (`serverkit wp backup:create` / `env:clone` / `deploy`) against the now-API-key-reachable routes (#14).
 - **Reuse:** `workflow_engine`, `event_service`, `webhook_service`, the API-key surface.
 - **Done when:** "Every Sunday: snapshot all sites, update staging, notify" can be built as a workflow, and the CLI drives it.
+- **Landed:** **WP lifecycle events** added to `EVENT_CATALOG` — `wordpress.created` / `deleted` / `backup_completed` / `updated` / `update_rolled_back` / `deployed` / `deploy_failed` (joining #27's `site_down`/`site_up`) — plus a reusable `EventService.emit_wp(event_type, site, **extra)` helper (best-effort; never breaks the WP op). Emitted at concrete service points: `create_site` (`wordpress.created`), the #29 safe-update (`wordpress.updated` / `update_rolled_back`), and git deploy (`wordpress.deployed` / `deploy_failed` + the pre-deploy `backup_completed`). Because the catalog drives the subscription UI (`GET …/events`) and `EventSubscription.matches_event` supports a `wordpress.*` wildcard, these are **immediately subscribable** as outbound webhooks (HMAC + retry) and — via the existing `WorkflowEventBus` event-trigger path — can **fire workflows** (e.g. "on `wordpress.update_rolled_back` → notify Slack"). This delivers the *trigger* half of the Done-when. *(Deferred: WordPress workflow **action nodes** — needs the workflow node-type registry + builder UI — and the **`serverkit wp` CLI** binary; both are substantial standalone builds on top of #14's API-key-reachable routes.)* Verified: backend `py_compile`.
 
 ---
 

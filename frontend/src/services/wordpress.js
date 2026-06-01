@@ -182,6 +182,9 @@ const wordpressApi = {
     attachStatusPage: (siteId, pageId) => api.request(`${BASE_PATH}/${siteId}/status-page`, { method: 'POST', body: { page_id: pageId } }),
     detachStatusPage: (siteId) => api.request(`${BASE_PATH}/${siteId}/status-page`, { method: 'DELETE' }),
 
+    // Traffic + error analytics (#25) — parsed on-demand from the apache access log.
+    getSiteAnalytics: (siteId, hours = 24) => api.request(`${BASE_PATH}/${siteId}/analytics?hours=${hours}`),
+
     // Mint a one-time passwordless wp-admin login URL for the current operator.
     autoLogin: (siteId) => api.request(`${BASE_PATH}/${siteId}/login`, {
         method: 'POST'

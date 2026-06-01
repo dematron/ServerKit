@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ExternalLink, Settings, RefreshCw, Plus, Database, GitBranch, Package, Palette, Archive, Trash2, Replace, ShieldCheck, FolderOpen, FileText, Lock, Copy, Zap, Activity, Globe, Layers } from 'lucide-react';
+import { ExternalLink, Settings, RefreshCw, Plus, Database, GitBranch, Package, Palette, Archive, Trash2, Replace, ShieldCheck, FolderOpen, FileText, Lock, Copy, Zap, Activity, Globe, Layers, BarChart3 } from 'lucide-react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import useTabParam from '../hooks/useTabParam';
 import wordpressApi from '../services/wordpress';
 import api from '../services/api';
@@ -71,7 +72,7 @@ const DetailPageSkeleton = () => (
     </div>
 );
 
-const VALID_TABS = ['overview', 'environments', 'database', 'plugins', 'themes', 'php', 'git', 'backups', 'uptime'];
+const VALID_TABS = ['overview', 'environments', 'database', 'plugins', 'themes', 'php', 'git', 'backups', 'uptime', 'analytics'];
 
 const WordPressDetail = () => {
     const { id } = useParams();
@@ -348,6 +349,12 @@ const WordPressDetail = () => {
                 >
                     <Activity size={14} /> Uptime
                 </div>
+                <div
+                    className={`app-detail-tab ${activeTab === 'analytics' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('analytics')}
+                >
+                    <BarChart3 size={14} /> Analytics
+                </div>
             </div>
 
             {/* Clone Site Modal */}
@@ -392,6 +399,7 @@ const WordPressDetail = () => {
                     {activeTab === 'git' && <GitTab siteId={site.id} site={site} onUpdate={loadSite} />}
                     {activeTab === 'backups' && <BackupsTab siteId={site.id} />}
                     {activeTab === 'uptime' && <UptimeTab siteId={site.id} />}
+                    {activeTab === 'analytics' && <AnalyticsTab siteId={site.id} />}
                 </ErrorBoundary>
             </div>
         </div>
@@ -616,6 +624,124 @@ const UptimeTab = ({ siteId }) => {
                                     </div>
                                 </>
                             )}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// Analytics Tab — per-site traffic + error analytics (#25), parsed on-demand from
+// the apache container access log. PHP fatals, response time, and cache hit ratio
+// are not in the default access log (deferred to #30 / #22-#23).
+const ANALYTICS_PERIODS = [{ label: '24h', hours: 24 }, { label: '7d', hours: 168 }];
+
+const AnalyticsTab = ({ siteId }) => {
+    const toast = useToast();
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [hours, setHours] = useState(24);
+
+    const load = React.useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await wordpressApi.getSiteAnalytics(siteId, hours);
+            setData(res);
+        } catch (err) {
+            toast.error(err.message || 'Failed to load analytics');
+        } finally {
+            setLoading(false);
+        }
+    }, [siteId, hours, toast]);
+
+    useEffect(() => { load(); }, [load]);
+
+    if (loading) return <div className="tab-loading"><p className="hint">Loading analytics...</p></div>;
+
+    const fmtHour = (iso) => {
+        const d = new Date(iso);
+        return hours <= 24
+            ? d.toLocaleTimeString([], { hour: '2-digit', hour12: false })
+            : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    };
+    const clip = (p) => (p && p.length > 48 ? `${p.slice(0, 48)}…` : p);
+    const s = data?.status || {};
+
+    return (
+        <div className="app-overview-grid">
+            <div className="app-overview-left">
+                <div className="app-panel">
+                    <div className="app-panel-header">Traffic ({hours <= 24 ? 'last 24 hours' : 'last 7 days'})</div>
+                    <div className="app-panel-body">
+                        <div className="app-detail-actions">
+                            {ANALYTICS_PERIODS.map(p => (
+                                <Button key={p.hours} variant={hours === p.hours ? 'default' : 'outline'} size="sm" onClick={() => setHours(p.hours)}>{p.label}</Button>
+                            ))}
+                        </div>
+                        {data?.note && <p className="hint">{data.note}</p>}
+                        <div className="app-info-grid">
+                            <div className="app-info-item"><span className="app-info-label">Requests</span><span className="app-info-value">{(data?.requests ?? 0).toLocaleString()}</span></div>
+                            <div className="app-info-item"><span className="app-info-label">Unique Visitors</span><span className="app-info-value">{(data?.unique_visitors ?? 0).toLocaleString()}</span></div>
+                            <div className="app-info-item"><span className="app-info-label">Bandwidth</span><span className="app-info-value">{data?.bytes_human || '0 B'}</span></div>
+                            <div className="app-info-item"><span className="app-info-label">Error Rate</span><span className="app-info-value">{data?.error_rate ?? 0}%</span></div>
+                            <div className="app-info-item"><span className="app-info-label">Bot Traffic</span><span className="app-info-value">{data?.bot_pct ?? 0}%</span></div>
+                            <div className="app-info-item"><span className="app-info-label">404s</span><span className="app-info-value">{(data?.not_found ?? 0).toLocaleString()}</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="app-panel">
+                    <div className="app-panel-header">Requests over time</div>
+                    <div className="app-panel-body">
+                        <ResponsiveContainer width="100%" height={220}>
+                            <AreaChart data={data?.series || []} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="wpReq" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                    </linearGradient>
+                                    <linearGradient id="wpErr" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4} />
+                                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#888" strokeOpacity={0.15} />
+                                <XAxis dataKey="hour" tickFormatter={fmtHour} tick={{ fontSize: 11, fill: '#888' }} minTickGap={24} />
+                                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#888' }} width={36} />
+                                <Tooltip labelFormatter={fmtHour} />
+                                <Area type="monotone" dataKey="requests" name="Requests" stroke="#6366f1" fill="url(#wpReq)" strokeWidth={2} />
+                                <Area type="monotone" dataKey="errors" name="Errors" stroke="#ef4444" fill="url(#wpErr)" strokeWidth={2} />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                <div className="app-panel">
+                    <div className="app-panel-header">Status codes</div>
+                    <div className="app-panel-body">
+                        <div className="app-info-grid">
+                            <div className="app-info-item"><span className="app-info-label">2xx</span><span className="app-info-value">{(s['2xx'] ?? 0).toLocaleString()}</span></div>
+                            <div className="app-info-item"><span className="app-info-label">3xx</span><span className="app-info-value">{(s['3xx'] ?? 0).toLocaleString()}</span></div>
+                            <div className="app-info-item"><span className="app-info-label">4xx</span><span className="app-info-value">{(s['4xx'] ?? 0).toLocaleString()}</span></div>
+                            <div className="app-info-item"><span className="app-info-label">5xx</span><span className="app-info-value">{(s['5xx'] ?? 0).toLocaleString()}</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                {data?.top_paths?.length > 0 && (
+                    <div className="app-panel">
+                        <div className="app-panel-header">Top URLs</div>
+                        <div className="app-panel-body">
+                            <div className="app-info-grid">
+                                {data.top_paths.map((row, i) => (
+                                    <div className="app-info-item" key={i}>
+                                        <span className="app-info-label" title={row.path}>{clip(row.path)}</span>
+                                        <span className="app-info-value">{row.count.toLocaleString()}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="hint">Read live from the container access log; PHP fatals and response-time metrics are not captured by the default log.</p>
                         </div>
                     </div>
                 )}

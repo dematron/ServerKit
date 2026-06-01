@@ -498,6 +498,23 @@ def detach_site_status_page(app_id):
     return jsonify({'success': True, 'removed': removed}), 200
 
 
+@wordpress_bp.route('/sites/<int:app_id>/analytics', methods=['GET'])
+@jwt_required()
+def get_site_analytics(app_id):
+    """Per-site traffic + error analytics, parsed on-demand from the container's
+    Apache access log (visits / bandwidth / status codes / 404s / bots / top URLs)."""
+    from app.services.wp_analytics_service import WpAnalyticsService
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    if user.role != 'admin' and app.user_id != current_user_id:
+        return jsonify({'error': 'Access denied'}), 403
+    result = WpAnalyticsService.get_traffic(app.name, request.args.get('hours', 24))
+    return jsonify(result), 200
+
+
 @wordpress_bp.route('/sites/<int:app_id>/info', methods=['GET'])
 @jwt_required()
 def get_wordpress_info(app_id):

@@ -2340,3 +2340,75 @@
         flex-wrap: wrap;
     }
 }
+
+// ============================================
+// PROMOTION HISTORY (pipeline tab, with rollback)
+// ============================================
+.pipeline-promotion-history {
+    margin-top: $space-6;
+
+    .promotion-history-list {
+        display: flex;
+        flex-direction: column;
+        gap: $space-2;
+        margin-top: $space-3;
+    }
+
+    .promotion-history-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-3;
+        padding: $space-3 $space-4;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-md;
+    }
+
+    .promotion-history-main {
+        display: flex;
+        align-items: center;
+        gap: $space-3;
+        flex-wrap: wrap;
+        font-size: $font-size-sm;
+    }
+
+    .promotion-route {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-1;
+        color: $text-primary;
+        font-weight: $font-weight-medium;
+    }
+
+    .promotion-type,
+    .promotion-date {
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+    }
+
+    .promotion-status {
+        text-transform: capitalize;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        padding: 2px 8px;
+        border-radius: $radius-sm;
+        background: fade($color-info, 12%);
+        color: $color-info;
+
+        &.promotion-status-completed {
+            background: fade($color-success, 12%);
+            color: $color-success;
+        }
+
+        &.promotion-status-failed {
+            background: fade($color-danger, 12%);
+            color: $color-danger;
+        }
+
+        &.promotion-status-rolled_back {
+            background: fade($color-warning, 12%);
+            color: $color-warning;
+        }
+    }
+}

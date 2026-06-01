@@ -97,19 +97,19 @@ Every task here reuses a service that already exists and is verified present. **
 - **Reuse:** `WordPressService.harden_wordpress/search_replace/flush_cache` (`:497,609,626`).
 - **Done when:** Purge/search-replace/harden are one click each.
 
-### #6 — One consolidated site-health card `[M]` 🟡
+### #6 — One consolidated site-health card `[M]` 🟡 — ✅ Done
 - **Today:** `EnvironmentHealthService.check_health` / `get_disk_usage` compute container/MySQL/WP/disk status; frontend stubs `getProjectHealth`/`getEnvironmentHealth`/`getEnvironmentDiskUsage` exist; `components/wordpress/DiskUsageBar.jsx` is **imported nowhere**. `WordPressDetail` OverviewTab shows static text and calls none of them.
 - **Do:** Assemble one health header (WP/PHP version, SSL status [from #8], backup status, update count [from #7], disk usage, cache status [from #22/#23], security warnings) and render `DiskUsageBar`.
 - **Reuse:** `EnvironmentHealthService`, the existing frontend stubs, `DiskUsageBar.jsx`.
 - **Done when:** The site overview shows a live health header instead of static fields.
 
-### #7 — Update badges + Update buttons `[M]` 🟡
+### #7 — Update badges + Update buttons `[M]` 🟡 — ✅ Done
 - **Today:** `get_wordpress_info` (`services/wordpress_service.py:216`) computes `update_available`/`latest_version`; the plugin/theme list JSON already carries per-item update flags. The OverviewTab/PluginsTab/ThemesTab parse none of it. `update_themes` service method is missing (only `update_plugins`/`update_wordpress` exist).
 - **Do:** Render a core update badge + per-plugin/theme "Update" buttons; add `update_themes`.
 - **Reuse:** `update_wordpress` (`:256`), `update_plugins` (`:312`), `get_plugins`/`get_themes`.
 - **Done when:** Available updates show a count and update in place.
 
-### #8 — Wire SSL to the WordPress site `[M]` 🟡
+### #8 — Wire SSL to the WordPress site `[M]` 🟡 — ✅ Done (live status; Docker/localhost degrades gracefully)
 - **Today:** `ssl_service.obtain_certificate` / `advanced_ssl_service.issue_wildcard_cert` / `setup_auto_renewal` take arbitrary domains and are **never** called by `create_site`; the per-env nginx template listens on `:80` only. `WordPressSite` has no `ssl_status`. The SSL-health methods in `services/security.js` (`getSSLHealth`, `issueWildcardCert`, expiry alerts) have **zero** `.jsx` consumers.
 - **Do:** Add a per-site "Enable SSL" action + an `ssl_status` field; call `SSLService` on create/domain-attach; use a wildcard cert for `staging.*`/`dev.*`/multidev subdomains; surface cert grade/expiry on the site's domain panel.
 - **Reuse:** `ssl_service`, `advanced_ssl_service`, `security.js`.

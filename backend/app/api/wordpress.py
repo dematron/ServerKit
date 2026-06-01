@@ -437,6 +437,22 @@ def install_theme(app_id):
     return jsonify(result), 200 if result['success'] else 400
 
 
+@wordpress_bp.route('/sites/<int:app_id>/themes/update', methods=['POST'])
+@jwt_required()
+@admin_required
+def update_themes(app_id):
+    """Update themes."""
+    app = _resolve_app(app_id)
+    data = request.get_json()
+
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+
+    themes = data.get('themes') if data else None
+    result = WordPressService.update_themes(app.root_path, themes)
+    return jsonify(result), 200 if result['success'] else 400
+
+
 @wordpress_bp.route('/sites/<int:app_id>/themes/<theme>/activate', methods=['POST'])
 @jwt_required()
 @admin_required

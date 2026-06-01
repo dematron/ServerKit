@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Plus, ExternalLink, RefreshCw, GitBranch, Search, Shield, Activity, Settings } from 'lucide-react';
+import { Plus, ExternalLink, RefreshCw, GitBranch, Search, Shield, Activity, Settings, ArrowRight, RotateCcw } from 'lucide-react';
 import useTabParam from '../hooks/useTabParam';
 import wordpressApi from '../services/wordpress';
 import { useToast } from '../contexts/ToastContext';
@@ -207,6 +207,28 @@ const WordPressProject = () => {
                 }
             },
             onCancel: () => setConfirmDialog(null)
+        });
+    }, [id, toast]);
+
+    const handleRollback = useCallback((promotion) => {
+        setConfirmDialog({
+            title: 'Roll Back Promotion',
+            message: `Restore the pre-promotion snapshot for "${promotion.target_site?.name || 'target environment'}"? This overwrites the target environment's current database with the snapshot taken just before promotion #${promotion.id}.`,
+            confirmText: 'Roll Back',
+            variant: 'danger',
+            onConfirm: async () => {
+                toast.info('Rolling back promotion...', { duration: 4000 });
+                try {
+                    await wordpressApi.rollbackPromotion(id, promotion.id);
+                    toast.success('Promotion rolled back');
+                    loadPipeline();
+                } catch (err) {
+                    toast.error(err.message || 'Rollback failed');
+                } finally {
+                    setConfirmDialog(null);
+                }
+            },
+            onCancel: () => setConfirmDialog(null),
         });
     }, [id, toast]);
 
@@ -560,6 +582,9 @@ const WordPressProject = () => {
                             onBulkToggle={handleBulkToggle}
                         />
 
+                        {/* Promotion History (with rollback) */}
+                        <PromotionHistory projectId={id} onRollback={handleRollback} />
+
                         {/* Recent Activity Preview */}
                         <div className="pipeline-activity-preview">
                             <div className="section-header">
@@ -704,6 +729,65 @@ const WordPressProject = () => {
                 onConfirm={confirmDialog?.onConfirm}
                 onCancel={confirmDialog?.onCancel || (() => setConfirmDialog(null))}
             />
+        </div>
+    );
+};
+
+// Promotion History (lists past promotions; rollback available for completed promotions with a pre-promotion snapshot)
+const PromotionHistory = ({ projectId, onRollback }) => {
+    const [promotions, setPromotions] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const data = await wordpressApi.getPromotionHistory(projectId, { limit: 20 });
+            setPromotions(data.promotions || []);
+        } catch {
+            setPromotions([]);
+        } finally {
+            setLoading(false);
+        }
+    }, [projectId]);
+
+    useEffect(() => { load(); }, [load]);
+
+    if (loading || promotions.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="pipeline-promotion-history">
+            <div className="section-header">
+                <h3>Promotion History</h3>
+                <Button variant="ghost" size="sm" onClick={load}>
+                    <RefreshCw size={14} /> Refresh
+                </Button>
+            </div>
+            <div className="promotion-history-list">
+                {promotions.map(p => {
+                    const canRollback = p.status === 'completed' && !!p.pre_promotion_snapshot_id;
+                    return (
+                        <div key={p.id} className="promotion-history-item">
+                            <div className="promotion-history-main">
+                                <span className={`promotion-status promotion-status-${p.status}`}>{p.status}</span>
+                                <span className="promotion-route">
+                                    {p.source_site?.name || `#${p.source_site_id}`} <ArrowRight size={12} /> {p.target_site?.name || `#${p.target_site_id}`}
+                                </span>
+                                <span className="promotion-type">{p.promotion_type}</span>
+                                {p.created_at && (
+                                    <span className="promotion-date">{new Date(p.created_at).toLocaleString()}</span>
+                                )}
+                            </div>
+                            {canRollback && (
+                                <Button variant="outline" size="sm" onClick={() => onRollback(p)}>
+                                    <RotateCcw size={14} /> Rollback
+                                </Button>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
         </div>
     );
 };

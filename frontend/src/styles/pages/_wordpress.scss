@@ -1496,3 +1496,26 @@
         }
     }
 }
+
+// ============================================
+// SITE HEALTH + SSL PANEL HELPERS (Overview tab)
+// ============================================
+
+.app-health-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: $space-2;
+}
+
+.app-health-disk {
+    margin-top: $space-4;
+
+    .app-info-label {
+        display: block;
+        margin-bottom: $space-2;
+    }
+}
+
+.ssl-action-btn {
+    margin-top: $space-3;
+}

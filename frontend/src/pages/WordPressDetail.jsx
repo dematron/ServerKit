@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ExternalLink, Settings, RefreshCw, Plus, Database, GitBranch, Package, Palette, Archive, Trash2, Replace, ShieldCheck, FolderOpen, FileText } from 'lucide-react';
+import { ExternalLink, Settings, RefreshCw, Plus, Database, GitBranch, Package, Palette, Archive, Trash2, Replace, ShieldCheck, FolderOpen, FileText, Lock } from 'lucide-react';
 import useTabParam from '../hooks/useTabParam';
 import wordpressApi from '../services/wordpress';
+import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useLogsDrawer } from '../contexts/LogsDrawerContext';
-import { EnvironmentCard, SnapshotTable, GitConnectForm, CommitList } from '../components/wordpress';
+import { EnvironmentCard, SnapshotTable, GitConnectForm, CommitList, DiskUsageBar } from '../components/wordpress';
+import { HealthDot } from '../components/wordpress/HealthStatusPanel';
 import { ErrorBoundary, ErrorState } from '../components/ErrorBoundary';
+import { useConfirm } from '../hooks/useConfirm';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { DangerZone } from '../components/DangerZone';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -271,12 +276,81 @@ const WordPressDetail = () => {
 // Overview Tab
 const OverviewTab = ({ site, onUpdate }) => {
     const toast = useToast();
+    const navigate = useNavigate();
+    const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm();
+    const [wpInfo, setWpInfo] = useState(null);
+    const [updatingCore, setUpdatingCore] = useState(false);
+    const [archiving, setArchiving] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [creatingSnapshot, setCreatingSnapshot] = useState(false);
     const [showEnvModal, setShowEnvModal] = useState(false);
     const [syncingAll, setSyncingAll] = useState(false);
     const [flushingCache, setFlushingCache] = useState(false);
     const [hardening, setHardening] = useState(false);
     const [showSearchReplace, setShowSearchReplace] = useState(false);
+    const [health, setHealth] = useState(null);
+    const [diskUsage, setDiskUsage] = useState(null);
+    const [healthLoading, setHealthLoading] = useState(true);
+    const [healthError, setHealthError] = useState(false);
+
+    // Live WP-CLI info (core version + update availability) — best-effort.
+    useEffect(() => {
+        let active = true;
+        wordpressApi.getWordPressInfo(site.id)
+            .then(data => { if (active) setWpInfo(data.info || data); })
+            .catch(() => { /* info is best-effort; the badge just won't show */ });
+        return () => { active = false; };
+    }, [site.id]);
+
+    // Site health + disk usage (both can be slow / unavailable; non-fatal).
+    useEffect(() => {
+        let cancelled = false;
+        setHealthLoading(true);
+        setHealthError(false);
+        (async () => {
+            try {
+                const [healthRes, diskRes] = await Promise.all([
+                    wordpressApi.getProjectHealth(site.id).catch(() => null),
+                    wordpressApi.getProjectDiskUsage(site.id).catch(() => null),
+                ]);
+                if (cancelled) return;
+                const ownHealth = healthRes?.success
+                    ? (healthRes.environments?.[site.id] || healthRes.environments?.[String(site.id)] || null)
+                    : null;
+                setHealth(ownHealth);
+                const ownDisk = diskRes?.success
+                    ? (diskRes.environments?.[site.id] || diskRes.environments?.[String(site.id)] || null)
+                    : null;
+                setDiskUsage(ownDisk?.usage || null);
+                if (!healthRes && !diskRes) setHealthError(true);
+            } catch {
+                if (!cancelled) setHealthError(true);
+            } finally {
+                if (!cancelled) setHealthLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [site.id]);
+
+    async function handleUpdateCore() {
+        setUpdatingCore(true);
+        toast.info('Updating WordPress core...', { duration: 4000 });
+        try {
+            const res = await wordpressApi.updateCore(site.id);
+            if (res.success === false) {
+                toast.error(res.error || 'Core update failed');
+                return;
+            }
+            toast.success(res.message || 'WordPress core updated');
+            const fresh = await wordpressApi.getWordPressInfo(site.id);
+            setWpInfo(fresh.info || fresh);
+            onUpdate?.();
+        } catch (err) {
+            toast.error(err.message || 'Core update failed');
+        } finally {
+            setUpdatingCore(false);
+        }
+    }
 
     async function handleQuickSnapshot() {
         setCreatingSnapshot(true);
@@ -355,6 +429,53 @@ const OverviewTab = ({ site, onUpdate }) => {
         }
     }
 
+    async function handleArchive() {
+        const ok = await confirm({
+            title: 'Archive Site',
+            message: `Stop and archive "${site.name}"? Containers are stopped but all files and the database are kept. You can unarchive it later.`,
+            confirmText: 'Archive',
+            variant: 'warning',
+        });
+        if (!ok) return;
+        setArchiving(true);
+        toast.info('Archiving site...', { duration: 3000 });
+        try {
+            await wordpressApi.archiveSite(site.id);
+            toast.success('Site archived');
+            onUpdate?.();
+        } catch (err) {
+            toast.error(err.message || 'Failed to archive site');
+        } finally {
+            setArchiving(false);
+        }
+    }
+
+    async function handleUnarchive() {
+        setArchiving(true);
+        toast.info('Unarchiving site...', { duration: 3000 });
+        try {
+            await wordpressApi.unarchiveSite(site.id);
+            toast.success('Site unarchived');
+            onUpdate?.();
+        } catch (err) {
+            toast.error(err.message || 'Failed to unarchive site');
+        } finally {
+            setArchiving(false);
+        }
+    }
+
+    async function handleDelete(createBackup) {
+        toast.info(createBackup ? 'Creating final backup and deleting site...' : 'Deleting site...', { duration: 5000 });
+        try {
+            await wordpressApi.deleteSite(site.id, { createBackup });
+            toast.success('Site deleted');
+            setShowDeleteModal(false);
+            navigate('/wordpress');
+        } catch (err) {
+            toast.error(err.message || 'Failed to delete site');
+        }
+    }
+
     async function handleSearchReplace(data) {
         // data = { search, replace, dry_run }
         toast.info(data.dry_run ? 'Running search-replace preview...' : 'Running search-replace...', { duration: 3000 });
@@ -380,7 +501,24 @@ const OverviewTab = ({ site, onUpdate }) => {
                         <div className="app-info-grid">
                             <div className="app-info-item">
                                 <span className="app-info-label">WordPress Version</span>
-                                <span className="app-info-value">{site.wp_version || 'Unknown'}</span>
+                                <span className="app-info-value">
+                                    {wpInfo?.version || site.wp_version || 'Unknown'}
+                                    {wpInfo?.update_available && (
+                                        <>
+                                            <span className="wp-update-badge">
+                                                Update available{wpInfo.latest_version ? `: ${wpInfo.latest_version}` : ''}
+                                            </span>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={handleUpdateCore}
+                                                disabled={updatingCore}
+                                            >
+                                                {updatingCore ? 'Updating...' : 'Update'}
+                                            </Button>
+                                        </>
+                                    )}
+                                </span>
                             </div>
                             <div className="app-info-item">
                                 <span className="app-info-label">Multisite</span>
@@ -432,6 +570,71 @@ const OverviewTab = ({ site, onUpdate }) => {
                     </div>
                 </div>
 
+                <div className="app-panel">
+                    <div className="app-panel-header">Site Health</div>
+                    <div className="app-panel-body">
+                        {healthLoading ? (
+                            <p className="hint">Checking site health...</p>
+                        ) : (
+                            <>
+                                <div className="app-info-grid">
+                                    <div className="app-info-item">
+                                        <span className="app-info-label">Status</span>
+                                        <span className="app-info-value app-health-stat">
+                                            <HealthDot status={health?.overall_status || site.health_status || 'unknown'} size={10} />
+                                            {(health?.overall_status || site.health_status || 'unknown').replace(/^./, c => c.toUpperCase())}
+                                        </span>
+                                    </div>
+                                    <div className="app-info-item">
+                                        <span className="app-info-label">WordPress Version</span>
+                                        <span className="app-info-value">{wpInfo?.version || site.wp_version || 'Unknown'}</span>
+                                    </div>
+                                    {site.application?.php_version && (
+                                        <div className="app-info-item">
+                                            <span className="app-info-label">PHP Version</span>
+                                            <span className="app-info-value">{site.application.php_version}</span>
+                                        </div>
+                                    )}
+                                    <div className="app-info-item">
+                                        <span className="app-info-label">Container</span>
+                                        <span className="app-info-value app-health-stat">
+                                            <HealthDot status={health?.checks?.container?.status || 'unknown'} size={8} />
+                                            {health?.checks?.container?.message || (site.status === 'running' ? 'Running' : 'Stopped')}
+                                        </span>
+                                    </div>
+                                    <div className="app-info-item">
+                                        <span className="app-info-label">Database</span>
+                                        <span className="app-info-value app-health-stat">
+                                            <HealthDot status={health?.checks?.mysql?.status || 'unknown'} size={8} />
+                                            {health?.checks?.mysql?.message || '-'}
+                                        </span>
+                                    </div>
+                                    <div className="app-info-item">
+                                        <span className="app-info-label">HTTP</span>
+                                        <span className="app-info-value app-health-stat">
+                                            <HealthDot status={health?.checks?.wordpress?.status || 'unknown'} size={8} />
+                                            {health?.checks?.wordpress?.message || '-'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {diskUsage ? (
+                                    <div className="app-health-disk">
+                                        <span className="app-info-label">Disk Usage</span>
+                                        <DiskUsageBar usage={diskUsage} />
+                                    </div>
+                                ) : (
+                                    <p className="hint">Disk usage unavailable.</p>
+                                )}
+
+                                {healthError && !health && (
+                                    <p className="hint">Live health checks unavailable for this site.</p>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
+
                 {site.git_repo_url && (
                     <div className="app-panel">
                         <div className="app-panel-header">Git Integration</div>
@@ -459,6 +662,46 @@ const OverviewTab = ({ site, onUpdate }) => {
                         </div>
                     </div>
                 )}
+                <SiteSSLPanel site={site} />
+
+                <div className="app-panel">
+                    <div className="app-panel-header">Danger Zone</div>
+                    <div className="app-panel-body">
+                        {site.status === 'archived' ? (
+                            <DangerZone
+                                title="Unarchive Site"
+                                description="Restart this site's containers and bring it back online."
+                                action={(
+                                    <Button variant="outline" onClick={handleUnarchive} disabled={archiving}>
+                                        <Archive size={16} />
+                                        {archiving ? 'Unarchiving...' : 'Unarchive'}
+                                    </Button>
+                                )}
+                            />
+                        ) : (
+                            <DangerZone
+                                title="Archive Site"
+                                description="Stop the containers but keep all files and the database. Reversible."
+                                action={(
+                                    <Button variant="outline" onClick={handleArchive} disabled={archiving}>
+                                        <Archive size={16} />
+                                        {archiving ? 'Archiving...' : 'Archive'}
+                                    </Button>
+                                )}
+                            />
+                        )}
+                        <DangerZone
+                            title="Delete Site"
+                            description="Permanently remove this site, all environments, files and databases. A final backup is taken by default."
+                            action={(
+                                <Button variant="destructive" onClick={() => setShowDeleteModal(true)}>
+                                    <Trash2 size={16} />
+                                    Delete Site
+                                </Button>
+                            )}
+                        />
+                    </div>
+                </div>
             </div>
 
             <div className="app-overview-right">
@@ -564,6 +807,121 @@ const OverviewTab = ({ site, onUpdate }) => {
                     onSubmit={handleSearchReplace}
                 />
             )}
+
+            {showDeleteModal && (
+                <DeleteSiteModal
+                    siteName={site.name}
+                    onClose={() => setShowDeleteModal(false)}
+                    onConfirm={handleDelete}
+                />
+            )}
+
+            <ConfirmDialog
+                isOpen={confirmState.isOpen}
+                title={confirmState.title}
+                message={confirmState.message}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                variant={confirmState.variant}
+                onConfirm={handleConfirm}
+                onCancel={handleCancel}
+            />
+        </div>
+    );
+};
+
+// SSL Certificate panel — live status + issuance for the site's primary domain
+const SiteSSLPanel = ({ site }) => {
+    const toast = useToast();
+    const domains = site.application?.domains || [];
+    const primaryDomain = (domains.find(d => d.is_primary) || domains[0])?.name || null;
+    // localhost / private-IP / no-domain sites cannot get a public certificate.
+    const isPublicDomain = !!primaryDomain
+        && !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(primaryDomain)
+        && primaryDomain.includes('.');
+    const [health, setHealth] = useState(null);
+    const [checking, setChecking] = useState(true);
+    const [issuing, setIssuing] = useState(false);
+
+    useEffect(() => {
+        if (!primaryDomain) { setChecking(false); return; }
+        let cancelled = false;
+        (async () => {
+            setChecking(true);
+            try {
+                const res = await api.getSSLHealth(primaryDomain);
+                if (!cancelled) setHealth(res);
+            } catch (err) {
+                if (!cancelled) setHealth({ valid: false, error: err.message });
+            } finally {
+                if (!cancelled) setChecking(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [primaryDomain]);
+
+    async function handleEnableSSL() {
+        if (!primaryDomain || !site.admin_email) return;
+        setIssuing(true);
+        toast.info(`Requesting certificate for ${primaryDomain}...`, { duration: 4000 });
+        try {
+            const res = await api.obtainCertificate({ domains: [primaryDomain], email: site.admin_email, use_nginx: true });
+            if (res.success) {
+                toast.success(res.message || 'Certificate issued');
+                const updated = await api.getSSLHealth(primaryDomain);
+                setHealth(updated);
+            } else {
+                toast.error(res.error || 'Certificate request failed');
+            }
+        } catch (err) {
+            toast.error(err.message || 'Certificate request failed');
+        } finally {
+            setIssuing(false);
+        }
+    }
+
+    const issued = health?.valid;
+    return (
+        <div className="app-panel">
+            <div className="app-panel-header"><Lock size={16} /> SSL Certificate</div>
+            <div className="app-panel-body">
+                <div className="app-info-grid">
+                    <div className="app-info-item">
+                        <span className="app-info-label">Primary Domain</span>
+                        <span className="app-info-value mono">{primaryDomain || 'None configured'}</span>
+                    </div>
+                    <div className="app-info-item">
+                        <span className="app-info-label">Status</span>
+                        <span className={`app-status-badge ${issued ? 'running' : 'stopped'}`}>
+                            {checking ? 'Checking...' : issued ? `Active (${health.grade})` : 'Not Secured'}
+                        </span>
+                    </div>
+                    {issued && health.expires_at && (
+                        <div className="app-info-item">
+                            <span className="app-info-label">Expires</span>
+                            <span className="app-info-value">
+                                {new Date(health.expires_at).toLocaleDateString()}
+                                {typeof health.days_remaining === 'number' ? ` (${health.days_remaining}d)` : ''}
+                            </span>
+                        </div>
+                    )}
+                    {issued && health.issuer && (
+                        <div className="app-info-item">
+                            <span className="app-info-label">Issuer</span>
+                            <span className="app-info-value">{health.issuer}</span>
+                        </div>
+                    )}
+                </div>
+                {!isPublicDomain ? (
+                    <p className="hint">SSL requires a public domain pointed at this server. This site is on <code>{primaryDomain || 'localhost'}</code>, so a certificate cannot be issued here. Map a public domain to the site first.</p>
+                ) : !site.admin_email ? (
+                    <p className="hint">Set an admin email on the site before requesting a certificate.</p>
+                ) : (
+                    <Button onClick={handleEnableSSL} disabled={issuing} className="ssl-action-btn">
+                        <Lock size={14} /> {issuing ? 'Requesting...' : issued ? 'Re-issue Certificate' : 'Enable SSL'}
+                    </Button>
+                )}
+            </div>
         </div>
     );
 };
@@ -626,6 +984,67 @@ const SearchReplaceModal = ({ onClose, onSubmit }) => {
                         </Button>
                         <Button type="submit" disabled={loading || !search.trim() || !replace.trim()}>
                             {loading ? 'Running...' : 'Run Replace'}
+                        </Button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+// Delete Site Modal (typed confirmation + optional final backup)
+const DeleteSiteModal = ({ siteName, onClose, onConfirm }) => {
+    const [createBackup, setCreateBackup] = useState(true);
+    const [typed, setTyped] = useState('');
+    const [loading, setLoading] = useState(false);
+    const canDelete = typed.trim() === siteName;
+
+    async function handleSubmit(e) {
+        e.preventDefault();
+        if (!canDelete) return;
+        setLoading(true);
+        try {
+            await onConfirm(createBackup);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                    <h2>Delete Site</h2>
+                    <button className="modal-close" onClick={onClose}>&times;</button>
+                </div>
+                <form onSubmit={handleSubmit}>
+                    <p className="hint">This permanently deletes <strong>{siteName}</strong>, all its environments, files and databases. This cannot be undone.</p>
+                    <div className="form-group">
+                        <label className="checkbox-label">
+                            <input
+                                type="checkbox"
+                                checked={createBackup}
+                                onChange={(e) => setCreateBackup(e.target.checked)}
+                            />
+                            <span>Create a final files + database backup before deleting</span>
+                        </label>
+                    </div>
+                    <div className="form-group">
+                        <Label>Type <strong>{siteName}</strong> to confirm *</Label>
+                        <Input
+                            type="text"
+                            value={typed}
+                            onChange={(e) => setTyped(e.target.value)}
+                            placeholder={siteName}
+                            autoFocus
+                        />
+                    </div>
+                    <div className="modal-actions">
+                        <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
+                            Cancel
+                        </Button>
+                        <Button type="submit" variant="destructive" disabled={loading || !canDelete}>
+                            {loading ? 'Deleting...' : 'Delete Site'}
                         </Button>
                     </div>
                 </form>
@@ -1184,6 +1603,7 @@ const PluginsTab = ({ siteId }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [installing, setInstalling] = useState(false);
+    const [updating, setUpdating] = useState(null); // plugin name being updated, or 'all'
     const [newPlugin, setNewPlugin] = useState('');
 
     useEffect(() => {
@@ -1218,6 +1638,24 @@ const PluginsTab = ({ siteId }) => {
             toast.error(err.message || 'Failed to install plugin');
         } finally {
             setInstalling(false);
+        }
+    }
+
+    async function handleUpdate(pluginName) {
+        setUpdating(pluginName || 'all');
+        toast.info(pluginName ? `Updating ${pluginName}...` : 'Updating all plugins...', { duration: 4000 });
+        try {
+            const res = await wordpressApi.updatePlugins(siteId, pluginName ? [pluginName] : undefined);
+            if (res.success === false) {
+                toast.error(res.error || 'Plugin update failed');
+                return;
+            }
+            toast.success(res.message || 'Plugins updated');
+            loadPlugins();
+        } catch (err) {
+            toast.error(err.message || 'Plugin update failed');
+        } finally {
+            setUpdating(null);
         }
     }
 
@@ -1265,6 +1703,20 @@ const PluginsTab = ({ siteId }) => {
                 </Button>
             </form>
 
+            {plugins.some(p => p.update === 'available') && (
+                <div className="bulk-update-bar">
+                    <span>{plugins.filter(p => p.update === 'available').length} plugin update(s) available</span>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleUpdate(null)}
+                        disabled={updating !== null}
+                    >
+                        {updating === 'all' ? 'Updating...' : 'Update all'}
+                    </Button>
+                </div>
+            )}
+
             <div className="plugins-list">
                 {plugins.length === 0 ? (
                     <p className="hint">No plugins installed.</p>
@@ -1274,10 +1726,27 @@ const PluginsTab = ({ siteId }) => {
                             <div className="plugin-info">
                                 <span className="plugin-name">{plugin.title || plugin.name}</span>
                                 <span className="plugin-version">{plugin.version}</span>
+                                {plugin.update === 'available' && (
+                                    <span className="wp-update-badge">
+                                        Update{plugin.update_version ? `: ${plugin.update_version}` : ''}
+                                    </span>
+                                )}
                             </div>
-                            <span className={`plugin-status ${plugin.status}`}>
-                                {plugin.status === 'active' ? 'Active' : 'Inactive'}
-                            </span>
+                            <div className="plugin-actions">
+                                {plugin.update === 'available' && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleUpdate(plugin.name)}
+                                        disabled={updating !== null}
+                                    >
+                                        {updating === plugin.name ? 'Updating...' : 'Update'}
+                                    </Button>
+                                )}
+                                <span className={`plugin-status ${plugin.status}`}>
+                                    {plugin.status === 'active' ? 'Active' : 'Inactive'}
+                                </span>
+                            </div>
                         </div>
                     ))
                 )}
@@ -1293,6 +1762,7 @@ const ThemesTab = ({ siteId }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [installing, setInstalling] = useState(false);
+    const [updating, setUpdating] = useState(null); // theme name being updated, or 'all'
     const [newTheme, setNewTheme] = useState('');
 
     useEffect(() => {
@@ -1327,6 +1797,24 @@ const ThemesTab = ({ siteId }) => {
             toast.error(err.message || 'Failed to install theme');
         } finally {
             setInstalling(false);
+        }
+    }
+
+    async function handleUpdate(themeName) {
+        setUpdating(themeName || 'all');
+        toast.info(themeName ? `Updating ${themeName}...` : 'Updating all themes...', { duration: 4000 });
+        try {
+            const res = await wordpressApi.updateThemes(siteId, themeName ? [themeName] : undefined);
+            if (res.success === false) {
+                toast.error(res.error || 'Theme update failed');
+                return;
+            }
+            toast.success(res.message || 'Themes updated');
+            loadThemes();
+        } catch (err) {
+            toast.error(err.message || 'Theme update failed');
+        } finally {
+            setUpdating(null);
         }
     }
 
@@ -1374,6 +1862,20 @@ const ThemesTab = ({ siteId }) => {
                 </Button>
             </form>
 
+            {themes.some(t => t.update === 'available') && (
+                <div className="bulk-update-bar">
+                    <span>{themes.filter(t => t.update === 'available').length} theme update(s) available</span>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleUpdate(null)}
+                        disabled={updating !== null}
+                    >
+                        {updating === 'all' ? 'Updating...' : 'Update all'}
+                    </Button>
+                </div>
+            )}
+
             <div className="themes-list">
                 {themes.length === 0 ? (
                     <p className="hint">No themes found.</p>
@@ -1383,10 +1885,27 @@ const ThemesTab = ({ siteId }) => {
                             <div className="theme-info">
                                 <span className="theme-name">{theme.title || theme.name}</span>
                                 <span className="theme-version">{theme.version}</span>
+                                {theme.update === 'available' && (
+                                    <span className="wp-update-badge">
+                                        Update{theme.update_version ? `: ${theme.update_version}` : ''}
+                                    </span>
+                                )}
                             </div>
-                            {theme.status === 'active' && (
-                                <span className="active-badge">Active</span>
-                            )}
+                            <div className="theme-actions">
+                                {theme.update === 'available' && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleUpdate(theme.name)}
+                                        disabled={updating !== null}
+                                    >
+                                        {updating === theme.name ? 'Updating...' : 'Update'}
+                                    </Button>
+                                )}
+                                {theme.status === 'active' && (
+                                    <span className="active-badge">Active</span>
+                                )}
+                            </div>
                         </div>
                     ))
                 )}

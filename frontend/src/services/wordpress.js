@@ -107,6 +107,21 @@ const wordpressApi = {
         method: 'POST'
     }),
 
+    // Live WP-CLI info (core version + update_available / latest_version)
+    getWordPressInfo: (siteId) => api.request(`${BASE_PATH}/${siteId}/info`),
+
+    // Update plugins. Pass an array of slugs to update specific ones, omit for all.
+    updatePlugins: (siteId, plugins) => api.request(`${BASE_PATH}/${siteId}/plugins/update`, {
+        method: 'POST',
+        body: plugins ? { plugins } : {}
+    }),
+
+    // Update themes. Pass an array of slugs to update specific ones, omit for all.
+    updateThemes: (siteId, themes) => api.request(`${BASE_PATH}/${siteId}/themes/update`, {
+        method: 'POST',
+        body: themes ? { themes } : {}
+    }),
+
     // Maintenance & Security
     flushCache: (siteId) => api.request(`${BASE_PATH}/${siteId}/flush-cache`, {
         method: 'POST'

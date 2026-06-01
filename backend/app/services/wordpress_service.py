@@ -323,6 +323,20 @@ define('WP_AUTO_UPDATE_CORE', 'minor');
         return result
 
     @classmethod
+    def update_themes(cls, path: str, themes: List[str] = None) -> Dict:
+        """Update themes."""
+        cmd = ['theme', 'update']
+        if themes:
+            cmd.extend(themes)
+        else:
+            cmd.append('--all')
+
+        result = cls.wp_cli(path, cmd)
+        if result['success']:
+            return {'success': True, 'message': 'Themes updated'}
+        return result
+
+    @classmethod
     def get_themes(cls, path: str) -> List[Dict]:
         """Get list of installed themes."""
         result = cls.wp_cli(path, ['theme', 'list', '--format=json'])

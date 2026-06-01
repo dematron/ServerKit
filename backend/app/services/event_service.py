@@ -53,6 +53,8 @@ EVENT_CATALOG = [
     {'type': 'domain.deleted', 'category': 'Domains', 'description': 'A domain was deleted'},
     {'type': 'api_key.created', 'category': 'API', 'description': 'An API key was created'},
     {'type': 'api_key.revoked', 'category': 'API', 'description': 'An API key was revoked'},
+    {'type': 'wordpress.site_down', 'category': 'WordPress', 'description': 'A WordPress site failed its health check'},
+    {'type': 'wordpress.site_up', 'category': 'WordPress', 'description': 'A WordPress site recovered after a failed health check'},
 ]
 
 

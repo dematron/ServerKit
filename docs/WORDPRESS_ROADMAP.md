@@ -241,11 +241,12 @@ The headline value of a managed platform, and the most net-new — but it leans 
 - **Reuse:** `EnvironmentHealthService`, `status_page_service`, `uptime_service`.
 - **Done when:** A managed site appears on a status page with a real uptime % and auto-incidents.
 
-### #27 — WP-aware alerting `[M]` 🟡
+### #27 — WP-aware alerting `[M]` 🟡 — ✅ Done (site down/recovered → channels + catalog event, edge-triggered; error-spike deferred to #25)
 - **Today:** Multi-channel `notification_service` (email/Slack/Discord/Telegram/webhook) exists; the `WorkflowEventBus` `health_check_failed` hook exists; neither knows about WordPress sites.
 - **Do:** Add WP alert rules (site down / health failed / error spike) routed through `notification_service` via the event bus.
 - **Reuse:** `notification_service`, `WorkflowEventBus`.
 - **Done when:** A site outage or error spike pings the configured channel.
+- **Landed:** `EnvironmentHealthService.check_health` now captures the prior `health_status` and, **on a state TRANSITION only** (edge-triggered — a continuously-down site fires a single down alert, recovery fires a single up alert, so an autonomous poller never spams), routes a WP health alert through three sinks: (1) the existing `WorkflowEventBus.emit('health_check_failed')` hook is **preserved** (still fires every failing poll for back-compat with event-trigger workflows); (2) **NEW** — `NotificationService.send_all` dispatches to every enabled channel (Discord/Slack/Telegram/email/generic), `unhealthy→critical` / `degraded→warning` (delivered by default channels) and recovery→`info` (delivered only to channels that opt into `info`); fired **off-thread** because `send_all` does blocking HTTP/SMTP and must not stall the health check; (3) **NEW** — `wordpress.site_down` / `wordpress.site_up` added to `EVENT_CATALOG` and emitted via `EventService`, so user webhook subscriptions (incl. a `wordpress.*` wildcard) deliver with HMAC + retry, and the events auto-appear in the event-subscription UI (`GET …/events` returns the catalog). **No schema/migration and no frontend** — channel delivery is governed by the existing Notifications settings; this also seeds **#35**'s WP lifecycle-event registry. *(Deferred: the "error spike" rule needs the per-site error metrics that **#25** will provide — revisit once #25 lands. Alerts are most useful once **#26**'s server-side scheduler runs `check_health` autonomously; today health only runs while the #6 card is open.)*
 
 ---
 

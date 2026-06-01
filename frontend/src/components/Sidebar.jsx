@@ -5,6 +5,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { Star, Settings, LogOut, Sun, Moon, Monitor, ChevronRight, ChevronDown, ChevronUp, Layers, Palette, PanelLeft, Check, X } from 'lucide-react';
 import { api } from '../services/api';
 import ServerKitLogo from './ServerKitLogo';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
 import { SIDEBAR_CATEGORIES, CATEGORY_LABELS, SIDEBAR_PRESETS, getHiddenItemIds, getVisibleItems } from './sidebarItems';
 import { useContributions } from '../plugins/contributions';
 
@@ -284,6 +285,8 @@ const Sidebar = ({ mobileOpen = false, isMobile = false, onMobileClose = () => {
                     </a>
                 </div>
             )}
+
+            <WorkspaceSwitcher />
 
             <div className="nav-scroll">
                 {SIDEBAR_CATEGORIES.map(cat => {

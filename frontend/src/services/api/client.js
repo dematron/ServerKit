@@ -31,6 +31,7 @@ class ApiClient {
     clearTokens() {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
+        localStorage.removeItem('active_workspace_id');  // drop workspace context on logout
     }
 
     async request(endpoint, options = {}) {
@@ -41,10 +42,16 @@ class ApiClient {
         // and must NOT be JSON-stringified. Detect and bypass both.
         const isFormData = options.body instanceof FormData;
 
+        // Active workspace context (#33). Sent ambiently so the backend can scope
+        // resources; endpoints that don't honor it ignore it. A stale value is safe
+        // — the backend resolves it leniently (falls back to no scope).
+        const activeWorkspace = localStorage.getItem('active_workspace_id');
+
         const config = {
             headers: {
                 ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
                 ...(token && { Authorization: `Bearer ${token}` }),
+                ...(activeWorkspace && activeWorkspace !== 'all' && { 'X-Workspace-Id': activeWorkspace }),
                 ...options.headers,
             },
             ...options,

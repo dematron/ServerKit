@@ -1,13 +1,13 @@
-// Status Pages styles
+// Status Pages
 
 .status-pages-page {
     .status-layout {
         display: grid;
-        grid-template-columns: 280px 1fr;
-        gap: $spacing-lg;
-        margin-top: $spacing-lg;
+        grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+        gap: $space-5;
+        margin-top: $space-5;
 
-        @media (max-width: 900px) {
+        @media (max-width: 960px) {
             grid-template-columns: 1fr;
         }
     }
@@ -15,97 +15,611 @@
     .status-pages-list {
         display: flex;
         flex-direction: column;
-        gap: $spacing-xs;
+        gap: $space-2;
+        min-width: 0;
     }
 
     .status-page-item {
-        padding: $spacing-md;
-        background: $card-bg;
-        border: 1px solid $border-color;
+        width: 100%;
+        padding: $space-4;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
         border-radius: $radius-md;
+        color: $text-primary;
         cursor: pointer;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        transition: border-color 0.15s;
+        display: grid;
+        gap: $space-2;
+        text-align: left;
+        transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
 
-        &:hover, &.active { border-color: $primary-color; }
+        &:hover,
+        &.active {
+            background: $bg-hover;
+            border-color: $accent-primary;
+        }
+
+        &.active {
+            box-shadow: inset 3px 0 0 $accent-primary;
+        }
+
+        &__name {
+            font-size: $font-size-sm;
+            font-weight: $font-weight-semibold;
+        }
+
+        &__slug {
+            color: $text-tertiary;
+            font-family: $font-mono;
+            font-size: $font-size-xs;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        &__meta {
+            display: inline-flex;
+            align-items: center;
+            gap: $space-1;
+            color: $text-secondary;
+            font-size: $font-size-xs;
+        }
+    }
+
+    .status-pages-empty {
+        min-height: 160px;
     }
 
     .status-detail-panel {
-        background: $card-bg;
-        border: 1px solid $border-color;
+        min-width: 0;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
         border-radius: $radius-lg;
-        padding: $spacing-lg;
+        padding: $space-5;
 
-        &__header {
+        &--empty {
+            min-height: 320px;
+            display: grid;
+            place-items: center;
+            align-content: center;
+            gap: $space-3;
+            color: $text-tertiary;
+        }
+    }
+
+    .status-detail-panel__hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+        gap: $space-5;
+        align-items: stretch;
+        margin-bottom: $space-5;
+
+        h2 {
+            margin: $space-3 0 $space-2;
+            font-size: $font-size-2xl;
+            line-height: 1.15;
+        }
+
+        p {
+            margin: 0;
+            color: $text-secondary;
+            max-width: 760px;
+        }
+
+        @media (max-width: 1100px) {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .status-overall-badge {
+        width: max-content;
+    }
+
+    .status-url-card {
+        display: grid;
+        gap: $space-3;
+        padding: $space-4;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-md;
+        background: $bg-hover;
+
+        > span {
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+            font-weight: $font-weight-semibold;
+            text-transform: uppercase;
+        }
+
+        code {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            color: $text-primary;
+            font-family: $font-mono;
+            font-size: $font-size-sm;
+            line-height: 1.4;
+        }
+
+        > div {
             display: flex;
-            align-items: baseline;
-            gap: $spacing-sm;
-            margin-bottom: $spacing-md;
-            h2 { margin: 0; }
+            flex-wrap: wrap;
+            gap: $space-2;
+        }
+    }
+
+    .status-detail-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: $space-3;
+        margin-bottom: $space-5;
+
+        > div {
+            padding: $space-4;
+            border: 1px solid $border-subtle;
+            border-radius: $radius-md;
+            background: $bg-elevated;
+        }
+
+        span {
+            display: block;
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+            font-weight: $font-weight-semibold;
+            text-transform: uppercase;
+        }
+
+        strong {
+            display: block;
+            margin-top: $space-2;
+            font-size: $font-size-xl;
+            line-height: 1;
+        }
+
+        @media (max-width: 720px) {
+            grid-template-columns: 1fr;
         }
     }
 
     .status-actions-bar {
         display: flex;
         justify-content: flex-end;
-        margin: $spacing-md 0;
+        margin: $space-4 0;
     }
 
-    .components-list {
-        display: flex;
-        flex-direction: column;
-        gap: $spacing-xs;
+    .components-list,
+    .incidents-list {
+        display: grid;
+        gap: $space-4;
+    }
+
+    .component-group {
+        display: grid;
+        gap: $space-2;
+
+        h3 {
+            margin: 0;
+            color: $text-secondary;
+            font-size: $font-size-sm;
+            font-weight: $font-weight-semibold;
+        }
     }
 
     .component-row {
-        display: flex;
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) minmax(260px, auto) auto;
+        gap: $space-4;
         align-items: center;
-        padding: $spacing-md;
-        border: 1px solid $border-color;
+        padding: $space-4;
+        border: 1px solid $border-subtle;
         border-radius: $radius-md;
+        background: $bg-elevated;
 
         &__info {
+            min-width: 0;
             display: flex;
             align-items: center;
-            gap: $spacing-sm;
+            gap: $space-3;
+
+            > div {
+                min-width: 0;
+                display: grid;
+                gap: 3px;
+            }
+
+            strong,
+            span {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            span {
+                color: $text-tertiary;
+                font-size: $font-size-xs;
+            }
         }
 
         &__stats {
             display: flex;
-            gap: $spacing-md;
-            font-size: 0.85rem;
-            color: $text-muted;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: flex-end;
+            gap: $space-2;
+            color: $text-secondary;
+            font-size: $font-size-xs;
         }
 
         &__actions {
             display: flex;
-            gap: $spacing-xs;
+            justify-content: flex-end;
+            gap: $space-2;
+        }
+
+        @media (max-width: 1180px) {
+            grid-template-columns: 1fr;
+
+            &__stats,
+            &__actions {
+                justify-content: flex-start;
+            }
         }
     }
 
-    .incidents-list {
-        display: flex;
-        flex-direction: column;
-        gap: $spacing-md;
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: $radius-full;
+        flex: 0 0 auto;
+
+        &--success {
+            background: $success;
+            box-shadow: 0 0 0 4px $success-bg;
+        }
+
+        &--warning {
+            background: $warning;
+            box-shadow: 0 0 0 4px $warning-bg;
+        }
+
+        &--danger {
+            background: $danger;
+            box-shadow: 0 0 0 4px $danger-bg;
+        }
+
+        &--info {
+            background: $info;
+            box-shadow: 0 0 0 4px $info-bg;
+        }
     }
 
     .incident-row {
-        padding: $spacing-md;
-        border: 1px solid $border-color;
+        display: grid;
+        gap: $space-3;
+        padding: $space-4;
+        border: 1px solid $border-subtle;
+        border-left-width: 3px;
         border-radius: $radius-md;
-        display: flex;
-        flex-direction: column;
-        gap: $spacing-xs;
+        background: $bg-elevated;
+
+        &--resolved {
+            border-left-color: $success;
+        }
+
+        &--investigating,
+        &--identified {
+            border-left-color: $warning;
+        }
+
+        &--monitoring {
+            border-left-color: $info;
+        }
 
         &__header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            gap: $space-3;
+
+            > div {
+                min-width: 0;
+            }
+
+            strong {
+                display: block;
+                margin-bottom: 3px;
+            }
+
+            span {
+                color: $text-tertiary;
+                font-size: $font-size-xs;
+            }
+
+            > div:last-child {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+                gap: $space-2;
+            }
         }
 
-        p { margin: 0; font-size: 0.9rem; color: $text-secondary; }
+        p {
+            margin: 0;
+            color: $text-secondary;
+            line-height: 1.5;
+        }
+
+        &__actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: $space-2;
+        }
+    }
+
+    .incident-timeline {
+        display: grid;
+        gap: $space-2;
+        padding-left: $space-3;
+        border-left: 1px solid $border-subtle;
+
+        > div {
+            display: grid;
+            gap: 2px;
+        }
+
+        span {
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+        }
+
+        strong {
+            color: $text-secondary;
+            font-size: $font-size-xs;
+            text-transform: uppercase;
+        }
+    }
+
+    .status-page-settings {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+        gap: $space-3;
+        align-items: center;
+        margin-top: $space-4;
+
+        > div {
+            min-height: 72px;
+            padding: $space-4;
+            border: 1px solid $border-subtle;
+            border-radius: $radius-md;
+            background: $bg-elevated;
+        }
+
+        span {
+            display: block;
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+            font-weight: $font-weight-semibold;
+            text-transform: uppercase;
+        }
+
+        strong {
+            display: block;
+            margin-top: $space-2;
+            overflow-wrap: anywhere;
+        }
+
+        @media (max-width: 960px) {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .status-modal {
+        max-width: 640px;
+    }
+
+    .status-modal-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: $space-4;
+
+        @media (max-width: 640px) {
+            grid-template-columns: 1fr;
+        }
+    }
+}
+
+.public-status-page {
+    min-height: 100vh;
+    padding: clamp(24px, 4vw, 56px);
+    background:
+        linear-gradient(180deg, fade($accent-primary-raw, 8%) 0%, transparent 280px),
+        $bg-body;
+    color: $text-primary;
+
+    .public-status-hero,
+    .public-status-summary,
+    .public-status-section,
+    .public-status-shell {
+        width: min(1040px, 100%);
+        margin: 0 auto;
+    }
+
+    .public-status-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: $space-5;
+        padding: $space-6;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-lg;
+        background: $bg-card;
+
+        h1 {
+            margin: 0;
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            line-height: 1;
+        }
+
+        p {
+            margin: $space-3 0 0;
+            color: $text-secondary;
+            max-width: 720px;
+        }
+
+        @media (max-width: 700px) {
+            flex-direction: column;
+        }
+    }
+
+    .public-status-badge {
+        min-height: 34px;
+        padding: 8px $space-3;
+    }
+
+    .public-status-summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: $space-3;
+        margin-top: $space-4;
+
+        > div {
+            padding: $space-4;
+            border: 1px solid $border-subtle;
+            border-radius: $radius-md;
+            background: $bg-card;
+        }
+
+        span {
+            display: block;
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+            font-weight: $font-weight-semibold;
+            text-transform: uppercase;
+        }
+
+        strong {
+            display: block;
+            margin-top: $space-2;
+            font-size: $font-size-xl;
+        }
+
+        @media (max-width: 700px) {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .public-status-section {
+        margin-top: $space-5;
+
+        > header {
+            margin-bottom: $space-3;
+        }
+
+        h2,
+        h3 {
+            margin: 0;
+        }
+    }
+
+    .public-component-groups,
+    .public-component-list,
+    .public-incident-list {
+        display: grid;
+        gap: $space-3;
+    }
+
+    .public-component-group {
+        display: grid;
+        gap: $space-2;
+
+        > h3 {
+            color: $text-secondary;
+            font-size: $font-size-sm;
+        }
+    }
+
+    .public-component-row,
+    .public-incident,
+    .public-status-empty,
+    .public-status-shell {
+        padding: $space-4;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-md;
+        background: $bg-card;
+    }
+
+    .public-component-row {
+        display: flex;
+        justify-content: space-between;
+        gap: $space-4;
+        align-items: center;
+
+        > div:first-child {
+            display: flex;
+            align-items: center;
+            gap: $space-3;
+            min-width: 0;
+
+            span {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+        }
+
+        &__meta {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: $space-2;
+            color: $text-secondary;
+            font-size: $font-size-xs;
+        }
+
+        @media (max-width: 760px) {
+            align-items: flex-start;
+            flex-direction: column;
+
+            &__meta {
+                justify-content: flex-start;
+            }
+        }
+    }
+
+    .public-incident {
+        display: grid;
+        gap: $space-3;
+
+        &--active {
+            border-left: 3px solid $warning;
+        }
+
+        > div {
+            display: flex;
+            justify-content: space-between;
+            gap: $space-3;
+        }
+
+        h3 {
+            font-size: $font-size-base;
+        }
+
+        span {
+            display: block;
+            margin-top: 3px;
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+        }
+
+        p {
+            margin: 0;
+            color: $text-secondary;
+        }
+    }
+
+    .public-status-empty,
+    .public-status-shell--empty {
+        display: grid;
+        place-items: center;
+        gap: $space-2;
+        min-height: 180px;
+        color: $text-tertiary;
+        text-align: center;
     }
 }

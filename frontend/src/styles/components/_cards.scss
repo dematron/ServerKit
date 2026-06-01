@@ -8,9 +8,6 @@
     position: relative;
     overflow: hidden;
 
-    &:hover {
-        transform: translateY(-2px);
-    }
 }
 
 .card-header {
@@ -171,6 +168,32 @@
     font-weight: $font-weight-normal;
 }
 
+.stat-detail {
+    font-size: $font-size-xs;
+    color: $text-tertiary;
+    margin-top: 2px;
+}
+
+// Clickable stat-card variant: behaves as a filter button
+.stat-card--clickable {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    transition: transform $transition-base, border-color $transition-base, box-shadow $transition-base;
+
+    &:hover,
+    &.active {
+        transform: translateY(-1px);
+        border-color: $border-active;
+    }
+
+    &.active {
+        border-color: $accent-primary;
+    }
+}
+
 // Progress bar
 .progress-bar {
     height: 4px;
@@ -194,7 +217,8 @@
     border-radius: $radius-xl;
     border: 1px solid $border-subtle;
 
-    svg {
+    > svg,
+    &__icon svg {
         color: $text-tertiary;
         margin-bottom: $space-4;
     }
@@ -209,6 +233,26 @@
         color: $text-secondary;
         margin-bottom: $space-6;
     }
+
+    // When nested inside a card, drop the card-in-card double background.
+    .card &,
+    .card-body & {
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: $space-10 $space-5;
+    }
+}
+
+// Card body (content area below card-header)
+.card-body {
+    padding: 0;
+}
+
+// Card actions (button row inside card-header)
+.card-actions {
+    display: flex;
+    gap: $space-2;
 }
 
 // Section header
@@ -224,16 +268,19 @@
 
 // Danger zone card
 .danger-zone {
-    border-color: fade($danger, 30%);
+    @include flex-between();
+    padding: $space-6;
+    border: 1px solid fade($danger, 30%);
     background: fade($danger, 5%);
+    border-radius: $radius-xl;
 
-    h4 {
+    h3, h4 {
         color: $danger;
         margin-bottom: $space-2;
     }
 
     p {
         color: $text-secondary;
-        margin-bottom: $space-4;
+        margin: 0;
     }
 }

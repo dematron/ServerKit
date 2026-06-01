@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../hooks/useConfirm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -16,6 +17,7 @@ import GunicornTab from '../components/service-detail/GunicornTab';
 import CommandsTab from '../components/service-detail/CommandsTab';
 import GitConnectModal from '../components/service-detail/GitConnectModal';
 import OverviewTab from '../components/service-detail/OverviewTab';
+import { Button } from '@/components/ui/button';
 
 const TAB_LABELS = {
     overview: 'Overview',
@@ -79,6 +81,32 @@ const ServiceDetail = () => {
         }
     }
 
+    async function handleDeployLatest() {
+        setActionLoading('deploy-latest');
+        try {
+            let hasBuildConfig = false;
+            try {
+                const buildConfig = await api.getBuildConfig(service.id);
+                hasBuildConfig = Boolean(buildConfig.configured);
+            } catch {
+                hasBuildConfig = false;
+            }
+
+            if (hasBuildConfig) {
+                await api.deployApp(service.id);
+            } else {
+                await api.triggerAppDeploy(service.id, true);
+            }
+            toast.success('Deployment started');
+            await reload();
+        } catch (err) {
+            toast.error(err.message || 'Failed to deploy latest commit');
+        } finally {
+            setActionLoading(null);
+            setShowDeployMenu(false);
+        }
+    }
+
     async function handleDelete() {
         const firstConfirm = await confirm({ title: 'Delete Service', message: `Delete ${service.name}? This action cannot be undone.` });
         if (!firstConfirm) return;
@@ -104,9 +132,9 @@ const ServiceDetail = () => {
             <div className="empty-state">
                 <h3>Service not found</h3>
                 <p>{error || 'The service you are looking for does not exist.'}</p>
-                <button className="btn btn-primary" onClick={() => navigate('/services')}>
+                <Button onClick={() => navigate('/services')}>
                     Back to Services
-                </button>
+                </Button>
             </div>
         );
     }
@@ -114,7 +142,7 @@ const ServiceDetail = () => {
     const availableTabs = getTabsForType(service.app_type);
 
     return (
-        <div className="svc-detail">
+        <div className="page-container svc-detail">
             {/* Breadcrumb */}
             <div className="svc-detail__breadcrumb">
                 <Link to="/services">Services</Link>
@@ -156,15 +184,12 @@ const ServiceDetail = () => {
                 <div className="svc-detail__header-actions">
                     {/* Deploy dropdown */}
                     <div className="svc-detail__dropdown" ref={deployMenuRef}>
-                        <button
-                            className="btn btn-primary"
-                            onClick={() => setShowDeployMenu(!showDeployMenu)}
-                        >
+                        <Button onClick={() => setShowDeployMenu(!showDeployMenu)}>
                             Deploy
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-1">
                                 <polyline points="6 9 12 15 18 9"/>
                             </svg>
-                        </button>
+                        </Button>
                         {showDeployMenu && (
                             <div className="svc-detail__dropdown-menu">
                                 <button onClick={() => handleAction('restart')} disabled={actionLoading === 'restart'}>
@@ -175,16 +200,13 @@ const ServiceDetail = () => {
                                     Manual Deploy (Restart)
                                 </button>
                                 {deployConfig && (
-                                    <button onClick={() => {
-                                        setShowDeployMenu(false);
-                                        setActiveTab('events');
-                                    }}>
+                                    <button onClick={handleDeployLatest} disabled={actionLoading === 'deploy-latest'}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                             <circle cx="18" cy="18" r="3"/>
                                             <circle cx="6" cy="6" r="3"/>
                                             <path d="M6 21V9a9 9 0 0 0 9 9"/>
                                         </svg>
-                                        Deploy Latest Commit
+                                        {actionLoading === 'deploy-latest' ? 'Deploying...' : 'Deploy Latest Commit'}
                                     </button>
                                 )}
                             </div>
@@ -193,30 +215,31 @@ const ServiceDetail = () => {
 
                     {/* Restart button */}
                     {service.isRunning && (
-                        <button
-                            className="btn btn-secondary"
+                        <Button
+                            variant="outline"
                             onClick={() => handleAction('restart')}
                             disabled={actionLoading === 'restart'}
                         >
                             {actionLoading === 'restart' ? 'Restarting...' : 'Restart'}
-                        </button>
+                        </Button>
                     )}
 
                     {/* Start/Stop */}
                     {!service.isRunning && (
-                        <button
-                            className="btn btn-secondary"
+                        <Button
+                            variant="outline"
                             onClick={() => handleAction('start')}
                             disabled={actionLoading === 'start'}
                         >
                             {actionLoading === 'start' ? 'Starting...' : 'Start'}
-                        </button>
+                        </Button>
                     )}
 
                     {/* Three-dot menu */}
                     <div className="svc-detail__dropdown" ref={moreMenuRef}>
-                        <button
-                            className="btn btn-ghost btn-icon"
+                        <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={() => setShowMoreMenu(!showMoreMenu)}
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -224,7 +247,7 @@ const ServiceDetail = () => {
                                 <circle cx="12" cy="12" r="2"/>
                                 <circle cx="12" cy="19" r="2"/>
                             </svg>
-                        </button>
+                        </Button>
                         {showMoreMenu && (
                             <div className="svc-detail__dropdown-menu svc-detail__dropdown-menu--right">
                                 {service.isRunning && (
@@ -334,9 +357,9 @@ const ServiceDetail = () => {
             {showGitModal && (
                 <GitConnectModal
                     appId={service.id}
-                    currentConfig={deployConfig}
+                    deployConfig={deployConfig}
                     onClose={() => setShowGitModal(false)}
-                    onSave={() => {
+                    onSaved={() => {
                         setShowGitModal(false);
                         reload();
                     }}
@@ -381,8 +404,8 @@ function ServiceIcon({ type }) {
 function extractRepoDisplay(url) {
     if (!url) return '';
     try {
-        const cleaned = url.replace(/\.git$/, '');
-        const parts = cleaned.split('/');
+        const cleaned = url.replace(/\.git$/, '').replace(/^https?:\/\/[^@]+@/, 'https://');
+        const parts = cleaned.split(/[/:]/).filter(Boolean);
         return parts.slice(-2).join('/');
     } catch {
         return url;

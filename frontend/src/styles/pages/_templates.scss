@@ -3,6 +3,19 @@
 // ============================================
 
 .templates-page {
+    .templates-page-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-4;
+        margin-bottom: $space-4;
+
+        h1 {
+            margin: 0;
+            white-space: nowrap;
+        }
+    }
+
     .page-description {
         color: $text-secondary;
         margin-top: $space-2;
@@ -40,6 +53,7 @@
 .search-box {
     position: relative;
     max-width: 400px;
+    width: min(400px, 42vw);
 
     .search-icon {
         position: absolute;
@@ -52,7 +66,8 @@
 
     input {
         width: 100%;
-        padding: $space-3 $space-4;
+        min-height: 40px;
+        padding: $space-2 $space-4;
         padding-left: $space-10;
         padding-right: $space-10;
         background: $bg-card;
@@ -98,6 +113,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: $space-2;
+    min-width: 0;
 }
 
 .category-btn {
@@ -125,6 +141,11 @@
         border-color: $accent-primary;
         color: $accent-primary;
     }
+
+    &--more {
+        color: $accent-primary;
+        border-color: $border-active;
+    }
 }
 
 // Active Filters
@@ -133,7 +154,7 @@
     align-items: center;
     flex-wrap: wrap;
     gap: $space-2;
-    margin-bottom: $space-4;
+    margin: -$space-2 0 $space-4;
 }
 
 .filter-chip {
@@ -191,9 +212,10 @@
 
 // Results Header
 .templates-results-header {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
+    gap: $space-3;
     margin-bottom: $space-4;
     padding-bottom: $space-3;
     border-bottom: 1px solid $border-subtle;
@@ -202,6 +224,7 @@
 .results-count {
     font-size: $font-size-sm;
     color: $text-secondary;
+    white-space: nowrap;
 }
 
 .sort-dropdown {
@@ -412,6 +435,51 @@
     background: $bg-hover;
     border-radius: $radius-sm;
     text-transform: capitalize;
+}
+
+// Template Detail Drawer
+.template-detail-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 520px;
+    max-width: 100vw;
+    max-height: none;
+    border-radius: $radius-2xl 0 0 $radius-2xl;
+    border-left: 1px solid $border-subtle;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: $shadow-lg;
+    animation: drawer-slide-in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+
+    .modal-header {
+        flex-shrink: 0;
+        align-items: flex-start;
+        padding: $space-6;
+        border-bottom: 1px solid $border-subtle;
+        background:
+            linear-gradient(135deg, $accent-glow, transparent 42%),
+            linear-gradient(135deg, $bg-card, $bg-elevated);
+    }
+
+    .modal-body {
+        flex: 1;
+        min-height: 0;
+        max-height: none;
+        overflow-y: auto;
+        @include custom-scrollbar();
+    }
+
+    .modal-footer {
+        flex-shrink: 0;
+    }
+}
+
+@keyframes drawer-slide-in {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
 }
 
 // Template Detail Modal
@@ -631,16 +699,66 @@
     }
 }
 
+.deployment-progress {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: $space-3;
+    margin-bottom: $space-3;
+
+    span {
+        font-size: $font-size-sm;
+        color: $text-secondary;
+        text-transform: capitalize;
+        white-space: nowrap;
+    }
+}
+
+.deployment-progress-track {
+    height: 8px;
+    background: $bg-elevated;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-sm;
+    overflow: hidden;
+}
+
+.deployment-progress-fill {
+    height: 100%;
+    background: $accent-primary;
+    transition: width 180ms ease;
+}
+
 // Responsive
 @media (max-width: $breakpoint-md) {
+    .templates-page {
+        .templates-page-header {
+            flex-direction: column;
+            align-items: stretch;
+            gap: $space-3;
+
+            h1 {
+                white-space: normal;
+            }
+        }
+    }
+
+    .search-box {
+        width: 100%;
+        max-width: none;
+    }
+
     .templates-grid {
         grid-template-columns: 1fr;
     }
 
     .templates-results-header {
-        flex-direction: column;
+        grid-template-columns: 1fr;
         align-items: flex-start;
         gap: $space-3;
+    }
+
+    .category-filters {
+        width: 100%;
     }
 
     .sort-dropdown {

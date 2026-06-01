@@ -1,99 +1,94 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { AlertTriangle, Info, AlertCircle } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 
-const iconMap = {
-    danger: AlertTriangle,
-    warning: AlertCircle,
-    info: Info
-};
+const iconMap = { danger: AlertTriangle, warning: AlertCircle, info: Info };
+const iconColor = { danger: 'text-destructive', warning: 'text-yellow-400', info: 'text-blue-400' };
+const iconBg = { danger: 'bg-destructive/10', warning: 'bg-yellow-500/10', info: 'bg-blue-500/10' };
 
 export function ConfirmDialog({
-    isOpen,
-    title,
-    message,
-    details,
-    confirmText = 'Confirm',
-    cancelText = 'Cancel',
-    variant = 'danger',
-    requireConfirmation,
-    confirmationPlaceholder,
-    onConfirm,
-    onCancel
+  isOpen,
+  title,
+  message,
+  details,
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
+  variant = 'danger',
+  requireConfirmation,
+  confirmationPlaceholder,
+  onConfirm,
+  onCancel,
 }) {
-    const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState('');
 
-    // Reset input when dialog opens/closes
-    useEffect(() => {
-        if (isOpen) {
-            setInputValue('');
-        }
-    }, [isOpen]);
+  useEffect(() => { if (isOpen) setInputValue(''); }, [isOpen]);
 
-    if (!isOpen) return null;
-
-    const Icon = iconMap[variant] || AlertTriangle;
-    const isConfirmDisabled = requireConfirmation && inputValue !== requireConfirmation;
-
-    function handleConfirm() {
-        if (!isConfirmDisabled) {
-            onConfirm();
-        }
-    }
-
-    function handleKeyDown(e) {
-        if (e.key === 'Enter' && !isConfirmDisabled) {
-            handleConfirm();
-        }
-    }
+  const Icon = iconMap[variant] || AlertTriangle;
+  const isConfirmDisabled = requireConfirmation && inputValue !== requireConfirmation;
 
     return (
-        <div className="modal-overlay" onClick={onCancel}>
-            <div className="modal confirm-dialog" onClick={e => e.stopPropagation()}>
-                <div className="confirm-dialog-content">
-                    <div className={`confirm-dialog-icon confirm-dialog-icon-${variant}`}>
-                        <Icon size={32} />
-                    </div>
-                    <h2 className="confirm-dialog-title">{title}</h2>
-                    <p className="confirm-dialog-message">{message}</p>
-                    {details && (
-                        <div className="confirm-dialog-details">
-                            {details}
-                        </div>
-                    )}
-                    {requireConfirmation && (
-                        <div className="confirm-dialog-input">
-                            <label>
-                                Type <strong>{requireConfirmation}</strong> to confirm:
-                            </label>
-                            <input
-                                type="text"
-                                value={inputValue}
-                                onChange={(e) => setInputValue(e.target.value)}
-                                onKeyDown={handleKeyDown}
-                                placeholder={confirmationPlaceholder || requireConfirmation}
-                                autoFocus
-                            />
-                        </div>
-                    )}
-                </div>
-                <div className="confirm-dialog-actions">
-                    <button
-                        className="btn btn-secondary"
-                        onClick={onCancel}
-                    >
-                        {cancelText}
-                    </button>
-                    <button
-                        className={`btn btn-${variant === 'danger' ? 'danger' : 'primary'}`}
-                        onClick={handleConfirm}
-                        disabled={isConfirmDisabled}
-                    >
-                        {confirmText}
-                    </button>
-                </div>
+      <AlertDialog open={isOpen} onOpenChange={(v) => !v && onCancel()}>
+      <AlertDialogContent className="sm:max-w-xl">
+        <AlertDialogHeader className="items-center text-center sm:text-center">
+          <div className="flex flex-col items-center gap-3">
+            <div
+              className={cn(
+                'flex size-12 shrink-0 items-center justify-center rounded-full border',
+                iconBg[variant] || iconBg.danger,
+                iconColor[variant] || 'text-destructive',
+                variant === 'danger' && 'border-destructive/20',
+                variant === 'warning' && 'border-yellow-500/20',
+                variant === 'info' && 'border-blue-500/20'
+              )}
+            >
+              <Icon size={24} />
             </div>
-        </div>
-    );
+            <div className="min-w-0">
+              <AlertDialogTitle>{title}</AlertDialogTitle>
+              {message && <AlertDialogDescription className="mt-1.5">{message}</AlertDialogDescription>}
+              {details && <p className="text-sm text-muted-foreground mt-1.5">{details}</p>}
+            </div>
+          </div>
+          {requireConfirmation && (
+            <div className="space-y-2 mt-2 w-full text-left">
+              <Label className="text-muted-foreground">
+                Type <strong className="text-foreground">{requireConfirmation}</strong> to confirm:
+              </Label>
+              <Input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !isConfirmDisabled && onConfirm()}
+                placeholder={confirmationPlaceholder || requireConfirmation}
+                autoFocus
+              />
+            </div>
+          )}
+        </AlertDialogHeader>
+        <AlertDialogFooter className="sm:justify-center">
+          <AlertDialogCancel onClick={onCancel}>{cancelText}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirm}
+            disabled={isConfirmDisabled}
+            className={cn(variant !== 'danger' && 'bg-primary hover:bg-primary/90')}
+          >
+            {confirmText}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 export default ConfirmDialog;

@@ -230,36 +230,6 @@
     width: 90%;
 }
 
-// Alert with close button
-.alert {
-    position: relative;
-    padding: $space-4;
-    border-radius: $radius-md;
-    margin-bottom: $space-4;
-
-    &-danger {
-        background: $danger-bg;
-        border: 1px solid $danger-border;
-        color: $danger;
-    }
-
-    &-close {
-        position: absolute;
-        top: $space-2;
-        right: $space-3;
-        background: none;
-        border: none;
-        font-size: $font-size-lg;
-        color: inherit;
-        opacity: 0.6;
-        cursor: pointer;
-
-        &:hover {
-            opacity: 1;
-        }
-    }
-}
-
 // Button extra small
 .btn-xs {
     padding: $space-1 $space-2;

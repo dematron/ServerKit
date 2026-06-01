@@ -17,6 +17,13 @@ export async function createApp(appData) {
     });
 }
 
+export async function createAppFromRepository(appData) {
+    return this.request('/apps/from-repository', {
+        method: 'POST',
+        body: appData,
+    });
+}
+
 export async function updateApp(id, appData) {
     return this.request(`/apps/${id}`, {
         method: 'PUT',
@@ -188,10 +195,15 @@ export async function getTemplate(templateId) {
     return this.request(`/templates/${templateId}`);
 }
 
-export async function installTemplate(templateId, appName, variables = {}) {
+export async function installTemplate(templateId, appName, variables = {}, options = {}) {
     return this.request(`/templates/${templateId}/install`, {
         method: 'POST',
-        body: { app_name: appName, variables }
+        body: {
+            app_name: appName,
+            variables,
+            server_id: options.serverId || 'local',
+            wait: options.wait || false,
+        }
     });
 }
 

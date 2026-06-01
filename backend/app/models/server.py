@@ -54,6 +54,27 @@ class Server(db.Model):
     """Represents a remote server managed by ServerKit"""
     __tablename__ = 'servers'
 
+    DOCKER_READ_ACTIONS = {
+        'container': {'list', 'inspect', 'logs', 'stats'},
+        'image': {'list'},
+        'volume': {'list'},
+        'network': {'list'},
+        'compose': {'list', 'ps', 'logs'},
+    }
+    SYSTEM_READ_ACTIONS = {'metrics', 'info', 'processes'}
+
+    # Control-plane actions that aren't gated by per-server permissions:
+    # the panel issues these to discover state or refresh metadata, not
+    # to mutate the host. Without this list, an agent with the
+    # 'docker_manager' profile (no 'agent:*' grant) would 403 on the
+    # Refresh button in the System Status card. Authentication still
+    # happens at the JWT layer; this only short-circuits the per-server
+    # ACL.
+    CONTROL_PLANE_ACTIONS = {
+        'agent:recapabilities',
+        'agent:update',
+    }
+
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Basic Info
@@ -109,6 +130,18 @@ class Server(db.Model):
     registration_token_expires = db.Column(db.DateTime)
     registered_at = db.Column(db.DateTime)
     registered_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+
+    # Cached capability snapshot — written every time the agent reports
+    # a Capabilities message, so the panel can render the full Overview
+    # tab even when the agent is offline. Old agents that pre-date these
+    # fields just have NULL here; the UI falls back gracefully.
+    cached_capabilities = db.Column(db.JSON)            # {docker:bool, files:bool, ...}
+    cached_runtimes = db.Column(db.JSON)                # {python:"3.11.4", node:"20.10.0", ...}
+    cached_runtime_managers = db.Column(db.JSON)        # {python:"pyenv-win"|"pyenv"|""}
+    cached_allowed_paths = db.Column(db.JSON)           # ["/var/www", ...]
+    cached_sudo = db.Column(db.String(20))              # "root"|"passwordless"|"unavailable"
+    cached_systemd_json = db.Column(db.Boolean)         # systemctl --output=json supported?
+    capabilities_at = db.Column(db.DateTime)            # when the snapshot was last refreshed
 
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -173,6 +206,23 @@ class Server(db.Model):
             return decrypt_secret(self.api_secret_encrypted)
         except Exception as e:
             print(f"Error decrypting API secret: {e}")
+            return None
+
+    def get_pending_api_secret(self):
+        """Decrypt and return the pending API secret used during key rotation.
+
+        Mirrors get_api_secret() for the api_secret_pending_encrypted column so
+        an agent that authenticates with the pending key during a rotation
+        window can have its signature verified against the right secret.
+        Returns None when there is no pending secret or it can't be decrypted.
+        """
+        if not self.api_secret_pending_encrypted:
+            return None
+        try:
+            from app.utils.crypto import decrypt_secret
+            return decrypt_secret(self.api_secret_pending_encrypted)
+        except Exception as e:
+            print(f"Error decrypting pending API secret: {e}")
             return None
 
     def start_key_rotation(self):
@@ -247,28 +297,97 @@ class Server(db.Model):
 
     def has_permission(self, scope):
         """Check if server/agent has a specific permission scope"""
+        # Control-plane actions (agent:recapabilities, agent:update) are
+        # not gated — they're issued by the panel to discover state and
+        # refresh metadata. Authentication is enforced at the JWT layer.
+        if scope in self.CONTROL_PLANE_ACTIONS:
+            return True
         if not self.permissions:
             return False
         if '*' in self.permissions:
             return True
-        # Check exact match or wildcard
-        scope_parts = scope.split(':')
+
+        candidate_scopes = self._expand_permission_scope(scope)
         for perm in self.permissions:
-            if perm == scope:
-                return True
-            # Check wildcard patterns like 'docker:*'
-            perm_parts = perm.split(':')
-            if len(perm_parts) <= len(scope_parts):
-                match = True
-                for i, part in enumerate(perm_parts):
-                    if part == '*':
-                        break
-                    if i >= len(scope_parts) or part != scope_parts[i]:
-                        match = False
-                        break
-                if match:
+            for candidate in candidate_scopes:
+                if self._permission_matches(perm, candidate):
                     return True
         return False
+
+    # Verb tokens that mean "read this thing, don't change it." When the
+    # last component of an action matches one of these, the expander
+    # adds a `<namespace>:read` candidate so a permissions list with
+    # only generic read grants doesn't 403 on a specific list/inspect
+    # call.
+    READ_ACTION_VERBS = {
+        'list', 'list_installed', 'list_units',
+        'read', 'get', 'inspect', 'status', 'info',
+        'search', 'logs', 'stats', 'available',
+        'installed', 'current', 'show',
+    }
+
+    @classmethod
+    def _expand_permission_scope(cls, scope):
+        """Add profile and legacy aliases for an agent command scope."""
+        candidate_scopes = {scope}
+        scope_parts = scope.split(':')
+
+        if len(scope_parts) >= 3 and scope_parts[0] == 'docker':
+            resource = scope_parts[1]
+            action = scope_parts[2]
+            read_actions = cls.DOCKER_READ_ACTIONS.get(resource, set())
+
+            if action in read_actions:
+                candidate_scopes.add(f'docker:{resource}:read')
+                candidate_scopes.add('docker:read')
+            else:
+                candidate_scopes.add(f'docker:{resource}:write')
+                candidate_scopes.add('docker:write')
+
+        if len(scope_parts) >= 2 and scope_parts[0] == 'system':
+            action = scope_parts[1]
+            if action in cls.SYSTEM_READ_ACTIONS:
+                candidate_scopes.add(f'system:{action}:read')
+                candidate_scopes.add('system:metrics:read')
+                candidate_scopes.add('system:read')
+
+        # Generic read-action expansion for the namespaces we added in
+        # later phases (packages, systemd, runtimes, cloudflared, file,
+        # cron). When the leaf verb is a read (list/info/status/etc.),
+        # accept either an exact match, a `<ns>:read`, a `<ns>:*`, or
+        # any of the legacy `<ns>:<sub>:read` variants. Mutating verbs
+        # fall through to require explicit grants.
+        if scope_parts:
+            namespace = scope_parts[0]
+            tail = scope_parts[-1]
+            if tail in cls.READ_ACTION_VERBS:
+                candidate_scopes.add(f'{namespace}:read')
+                if len(scope_parts) >= 2:
+                    candidate_scopes.add(f'{namespace}:{scope_parts[1]}:read')
+            else:
+                candidate_scopes.add(f'{namespace}:write')
+
+        return candidate_scopes
+
+    @staticmethod
+    def _permission_matches(permission, scope):
+        """Check exact and wildcard patterns like docker:* or docker:container:*."""
+        if permission == scope:
+            return True
+
+        scope_parts = scope.split(':')
+        perm_parts = permission.split(':')
+
+        if len(perm_parts) > len(scope_parts):
+            return False
+
+        for i, part in enumerate(perm_parts):
+            if part == '*':
+                return True
+            if i >= len(scope_parts) or part != scope_parts[i]:
+                return False
+
+        return True
 
     def to_dict(self, include_metrics=False):
         result = {
@@ -316,7 +435,13 @@ class ServerMetrics(db.Model):
     """Historical metrics from servers"""
     __tablename__ = 'server_metrics'
 
-    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    # SQLite only autoincrements when the column type is exactly INTEGER
+    # PRIMARY KEY (rowid alias). With BigInteger every insert failed with
+    # "NOT NULL constraint failed: server_metrics.id" and no metrics ever
+    # got stored — exactly the silent dashboard-zeroes symptom we just
+    # tracked down. Integer caps at ~2.1B rows which at 1 sample/sec is
+    # ~68 years per server, plenty.
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     server_id = db.Column(db.String(36), db.ForeignKey('servers.id'), nullable=False, index=True)
 
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)

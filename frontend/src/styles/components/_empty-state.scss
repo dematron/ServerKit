@@ -30,4 +30,34 @@
     &__action {
         margin-top: $spacing-sm;
     }
+
+    // Large variant — for full-page "not installed" / "unavailable" states
+    &--lg {
+        padding: $space-16 $space-8;
+        min-height: 400px;
+
+        .empty-state__icon {
+            opacity: 0.4;
+            margin-bottom: $space-6;
+        }
+
+        .empty-state__title {
+            font-size: $font-size-2xl;
+        }
+
+        .empty-state__description {
+            font-size: $font-size-base;
+            max-width: 480px;
+            margin-bottom: $space-6;
+        }
+
+        .empty-state__action {
+            margin-top: $space-4;
+        }
+    }
+
+    // Spinner inside empty state (loading variant)
+    .spinner {
+        margin-bottom: $spacing-md;
+    }
 }

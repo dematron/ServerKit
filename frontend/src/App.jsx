@@ -1,16 +1,15 @@
-import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ResourceTierProvider } from './contexts/ResourceTierContext';
-import { ToastContainer } from './components/Toast';
+import { Toaster } from './components/ui/sonner';
 import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Setup from './pages/Setup';
-import Applications from './pages/Applications';
 import ApplicationDetail from './pages/ApplicationDetail';
 import Docker from './pages/Docker';
 import Databases from './pages/Databases';
@@ -22,10 +21,10 @@ import Settings from './pages/Settings';
 import FileManager from './pages/FileManager';
 import FTPServer from './pages/FTPServer';
 // Firewall is now part of Security page
-import Git from './pages/Git';
 import CronJobs from './pages/CronJobs';
 import Security from './pages/Security';
 import Services from './pages/Services';
+import NewService from './pages/NewService';
 import ServiceDetail from './pages/ServiceDetail';
 import Templates from './pages/Templates';
 import WorkflowBuilder from './pages/WorkflowBuilder';
@@ -41,14 +40,21 @@ import WordPressProject from './pages/WordPressProject';
 import SSLCertificates from './pages/SSLCertificates';
 import Email from './pages/Email';
 import SSOCallback from './pages/SSOCallback';
+import SourceConnectionCallback from './pages/SourceConnectionCallback';
 import DatabaseMigration from './pages/DatabaseMigration';
-import AgentPlugins from './pages/AgentPlugins';
 import ServerTemplates from './pages/ServerTemplates';
 import Workspaces from './pages/Workspaces';
 import DNSZones from './pages/DNSZones';
 import StatusPages from './pages/StatusPages';
+import PublicStatusPage from './pages/PublicStatusPage';
 import CloudProvision from './pages/CloudProvision';
 import Marketplace from './pages/Marketplace';
+import StyleGuide from './pages/StyleGuide';
+import AppMap from './pages/AppMap';
+import Documentation from './pages/Documentation';
+import Deployments from './pages/Deployments';
+import useExtensionRoutes from './plugins/ExtensionRoutes';
+import { useContributions } from './plugins/contributions';
 
 // Page title mapping
 const PAGE_TITLES = {
@@ -57,10 +63,12 @@ const PAGE_TITLES = {
     '/register': 'Register',
     '/setup': 'Setup',
     '/services': 'Services',
+    '/services/new': 'New Service',
     '/apps': 'Applications',
     '/wordpress': 'WordPress Sites',
     '/wordpress/projects': 'WordPress Projects',
     '/templates': 'Templates',
+    '/deployments': 'Deployment Activity',
     '/workflow': 'Workflow Builder',
     '/domains': 'Domains',
     '/databases': 'Databases',
@@ -68,7 +76,6 @@ const PAGE_TITLES = {
     '/docker': 'Docker',
     '/servers': 'Servers',
     '/downloads': 'Downloads',
-    '/git': 'Git Repositories',
     '/files': 'File Manager',
     '/ftp': 'FTP Server',
     '/monitoring': 'Monitoring',
@@ -78,24 +85,29 @@ const PAGE_TITLES = {
     '/email': 'Email Server',
     '/terminal': 'Terminal',
     '/settings': 'Settings',
+    '/connections/callback/github': 'GitHub Connection',
     '/migrate': 'Database Migration',
     '/fleet': 'Agent Fleet',
     '/fleet-monitor': 'Fleet Monitor',
-    '/agent-plugins': 'Agent Plugins',
+    '/agent-plugins': 'Marketplace',
     '/server-templates': 'Server Templates',
     '/workspaces': 'Workspaces',
     '/dns': 'DNS Zones',
     '/status-pages': 'Status Pages',
     '/cloud': 'Cloud Provisioning',
     '/marketplace': 'Marketplace',
+    '/style-guide': 'Style Guide',
+    '/app-map': 'App Map',
+    '/documentation': 'Documentation',
 };
 
 function PageTitleUpdater() {
     const location = useLocation();
+    const { page_titles: pluginTitles } = useContributions();
 
     useEffect(() => {
         const path = location.pathname;
-        let title = PAGE_TITLES[path];
+        let title = PAGE_TITLES[path] || (pluginTitles && pluginTitles[path]);
 
         // Handle dynamic routes and tab sub-routes
         if (!title) {
@@ -103,6 +115,8 @@ function PageTitleUpdater() {
             const basePath = '/' + path.split('/')[1];
             if (PAGE_TITLES[basePath]) {
                 title = PAGE_TITLES[basePath];
+            } else if (pluginTitles && pluginTitles[basePath]) {
+                title = pluginTitles[basePath];
             } else if (path.startsWith('/services/')) title = 'Service Details';
             else if (path.startsWith('/apps/')) title = 'Application Details';
             else if (path.startsWith('/servers/')) title = 'Server Details';
@@ -112,7 +126,7 @@ function PageTitleUpdater() {
         }
 
         document.title = title ? `${title} | ServerKit` : 'ServerKit';
-    }, [location]);
+    }, [location, pluginTitles]);
 
     return null;
 }
@@ -170,7 +184,13 @@ function SetupRoute({ children }) {
     return children;
 }
 
+function LegacyGitExtRedirect() {
+    const { tab } = useParams();
+    return <Navigate to={tab ? `/git/${tab}` : '/git'} replace />;
+}
+
 function AppRoutes() {
+    const { dashboardRoutes, standaloneGroups } = useExtensionRoutes();
     return (
         <Routes>
             <Route path="/migrate" element={<DatabaseMigration />} />
@@ -194,6 +214,26 @@ function AppRoutes() {
                     <Register />
                 </PublicRoute>
             } />
+            <Route path="/connections/callback/:provider" element={
+                <PrivateRoute>
+                    <SourceConnectionCallback />
+                </PrivateRoute>
+            } />
+            <Route path="/status/:slug" element={<PublicStatusPage />} />
+            {/* Standalone plugin layouts — bare or custom. Each group is
+                a sibling top-level Route under PrivateRoute, so the
+                plugin owns the chrome (no DashboardLayout sidebar). */}
+            {standaloneGroups.map((group) => {
+                const Layout = group.LayoutComponent;
+                return (
+                    <Route
+                        key={`standalone:${group.layoutId}`}
+                        element={<PrivateRoute><Layout /></PrivateRoute>}
+                    >
+                        {group.routes}
+                    </Route>
+                );
+            })}
             <Route path="/" element={
                 <PrivateRoute>
                     <DashboardLayout />
@@ -201,6 +241,7 @@ function AppRoutes() {
             }>
                 <Route index element={<Dashboard />} />
                 <Route path="services" element={<Services />} />
+                <Route path="services/new" element={<NewService />} />
                 <Route path="services/:id" element={<ServiceDetail />} />
                 <Route path="apps" element={<Navigate to="/services" replace />} />
                 <Route path="apps/:id" element={<ApplicationDetail />} />
@@ -212,6 +253,8 @@ function AppRoutes() {
                 <Route path="wordpress/:id" element={<WordPressDetail />} />
                 <Route path="wordpress/:id/:tab" element={<WordPressDetail />} />
                 <Route path="templates" element={<Templates />} />
+                <Route path="deployments" element={<Deployments />} />
+                <Route path="deployments/:jobId" element={<Deployments />} />
                 <Route path="workflow" element={<WorkflowBuilder />} />
                 <Route path="domains" element={<Domains />} />
                 <Route path="databases" element={<Databases />} />
@@ -224,17 +267,22 @@ function AppRoutes() {
                 <Route path="servers/:id/:tab" element={<ServerDetail />} />
                 <Route path="fleet" element={<AgentFleet />} />
                 <Route path="fleet-monitor" element={<FleetMonitor />} />
-                <Route path="agent-plugins" element={<AgentPlugins />} />
+                <Route path="agent-plugins" element={<Navigate to="/marketplace" replace />} />
                 <Route path="server-templates" element={<ServerTemplates />} />
                 <Route path="workspaces" element={<Workspaces />} />
                 <Route path="dns" element={<DNSZones />} />
                 <Route path="status-pages" element={<StatusPages />} />
                 <Route path="cloud" element={<CloudProvision />} />
                 <Route path="marketplace" element={<Marketplace />} />
+                <Route path="style-guide" element={<StyleGuide />} />
+                <Route path="style-guide/:tab" element={<StyleGuide />} />
+                <Route path="app-map" element={<AppMap />} />
+                <Route path="app-map/:tab" element={<AppMap />} />
+                <Route path="documentation" element={<Documentation />} />
                 <Route path="downloads" element={<Downloads />} />
                 <Route path="firewall" element={<Navigate to="/security/firewall" replace />} />
-                <Route path="git" element={<Git />} />
-                <Route path="git/:tab" element={<Git />} />
+                <Route path="git-ext" element={<LegacyGitExtRedirect />} />
+                <Route path="git-ext/:tab" element={<LegacyGitExtRedirect />} />
                 <Route path="files" element={<FileManager />} />
                 <Route path="ftp" element={<FTPServer />} />
                 <Route path="ftp/:tab" element={<FTPServer />} />
@@ -251,6 +299,7 @@ function AppRoutes() {
                 <Route path="terminal/:tab" element={<Terminal />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="settings/:tab" element={<Settings />} />
+                {dashboardRoutes}
             </Route>
         </Routes>
     );
@@ -265,7 +314,7 @@ function App() {
                     <ResourceTierProvider>
                         <ToastProvider>
                             <AppRoutes />
-                            <ToastContainer />
+                            <Toaster />
                         </ToastProvider>
                     </ResourceTierProvider>
                 </AuthProvider>

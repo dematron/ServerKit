@@ -65,6 +65,10 @@ def create_app(config_name=None):
     from app.middleware.api_analytics import register_api_analytics
     register_api_analytics(app)
 
+    # Register fallback audit logging for authenticated mutating API requests
+    from app.middleware.audit import register_audit_fallback
+    register_audit_fallback(app)
+
     # Update rate limiter with custom key function
     from app.middleware.rate_limit import get_rate_limit_key, register_rate_limit_headers
     limiter._key_func = get_rate_limit_key
@@ -81,6 +85,11 @@ def create_app(config_name=None):
     # Register blueprints - Auth
     from app.api.auth import auth_bp
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')
+
+    # Agent polling fallback transport (REST equivalent of the WS gateway,
+    # used when tunnels mangle WebSocket frames).
+    from app.api.agent_poll import agent_poll_bp
+    app.register_blueprint(agent_poll_bp, url_prefix='/api/v1/agent')
 
     # Register blueprints - Core
     from app.api.apps import apps_bp
@@ -144,7 +153,9 @@ def create_app(config_name=None):
 
     # Register blueprints - Builds & Deployments
     from app.api.builds import builds_bp
+    from app.api.deployment_jobs import deployment_jobs_bp
     app.register_blueprint(builds_bp, url_prefix='/api/v1/builds')
+    app.register_blueprint(deployment_jobs_bp, url_prefix='/api/v1/deployment-jobs')
 
     # Register blueprints - Templates
     from app.api.templates import templates_bp
@@ -194,6 +205,10 @@ def create_app(config_name=None):
     from app.api.sso import sso_bp
     app.register_blueprint(sso_bp, url_prefix='/api/v1/sso')
 
+    # Register blueprints - Source provider connections
+    from app.api.source_connections import source_connections_bp
+    app.register_blueprint(source_connections_bp, url_prefix='/api/v1/source-connections')
+
     # Register blueprints - Database Migrations
     from app.api.migrations import migrations_bp
     app.register_blueprint(migrations_bp, url_prefix='/api/v1/migrations')
@@ -231,6 +246,10 @@ def create_app(config_name=None):
     # Register blueprints - Fleet Monitor (Cross-server monitoring)
     from app.api.fleet_monitor import fleet_monitor_bp
     app.register_blueprint(fleet_monitor_bp, url_prefix='/api/v1/fleet-monitor')
+
+    # Register blueprints - Fleet (target picker, capability discovery)
+    from app.api.fleet import fleet_bp
+    app.register_blueprint(fleet_bp, url_prefix='/api/v1/fleet')
 
     # Register blueprints - Agent Plugins
     from app.api.agent_plugins import agent_plugins_bp
@@ -276,7 +295,16 @@ def create_app(config_name=None):
     from app.api.marketplace import marketplace_bp
     app.register_blueprint(marketplace_bp, url_prefix='/api/v1/marketplace')
 
-    # Handle database migrations (Alembic)
+    # Register blueprints - Plugins
+    from app.api.plugins import plugins_bp
+    app.register_blueprint(plugins_bp, url_prefix='/api/v1/plugins')
+
+    # Register blueprints - Agent Pairing (RustDesk-style short-code flow)
+    from app.api.pairing import pairing_bp
+    app.register_blueprint(pairing_bp, url_prefix='/api/v1/pairing')
+
+    # Handle database migrations (Alembic) — must run before plugin loader
+    # since the loader queries the installed_plugins table.
     with app.app_context():
         from app.services.migration_service import MigrationService
         MigrationService.check_and_prepare(app)
@@ -285,6 +313,15 @@ def create_app(config_name=None):
         from app.services.settings_service import SettingsService
         SettingsService.initialize_defaults()
         SettingsService.migrate_legacy_roles()
+
+        # Load installed plugins (dynamic blueprints) AFTER migrations,
+        # so the installed_plugins table exists.
+        try:
+            from app.services.plugin_service import load_all_plugins
+            load_all_plugins(app)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f'Plugin loader: {e}')
 
         # Start metrics history collection in background
         from app.services.metrics_history_service import MetricsHistoryService
@@ -303,6 +340,9 @@ def create_app(config_name=None):
 
         # Start hourly analytics aggregation and event retry threads
         _start_api_background_threads(app)
+
+        # Start hourly pruner for expired pending agent pairings
+        _start_pairing_pruner(app)
 
     # Request body size limit
     app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB limit
@@ -430,6 +470,41 @@ def _check_auto_sync_schedules(logger):
 
 
 _api_bg_thread = None
+
+
+def _start_pairing_pruner(app):
+    """Start a background thread that prunes expired PendingAgent rows hourly."""
+    global _pairing_prune_thread
+    if _pairing_prune_thread is not None:
+        return
+
+    import threading
+    import time
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    def prune_loop():
+        # Wait a bit before first run so app is fully initialized.
+        time.sleep(60)
+        while True:
+            try:
+                with app.app_context():
+                    from app.services import pairing_service
+                    pairing_service.prune_expired()
+            except Exception as e:
+                logger.error(f'Pairing pruner error: {e}')
+            time.sleep(3600)
+
+    _pairing_prune_thread = threading.Thread(
+        target=prune_loop,
+        daemon=True,
+        name='pairing-pruner'
+    )
+    _pairing_prune_thread.start()
+
+
+_pairing_prune_thread = None
 
 
 def _start_api_background_threads(app):

@@ -1,32 +1,116 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { api } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import Spinner from '../components/Spinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import {
-    Folder, File, FileCode, FileText, FileImage, FileVideo, FileAudio,
-    FileArchive, Database, Terminal, Upload, FolderPlus, FilePlus,
-    ArrowLeft, Search, X, RefreshCw, Eye, EyeOff, Download, Edit3,
-    Trash2, Lock, BarChart3, ChevronDown, ChevronRight, HardDrive,
-    PieChart, Clock, PanelRightClose, PanelRightOpen
+    Folder, File, Upload, FolderPlus,
+    ArrowLeft, ArrowRight, ArrowUp, Search, X, RefreshCw, Eye, EyeOff,
+    Download, Edit3, Trash2, ChevronDown, ChevronRight,
+    HardDrive, Clock, PanelLeftClose, PanelLeftOpen,
+    LayoutGrid, List, Home, CloudUpload,
+    Check, Copy, ArrowUpDown,
+    FolderTree as FolderTreeIcon,
 } from 'lucide-react';
-import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
-// LocalStorage keys
-const SIDEBAR_VISIBLE_KEY = 'serverkit-fm-sidebar';
-const DISK_COLLAPSED_KEY = 'serverkit-fm-disk-collapsed';
+import FolderTree from '../components/file-manager/FolderTree';
+import FileCard from '../components/file-manager/FileCard';
+import FileRow from '../components/file-manager/FileRow';
+import PreviewDrawer from '../components/file-manager/PreviewDrawer';
+import ContextMenu from '../components/file-manager/ContextMenu';
+import TargetPicker from '../components/TargetPicker';
+import { TREE_ROOTS, getFileType, formatBytes } from '../components/file-manager/fileTypes';
+
+// File manager operations that the agent can serve over file:* commands.
+// Anything else (mkdir, delete, rename, copy, chmod, search, disk usage,
+// upload/download) is panel-host-only until the matching agent verbs land.
+const REMOTE_SUPPORTED = new Set(['browse', 'read', 'write']);
+
+function deriveParent(path) {
+    if (!path || path === '/' || path === '') return null;
+    // A Windows drive root ("C:/" or "C:") sits directly under the agent's
+    // drive list, which the agent serves for the "/" path. Remote agents
+    // emit forward-slash paths on the wire, so we only ever see "/" here.
+    if (/^[A-Za-z]:\/?$/.test(path)) return '/';
+    const trimmed = path.replace(/\/+$/, '');
+    const idx = trimmed.lastIndexOf('/');
+    if (idx <= 0) return '/';
+    const parent = trimmed.slice(0, idx);
+    // Keep a bare drive letter as a drive root ("C:" -> "C:/") so navigating
+    // up doesn't hit Windows' "current directory on C:" semantics.
+    if (/^[A-Za-z]:$/.test(parent)) return parent + '/';
+    return parent;
+}
+
+function unwrapAgentData(res) {
+    // Remote endpoints return the agent payload directly
+    // (RemoteFileService → _agent_result unwraps {data}). Defensive
+    // unwrap covers both shapes for older agent responses.
+    if (res && typeof res === 'object' && 'success' in res && 'data' in res) {
+        return res.data;
+    }
+    return res;
+}
+
+const STORAGE = {
+    sidebar: 'serverkit-fm-sidebar',
+    treeCollapsed: 'serverkit-fm-tree-collapsed',
+    diskCollapsed: 'serverkit-fm-disk-collapsed',
+    expanded: 'serverkit-fm-tree-expanded',
+    viewMode: 'serverkit-fm-view-mode',
+    sortBy: 'serverkit-fm-sort-by',
+    sortDir: 'serverkit-fm-sort-dir',
+};
+
+const FILTER_OPTIONS = [
+    { id: 'all', label: 'All' },
+    { id: 'folder', label: 'Folders' },
+    { id: 'image', label: 'Images' },
+    { id: 'code', label: 'Code' },
+    { id: 'text', label: 'Documents' },
+    { id: 'data', label: 'Data' },
+    { id: 'video', label: 'Videos' },
+    { id: 'audio', label: 'Audio' },
+    { id: 'archive', label: 'Archives' },
+];
 
 function FileManager() {
-    const [currentPath, setCurrentPath] = useState('/home');
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    // ─── target ──────────────────────────────────────────
+    // Local panel host by default. Switching to an agent re-routes the
+    // browse/read/write verbs through /servers/<id>/files/* and disables
+    // operations the agent can't serve yet.
+    const [target, setTarget] = useState({ kind: 'local' });
+    const isRemote = target.kind === 'agent';
+    const previousTargetRef = useRef({ kind: 'local', server_id: null });
+
+    // ─── core ────────────────────────────────────────────
+    const [currentPath, setCurrentPath] = useState(() => searchParams.get('path') || '/home');
     const [entries, setEntries] = useState([]);
     const [parentPath, setParentPath] = useState(null);
     const [loading, setLoading] = useState(true);
     const [showHidden, setShowHidden] = useState(false);
+
+    // ─── search ──────────────────────────────────────────
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState(null);
-    const [selectedFile, setSelectedFile] = useState(null);
+
+    // ─── selection ───────────────────────────────────────
+    const [selectedPaths, setSelectedPaths] = useState(new Set());
+    const [lastClickedPath, setLastClickedPath] = useState(null);
+    const [selectMode, setSelectMode] = useState(false);
+
+    // ─── preview ─────────────────────────────────────────
+    const [previewFile, setPreviewFile] = useState(null);
     const [fileContent, setFileContent] = useState('');
-    const [editingFile, setEditingFile] = useState(null);
+    const [editing, setEditing] = useState(false);
+
+    // ─── modals ──────────────────────────────────────────
     const [showNewFileModal, setShowNewFileModal] = useState(false);
     const [showNewFolderModal, setShowNewFolderModal] = useState(false);
     const [showRenameModal, setShowRenameModal] = useState(false);
@@ -37,99 +121,247 @@ function FileManager() {
     const [newName, setNewName] = useState('');
     const [permissionsTarget, setPermissionsTarget] = useState(null);
     const [newPermissions, setNewPermissions] = useState('');
-    const [uploadProgress, setUploadProgress] = useState(null);
     const [confirmDialog, setConfirmDialog] = useState(null);
-    const fileInputRef = useRef(null);
-    const toast = useToast();
 
-    // Sidebar and disk usage state
+    // ─── upload ──────────────────────────────────────────
+    const [uploads, setUploads] = useState([]);
+    const [dragActive, setDragActive] = useState(false);
+    const fileInputRef = useRef(null);
+    const dragCounter = useRef(0);
+
+    // ─── view prefs ──────────────────────────────────────
+    const [viewMode, setViewMode] = useState(() => localStorage.getItem(STORAGE.viewMode) || 'grid');
+    const gridSize = 'md';
+    const [sortBy, setSortBy] = useState(() => localStorage.getItem(STORAGE.sortBy) || 'name');
+    const [sortDir, setSortDir] = useState(() => localStorage.getItem(STORAGE.sortDir) || 'asc');
+    const [activeFilter, setActiveFilter] = useState('all');
+
+    // ─── left sidebar ────────────────────────────────────
     const [sidebarVisible, setSidebarVisible] = useState(() => {
-        const saved = localStorage.getItem(SIDEBAR_VISIBLE_KEY);
-        return saved !== null ? saved === 'true' : true;
+        const v = localStorage.getItem(STORAGE.sidebar);
+        return v !== null ? v === 'true' : true;
     });
+    const [treeCollapsed, setTreeCollapsed] = useState(() => localStorage.getItem(STORAGE.treeCollapsed) === 'true');
     const [diskCollapsed, setDiskCollapsed] = useState(() => {
-        const saved = localStorage.getItem(DISK_COLLAPSED_KEY);
-        return saved !== null ? saved === 'true' : false;
+        const v = localStorage.getItem(STORAGE.diskCollapsed);
+        return v !== null ? v === 'true' : true;
     });
+
+    // ─── folder tree state ───────────────────────────────
+    const [treeExpanded, setTreeExpanded] = useState(() => {
+        try {
+            const stored = localStorage.getItem(STORAGE.expanded);
+            return stored ? new Set(JSON.parse(stored)) : new Set();
+        } catch { return new Set(); }
+    });
+    const [treeCache, setTreeCache] = useState(new Map());
+    const [treeLoading, setTreeLoading] = useState(new Set());
+
+    // ─── disk ────────────────────────────────────────────
     const [diskMounts, setDiskMounts] = useState([]);
     const [diskLastUpdated, setDiskLastUpdated] = useState(null);
     const [diskLoading, setDiskLoading] = useState(false);
 
-    // Analysis state
-    const [analysisLoading, setAnalysisLoading] = useState(false);
-    const [directoryAnalysis, setDirectoryAnalysis] = useState(null);
-    const [typeBreakdown, setTypeBreakdown] = useState(null);
-    const [analysisView, setAnalysisView] = useState('directories'); // 'directories' | 'files'
+    // ─── history ─────────────────────────────────────────
+    const [history, setHistory] = useState(['/home']);
+    const [historyIdx, setHistoryIdx] = useState(0);
+    const navByHistory = useRef(false);
+
+    // ─── context menu ────────────────────────────────────
+    const [contextMenu, setContextMenu] = useState(null);
+
+    const toast = useToast();
+
+    // ─── persistence ─────────────────────────────────────
+    useEffect(() => { localStorage.setItem(STORAGE.sidebar, sidebarVisible); }, [sidebarVisible]);
+    useEffect(() => { localStorage.setItem(STORAGE.treeCollapsed, treeCollapsed); }, [treeCollapsed]);
+    useEffect(() => { localStorage.setItem(STORAGE.diskCollapsed, diskCollapsed); }, [diskCollapsed]);
+    useEffect(() => { localStorage.setItem(STORAGE.viewMode, viewMode); }, [viewMode]);
+    useEffect(() => { localStorage.setItem(STORAGE.sortBy, sortBy); }, [sortBy]);
+    useEffect(() => { localStorage.setItem(STORAGE.sortDir, sortDir); }, [sortDir]);
+    useEffect(() => {
+        localStorage.setItem(STORAGE.expanded, JSON.stringify([...treeExpanded]));
+    }, [treeExpanded]);
 
     useEffect(() => {
-        loadDirectory(currentPath);
-        loadDiskMounts();
-    }, [currentPath, showHidden]);
+        const pathFromUrl = searchParams.get('path') || '/home';
+        if (pathFromUrl !== currentPath) {
+            setCurrentPath(pathFromUrl);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
 
     useEffect(() => {
-        localStorage.setItem(SIDEBAR_VISIBLE_KEY, sidebarVisible);
-    }, [sidebarVisible]);
+        const pathFromUrl = searchParams.get('path') || '/home';
+        if (pathFromUrl === currentPath) return;
 
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.set('path', currentPath);
+        setSearchParams(nextParams, { replace: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentPath]);
+
+    // ─── file API adapter ────────────────────────────────
+    // Routes the three verbs the agent supports through the remote
+    // endpoints when target is an agent; falls back to the panel-local
+    // FileService otherwise. Other ops keep going to panel-local — the
+    // remoteGuard helper short-circuits them with a toast when the user
+    // is on a remote target so we don't accidentally write to the panel
+    // host while they think they're editing a remote server.
+    const fileApi = useMemo(() => ({
+        browse: async (path, hidden) => {
+            if (isRemote) {
+                return unwrapAgentData(await api.browseRemoteFiles(target.server_id, path));
+            }
+            return api.browseFiles(path, hidden);
+        },
+        read: async (path) => {
+            if (isRemote) {
+                return unwrapAgentData(await api.readRemoteFile(target.server_id, path));
+            }
+            return api.readFile(path);
+        },
+        write: async (path, content) => {
+            if (isRemote) {
+                return unwrapAgentData(await api.writeRemoteFile(target.server_id, path, content));
+            }
+            return api.writeFile(path, content);
+        },
+    }), [isRemote, target]);
+
+    const remoteGuard = useCallback((op) => {
+        if (isRemote && !REMOTE_SUPPORTED.has(op)) {
+            toast.error(`${op} is not yet supported on remote agents`);
+            return true;
+        }
+        return false;
+    }, [isRemote, toast]);
+
+    // When the user switches to a remote target, jump to its first
+    // advertised allowed_path so they don't see a "panel /home" view
+    // that doesn't exist on the remote host.
     useEffect(() => {
-        localStorage.setItem(DISK_COLLAPSED_KEY, diskCollapsed);
-    }, [diskCollapsed]);
+        const previousTarget = previousTargetRef.current;
+        const targetChanged = previousTarget.kind !== target.kind || previousTarget.server_id !== target.server_id;
+        previousTargetRef.current = { kind: target.kind, server_id: target.server_id };
 
-    const loadDirectory = async (path) => {
+        if (!targetChanged) return;
+
+        if (target.kind === 'agent' && Array.isArray(target.allowedPaths) && target.allowedPaths.length > 0) {
+            setCurrentPath(target.allowedPaths[0]);
+        } else if (target.kind === 'local') {
+            setCurrentPath('/home');
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [target.kind, target.server_id]);
+
+    // ─── load directory ──────────────────────────────────
+    const loadDirectory = useCallback(async (path) => {
         setLoading(true);
         setSearchResults(null);
-        setDirectoryAnalysis(null);
-        setTypeBreakdown(null);
+        setSelectedPaths(new Set());
+        setSelectMode(false);
         try {
-            const data = await api.browseFiles(path, showHidden);
-            setEntries(data.entries || []);
-            setParentPath(data.parent);
-            setCurrentPath(data.path);
+            const data = await fileApi.browse(path, showHidden);
+            // Agent file:list returns {path, files: [...]} with a flat
+            // entry shape; panel browseFiles returns {path, parent,
+            // entries: [...]}. Normalize so the UI can keep using
+            // entries/parent.
+            const entriesList = data.entries || data.files || [];
+            setEntries(entriesList);
+            setParentPath(data.parent ?? deriveParent(data.path || path));
+            setCurrentPath(data.path || path);
         } catch (error) {
             toast.error(`Failed to load directory: ${error.message}`);
         } finally {
             setLoading(false);
         }
-    };
+    }, [showHidden, toast, fileApi]);
 
+    useEffect(() => {
+        loadDirectory(currentPath);
+    }, [currentPath, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        loadDiskMounts();
+    }, []);
+
+    // history tracking
+    useEffect(() => {
+        if (navByHistory.current) {
+            navByHistory.current = false;
+            return;
+        }
+        setHistory((h) => {
+            const trimmed = h.slice(0, historyIdx + 1);
+            if (trimmed[trimmed.length - 1] === currentPath) return h;
+            return [...trimmed, currentPath];
+        });
+        setHistoryIdx((i) => (history[i] === currentPath ? i : i + 1));
+    }, [currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── disk mounts ─────────────────────────────────────
     const loadDiskMounts = async () => {
         setDiskLoading(true);
         try {
             const data = await api.getAllDiskMounts();
             setDiskMounts(data.mounts || []);
             setDiskLastUpdated(new Date());
-        } catch (error) {
-            console.error('Failed to load disk mounts:', error);
+        } catch (e) {
+            console.error('Failed to load disk mounts:', e);
         } finally {
             setDiskLoading(false);
         }
     };
 
-    const analyzeDirectory = async () => {
-        setAnalysisLoading(true);
-        try {
-            const [analysisData, breakdownData] = await Promise.all([
-                api.analyzeDirectory(currentPath, 2, 15),
-                api.getFileTypeBreakdown(currentPath, 3)
-            ]);
-            setDirectoryAnalysis(analysisData);
-            setTypeBreakdown(breakdownData);
-        } catch (error) {
-            toast.error(`Analysis failed: ${error.message}`);
-        } finally {
-            setAnalysisLoading(false);
-        }
-    };
-
-    const closeAnalysis = () => {
-        setDirectoryAnalysis(null);
-        setTypeBreakdown(null);
-    };
-
-    const handleSearch = async () => {
-        if (!searchQuery.trim()) {
-            setSearchResults(null);
+    // ─── tree expand/collapse ────────────────────────────
+    const toggleTreeExpand = useCallback(async (path) => {
+        if (treeExpanded.has(path)) {
+            const next = new Set(treeExpanded);
+            next.delete(path);
+            setTreeExpanded(next);
             return;
         }
+        if (!treeCache.has(path)) {
+            setTreeLoading((s) => { const n = new Set(s); n.add(path); return n; });
+            try {
+                const data = await fileApi.browse(path, false);
+                const entries = data.entries || data.files || [];
+                const folders = entries.filter((e) => e.is_dir).map((e) => ({
+                    path: e.path,
+                    name: e.name,
+                }));
+                setTreeCache((c) => { const n = new Map(c); n.set(path, folders); return n; });
+            } catch {
+                setTreeCache((c) => { const n = new Map(c); n.set(path, []); return n; });
+            } finally {
+                setTreeLoading((s) => { const n = new Set(s); n.delete(path); return n; });
+            }
+        }
+        setTreeExpanded((s) => { const n = new Set(s); n.add(path); return n; });
+    }, [treeExpanded, treeCache, fileApi]);
+
+    // Auto-expand the tree along the current path so the active row is visible.
+    useEffect(() => {
+        const parts = currentPath.split('/').filter(Boolean);
+        const ancestors = [];
+        let acc = '';
+        for (const p of parts) {
+            acc += '/' + p;
+            ancestors.push(acc);
+        }
+        ancestors.forEach((a) => {
+            const isUnderRoot = TREE_ROOTS.some((r) => a === r.path || a.startsWith(r.path + '/') || r.path.startsWith(a + '/'));
+            if (isUnderRoot && !treeExpanded.has(a) && a !== currentPath) {
+                toggleTreeExpand(a);
+            }
+        });
+    }, [currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── search ──────────────────────────────────────────
+    const handleSearch = async () => {
+        if (remoteGuard('search')) { setSearchResults([]); return; }
+        if (!searchQuery.trim()) { setSearchResults(null); return; }
         setLoading(true);
         try {
             const data = await api.searchFiles(currentPath, searchQuery);
@@ -141,52 +373,93 @@ function FileManager() {
         }
     };
 
-    const handleNavigate = (entry) => {
-        if (entry.is_dir) {
-            setCurrentPath(entry.path);
-            setSelectedFile(null);
-            setEditingFile(null);
-        } else {
-            handleFileClick(entry);
-        }
+    // ─── navigation ──────────────────────────────────────
+    const navigateTo = (path) => {
+        setPreviewFile(null);
+        setEditing(false);
+        setCurrentPath(path);
     };
 
-    const handleFileClick = async (entry) => {
-        setSelectedFile(entry);
-        if (entry.is_editable) {
-            try {
-                const data = await api.readFile(entry.path);
-                setFileContent(data.content);
-            } catch (error) {
-                toast.error(`Failed to read file: ${error.message}`);
+    const goBack = () => {
+        if (historyIdx > 0) {
+            navByHistory.current = true;
+            setHistoryIdx(historyIdx - 1);
+            setCurrentPath(history[historyIdx - 1]);
+        }
+    };
+    const goForward = () => {
+        if (historyIdx < history.length - 1) {
+            navByHistory.current = true;
+            setHistoryIdx(historyIdx + 1);
+            setCurrentPath(history[historyIdx + 1]);
+        }
+    };
+    const goUp = () => parentPath && navigateTo(parentPath);
+
+    const handleOpen = async (entry) => {
+        if (entry.is_dir) {
+            navigateTo(entry.path);
+        } else {
+            setPreviewFile(entry);
+            setEditing(false);
+            if (entry.is_editable) {
+                try {
+                    const data = await fileApi.read(entry.path);
+                    setFileContent(data.content);
+                } catch (error) {
+                    toast.error(`Failed to read file: ${error.message}`);
+                }
             }
         }
     };
 
-    const handleEditFile = () => {
-        if (selectedFile && selectedFile.is_editable) {
-            setEditingFile(selectedFile);
+    // ─── selection ───────────────────────────────────────
+    const handleToggleSelect = (entry, e) => {
+        const path = entry.path;
+        if (e?.shiftKey && lastClickedPath) {
+            const list = sortedFiltered;
+            const a = list.findIndex((x) => x.path === lastClickedPath);
+            const b = list.findIndex((x) => x.path === path);
+            if (a >= 0 && b >= 0) {
+                const [from, to] = [Math.min(a, b), Math.max(a, b)];
+                const rangePaths = list.slice(from, to + 1).map((x) => x.path);
+                const next = new Set([...selectedPaths, ...rangePaths]);
+                setSelectedPaths(next);
+                setSelectMode(next.size > 0);
+            }
+        } else {
+            const next = new Set(selectedPaths);
+            if (next.has(path)) next.delete(path); else next.add(path);
+            setSelectedPaths(next);
+            setSelectMode(next.size > 0);
+            setLastClickedPath(path);
         }
     };
 
+    const clearSelection = () => {
+        setSelectedPaths(new Set());
+        setSelectMode(false);
+    };
+
+    // ─── ops ─────────────────────────────────────────────
     const handleSaveFile = async () => {
-        if (!editingFile) return;
+        if (!previewFile) return;
         try {
-            await api.writeFile(editingFile.path, fileContent);
-            toast.success('File saved successfully');
-            setEditingFile(null);
+            await fileApi.write(previewFile.path, fileContent);
+            toast.success('File saved');
+            setEditing(false);
             loadDirectory(currentPath);
         } catch (error) {
-            toast.error(`Failed to save file: ${error.message}`);
+            toast.error(`Failed to save: ${error.message}`);
         }
     };
 
     const handleCreateFile = async () => {
         if (!newFileName.trim()) return;
-        const filePath = `${currentPath}/${newFileName}`;
+        if (remoteGuard('create file')) return;
         try {
-            await api.createFile(filePath);
-            toast.success('File created successfully');
+            await api.createFile(`${currentPath}/${newFileName}`);
+            toast.success('File created');
             setShowNewFileModal(false);
             setNewFileName('');
             loadDirectory(currentPath);
@@ -197,44 +470,65 @@ function FileManager() {
 
     const handleCreateFolder = async () => {
         if (!newFolderName.trim()) return;
-        const folderPath = `${currentPath}/${newFolderName}`;
+        if (remoteGuard('create folder')) return;
         try {
-            await api.createDirectory(folderPath);
-            toast.success('Folder created successfully');
+            await api.createDirectory(`${currentPath}/${newFolderName}`);
+            toast.success('Folder created');
             setShowNewFolderModal(false);
             setNewFolderName('');
             loadDirectory(currentPath);
+            // Refresh tree cache for parent so the new folder appears in the tree
+            const parent = currentPath;
+            if (treeCache.has(parent)) {
+                try {
+                    const data = await api.browseFiles(parent, false);
+                    const folders = (data.entries || []).filter((e) => e.is_dir).map((e) => ({ path: e.path, name: e.name }));
+                    setTreeCache((c) => { const n = new Map(c); n.set(parent, folders); return n; });
+                } catch { /* ignore */ }
+            }
         } catch (error) {
             toast.error(`Failed to create folder: ${error.message}`);
         }
     };
 
-    const handleDelete = async (entry) => {
+    const handleDelete = (target) => {
+        const items = Array.isArray(target) ? target : [target];
+        if (items.length === 0) return;
+        if (remoteGuard('delete')) return;
+        const message = items.length === 1
+            ? `Delete "${items[0].name}"?${items[0].is_dir ? ' All contents inside will be removed.' : ''}`
+            : `Delete ${items.length} items? This cannot be undone.`;
         setConfirmDialog({
             title: 'Delete Confirmation',
-            message: `Are you sure you want to delete "${entry.name}"? ${entry.is_dir ? 'This will delete all contents inside.' : ''}`,
+            message,
             confirmText: 'Delete',
             variant: 'danger',
             onConfirm: async () => {
-                try {
-                    await api.deleteFile(entry.path);
-                    toast.success(`${entry.is_dir ? 'Folder' : 'File'} deleted successfully`);
-                    setSelectedFile(null);
-                    loadDirectory(currentPath);
-                } catch (error) {
-                    toast.error(`Failed to delete: ${error.message}`);
+                const failures = [];
+                for (const it of items) {
+                    try {
+                        await api.deleteFile(it.path);
+                    } catch (error) {
+                        failures.push(`${it.name}: ${error.message}`);
+                    }
                 }
+                if (failures.length === 0) toast.success(`Deleted ${items.length} item${items.length > 1 ? 's' : ''}`);
+                else toast.error(`Failed: ${failures.join(', ')}`);
+                if (previewFile && items.some((i) => i.path === previewFile.path)) setPreviewFile(null);
+                clearSelection();
+                loadDirectory(currentPath);
                 setConfirmDialog(null);
             },
-            onCancel: () => setConfirmDialog(null)
+            onCancel: () => setConfirmDialog(null),
         });
     };
 
     const handleRename = async () => {
         if (!renameTarget || !newName.trim()) return;
+        if (remoteGuard('rename')) return;
         try {
             await api.renameFile(renameTarget.path, newName);
-            toast.success('Renamed successfully');
+            toast.success('Renamed');
             setShowRenameModal(false);
             setRenameTarget(null);
             setNewName('');
@@ -246,40 +540,17 @@ function FileManager() {
 
     const handleChangePermissions = async () => {
         if (!permissionsTarget || !newPermissions.trim()) return;
+        if (remoteGuard('change permissions')) return;
         try {
             await api.changeFilePermissions(permissionsTarget.path, newPermissions);
-            toast.success('Permissions changed successfully');
+            toast.success('Permissions updated');
             setShowPermissionsModal(false);
             setPermissionsTarget(null);
             setNewPermissions('');
             loadDirectory(currentPath);
         } catch (error) {
-            toast.error(`Failed to change permissions: ${error.message}`);
+            toast.error(`Failed: ${error.message}`);
         }
-    };
-
-    const handleUpload = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        try {
-            await api.uploadFile(currentPath, file, (progress) => {
-                setUploadProgress(progress);
-            });
-            toast.success('File uploaded successfully');
-            loadDirectory(currentPath);
-        } catch (error) {
-            toast.error(`Upload failed: ${error.message}`);
-        } finally {
-            setUploadProgress(null);
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
-        }
-    };
-
-    const handleDownload = (entry) => {
-        api.downloadFile(entry.path);
     };
 
     const openRenameModal = (entry) => {
@@ -287,35 +558,197 @@ function FileManager() {
         setNewName(entry.name);
         setShowRenameModal(true);
     };
-
     const openPermissionsModal = (entry) => {
         setPermissionsTarget(entry);
         setNewPermissions(entry.permissions_octal || '755');
         setShowPermissionsModal(true);
     };
 
-    const getFileIcon = (entry) => {
-        if (entry.is_dir) return <Folder size={18} className="file-icon-svg folder" />;
+    // ─── upload ──────────────────────────────────────────
+    const uploadFiles = async (files) => {
+        const fileList = Array.from(files);
+        if (fileList.length === 0) return;
+        if (remoteGuard('upload')) return;
+        const queue = fileList.map((f, i) => ({
+            id: `${Date.now()}-${i}`,
+            name: f.name,
+            size: f.size,
+            progress: 0,
+            status: 'pending',
+        }));
+        setUploads((p) => [...p, ...queue]);
 
-        const ext = entry.name.split('.').pop().toLowerCase();
-        const codeExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'rb', 'php', 'java', 'c', 'cpp', 'h', 'go', 'rs'];
-        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico'];
-        const videoExts = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'webm'];
-        const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma'];
-        const archiveExts = ['zip', 'tar', 'gz', 'rar', '7z', 'bz2'];
-        const dataExts = ['json', 'xml', 'yaml', 'yml', 'csv', 'db', 'sqlite', 'sql'];
-        const textExts = ['txt', 'md', 'log', 'ini', 'conf', 'cfg'];
+        let succeeded = 0;
+        for (let i = 0; i < fileList.length; i++) {
+            const file = fileList[i];
+            const itemId = queue[i].id;
+            try {
+                setUploads((p) => p.map((u) => u.id === itemId ? { ...u, status: 'uploading' } : u));
+                await api.uploadFile(currentPath, file, (progress) => {
+                    setUploads((p) => p.map((u) => u.id === itemId ? { ...u, progress } : u));
+                });
+                setUploads((p) => p.map((u) => u.id === itemId ? { ...u, status: 'done', progress: 100 } : u));
+                succeeded++;
+            } catch (error) {
+                setUploads((p) => p.map((u) => u.id === itemId ? { ...u, status: 'error', error: error.message } : u));
+            }
+        }
+        if (succeeded > 0) toast.success(`Uploaded ${succeeded} of ${fileList.length} file${fileList.length > 1 ? 's' : ''}`);
+        loadDirectory(currentPath);
+        setTimeout(() => {
+            setUploads((p) => p.filter((u) => u.status === 'uploading' || u.status === 'pending'));
+        }, 4000);
+    };
 
-        if (codeExts.includes(ext)) return <FileCode size={18} className="file-icon-svg code" />;
-        if (imageExts.includes(ext)) return <FileImage size={18} className="file-icon-svg image" />;
-        if (videoExts.includes(ext)) return <FileVideo size={18} className="file-icon-svg video" />;
-        if (audioExts.includes(ext)) return <FileAudio size={18} className="file-icon-svg audio" />;
-        if (archiveExts.includes(ext)) return <FileArchive size={18} className="file-icon-svg archive" />;
-        if (dataExts.includes(ext)) return <Database size={18} className="file-icon-svg data" />;
-        if (textExts.includes(ext)) return <FileText size={18} className="file-icon-svg text" />;
-        if (['sh', 'bash', 'zsh'].includes(ext)) return <Terminal size={18} className="file-icon-svg terminal" />;
+    const handleUploadInput = (e) => {
+        if (e.target.files) uploadFiles(e.target.files);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
 
-        return <File size={18} className="file-icon-svg" />;
+    const handleDragEnter = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dragCounter.current += 1;
+        if (e.dataTransfer.items?.length > 0) setDragActive(true);
+    };
+    const handleDragLeave = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dragCounter.current -= 1;
+        if (dragCounter.current === 0) setDragActive(false);
+    };
+    const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
+    const handleDrop = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dragCounter.current = 0;
+        setDragActive(false);
+        if (e.dataTransfer.files?.length > 0) uploadFiles(e.dataTransfer.files);
+    };
+
+    // ─── derived ─────────────────────────────────────────
+    const breadcrumbs = useMemo(() => {
+        const parts = currentPath.split('/').filter(Boolean);
+        // Windows drive-rooted path ("C:/Users/Juan"): the first segment is
+        // the drive and the root crumb is the agent's drive list. Building
+        // crumbs with a leading "/" (the POSIX branch below) would produce
+        // bogus "/C:" paths that the agent can't resolve.
+        if (/^[A-Za-z]:$/.test(parts[0] || '')) {
+            const crumbs = [{ name: 'Drives', path: '/' }];
+            let acc = parts[0];
+            crumbs.push({ name: parts[0], path: acc + '/' });
+            for (let i = 1; i < parts.length; i++) {
+                acc += '/' + parts[i];
+                crumbs.push({ name: parts[i], path: acc });
+            }
+            return crumbs;
+        }
+        const crumbs = [{ name: '/', path: '/' }];
+        let acc = '';
+        parts.forEach((p) => { acc += '/' + p; crumbs.push({ name: p, path: acc }); });
+        return crumbs;
+    }, [currentPath]);
+
+    const sortedFiltered = useMemo(() => {
+        let list = [...(searchResults || entries)];
+        if (activeFilter !== 'all') list = list.filter((e) => getFileType(e) === activeFilter);
+        const dir = sortDir === 'asc' ? 1 : -1;
+        list.sort((a, b) => {
+            if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+            switch (sortBy) {
+                case 'size': return ((a.size || 0) - (b.size || 0)) * dir;
+                case 'modified': return (new Date(a.modified) - new Date(b.modified)) * dir;
+                case 'type': return getFileType(a).localeCompare(getFileType(b)) * dir;
+                case 'name':
+                default: return a.name.localeCompare(b.name) * dir;
+            }
+        });
+        return list;
+    }, [entries, searchResults, sortBy, sortDir, activeFilter]);
+
+    const filterCounts = useMemo(() => {
+        const counts = { all: entries.length };
+        FILTER_OPTIONS.forEach((c) => { if (c.id !== 'all') counts[c.id] = 0; });
+        entries.forEach((e) => { const t = getFileType(e); if (counts[t] !== undefined) counts[t]++; });
+        return counts;
+    }, [entries]);
+
+    const stats = useMemo(() => {
+        const list = sortedFiltered;
+        const folders = list.filter((e) => e.is_dir).length;
+        const files = list.length - folders;
+        const totalBytes = list.reduce((s, e) => s + (e.size || 0), 0);
+        const selectedList = list.filter((e) => selectedPaths.has(e.path));
+        const selectedBytes = selectedList.reduce((s, e) => s + (e.size || 0), 0);
+        return { folders, files, totalBytes, total: list.length, selectedCount: selectedList.length, selectedBytes };
+    }, [sortedFiltered, selectedPaths]);
+
+    const activeUploads = uploads.filter((u) => u.status === 'uploading' || u.status === 'pending');
+    const totalUploadProgress = activeUploads.length > 0
+        ? activeUploads.reduce((s, u) => s + u.progress, 0) / activeUploads.length
+        : 0;
+
+    const sortValue = `${sortBy}-${sortDir}`;
+    const handleSortChange = (value) => {
+        const [nextSortBy, nextSortDir] = value.split('-');
+        setSortBy(nextSortBy);
+        setSortDir(nextSortDir);
+    };
+
+    const selectedEntries = useMemo(
+        () => sortedFiltered.filter((e) => selectedPaths.has(e.path)),
+        [sortedFiltered, selectedPaths],
+    );
+
+    // ─── shortcuts ───────────────────────────────────────
+    useEffect(() => {
+        const handler = (e) => {
+            const inInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+            if (inInput) return;
+            if (e.key === 'Escape') {
+                if (contextMenu) setContextMenu(null);
+                else if (previewFile) setPreviewFile(null);
+                else if (selectedPaths.size > 0) clearSelection();
+            }
+            if ((e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) && selectedEntries.length > 0) {
+                e.preventDefault();
+                handleDelete(selectedEntries);
+            }
+            if (e.key === 'F2' && selectedEntries.length === 1) openRenameModal(selectedEntries[0]);
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                setSelectedPaths(new Set(sortedFiltered.map((x) => x.path)));
+                setSelectMode(sortedFiltered.length > 0);
+            }
+            if (e.key === 'Backspace' && !e.metaKey && parentPath) { e.preventDefault(); goUp(); }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [selectedEntries, sortedFiltered, contextMenu, previewFile, parentPath, selectedPaths]); // eslint-disable-line
+
+    // ─── close popovers ──────────────────────────────────
+    useEffect(() => {
+        if (!contextMenu) return;
+        const close = () => { setContextMenu(null); };
+        document.addEventListener('click', close);
+        return () => document.removeEventListener('click', close);
+    }, [contextMenu]);
+
+    const openContextMenu = (e, entry) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!selectedPaths.has(entry.path)) {
+            setSelectedPaths(new Set([entry.path]));
+            setSelectMode(true);
+            setLastClickedPath(entry.path);
+        }
+        setContextMenu({ x: e.clientX, y: e.clientY, entry });
+    };
+
+    const copyPathToClipboard = async (path) => {
+        try { await navigator.clipboard.writeText(path); toast.success('Path copied'); }
+        catch { toast.error('Could not copy path'); }
+    };
+
+    const downloadSelected = () => {
+        selectedEntries.filter((e) => !e.is_dir).forEach((e) => api.downloadFile(e.path));
     };
 
     const getDiskColor = (percent) => {
@@ -324,249 +757,268 @@ function FileManager() {
         return 'healthy';
     };
 
-    const displayedEntries = searchResults || entries;
-
+    // ─── render ──────────────────────────────────────────
     return (
-        <div className={`file-manager ${sidebarVisible ? 'sidebar-open' : ''}`}>
-            <div className="page-header">
-                <div className="page-header-content">
-                    <h1>File Manager</h1>
-                    <p className="page-description">Browse, edit, and manage your server files</p>
-                </div>
-                <div className="page-header-actions">
-                    <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
-                        <Upload size={16} />
-                        Upload
-                    </button>
-                    <button className="btn btn-secondary" onClick={() => setShowNewFolderModal(true)}>
-                        <FolderPlus size={16} />
-                        New Folder
-                    </button>
-                    <button className="btn btn-primary" onClick={() => setShowNewFileModal(true)}>
-                        <FilePlus size={16} />
-                        New File
-                    </button>
-                    <input
-                        type="file"
-                        ref={fileInputRef}
-                        style={{ display: 'none' }}
-                        onChange={handleUpload}
-                    />
-                </div>
-            </div>
+        <div
+            className={`page-container page-container--full-bleed file-manager-page file-manager fullscreen ${sidebarVisible ? 'sidebar-open' : ''} view-${viewMode} grid-${gridSize} ${selectMode ? 'select-mode' : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+        >
+            <input
+                type="file"
+                ref={fileInputRef}
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleUploadInput}
+            />
 
-            {uploadProgress !== null && (
-                <div className="upload-progress">
-                    <div className="progress-bar">
-                        <div className="progress-fill" style={{ width: `${uploadProgress}%` }}></div>
+            {isRemote && (
+                <div className="file-manager-target-banner">
+                    Browsing on <strong>{target.name}</strong> — read/write only.
+                    Mkdir/delete/rename/upload aren&apos;t yet supported on remote agents.
+                </div>
+            )}
+
+            {uploads.length > 0 && (
+                <div className="upload-tray">
+                    <div className="upload-tray-header">
+                        <CloudUpload size={16} />
+                        <span>
+                            {activeUploads.length > 0
+                                ? `Uploading ${activeUploads.length} file${activeUploads.length > 1 ? 's' : ''}…`
+                                : 'Uploads complete'}
+                        </span>
+                        {activeUploads.length > 0 && (
+                            <span className="upload-tray-percent">{Math.round(totalUploadProgress)}%</span>
+                        )}
+                        <button className="toolbar-icon-btn small" onClick={() => setUploads([])} title="Clear">
+                            <X size={14} />
+                        </button>
                     </div>
-                    <span>{Math.round(uploadProgress)}%</span>
+                    <div className="upload-tray-list">
+                        {uploads.map((u) => (
+                            <div key={u.id} className={`upload-tray-item status-${u.status}`}>
+                                <span className="upload-name">{u.name}</span>
+                                <div className="upload-bar">
+                                    <div className="upload-bar-fill" style={{ width: `${u.progress}%` }} />
+                                </div>
+                                <span className="upload-status">
+                                    {u.status === 'done' ? 'Done' : u.status === 'error' ? 'Failed' : `${Math.round(u.progress)}%`}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
             <div className="file-manager-toolbar">
-                <div className="path-breadcrumb">
+                <div className="toolbar-left">
                     <button
-                        className="btn btn-icon"
-                        onClick={() => parentPath && setCurrentPath(parentPath)}
-                        disabled={!parentPath}
+                        className="toolbar-icon-btn"
+                        onClick={() => setSidebarVisible(!sidebarVisible)}
+                        title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
                     >
-                        <ArrowLeft size={16} />
+                        {sidebarVisible ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
                     </button>
-                    <span className="current-path">{currentPath}</span>
+                    <div className="nav-buttons">
+                        <button className="nav-btn" onClick={goBack} disabled={historyIdx === 0} title="Back">
+                            <ArrowLeft size={14} />
+                        </button>
+                        <button className="nav-btn" onClick={goForward} disabled={historyIdx >= history.length - 1} title="Forward">
+                            <ArrowRight size={14} />
+                        </button>
+                        <button className="nav-btn" onClick={goUp} disabled={!parentPath} title="Up">
+                            <ArrowUp size={14} />
+                        </button>
+                        <button className="nav-btn" onClick={() => navigateTo('/home')} title="Home">
+                            <Home size={14} />
+                        </button>
+                    </div>
+                    <div className="path-breadcrumb">
+                        {breadcrumbs.map((crumb, idx) => (
+                            <span key={crumb.path + idx} className="crumb-segment">
+                                {idx > 0 && <ChevronRight size={12} className="crumb-separator" />}
+                                <button
+                                    className={`crumb ${idx === breadcrumbs.length - 1 ? 'crumb-active' : ''}`}
+                                    onClick={() => navigateTo(crumb.path)}
+                                >
+                                    {crumb.name}
+                                </button>
+                            </span>
+                        ))}
+                    </div>
                 </div>
-                <div className="toolbar-actions">
-                    <div className="search-box">
-                        <Search size={16} className="search-icon" />
+                <div className="toolbar-right">
+                    <TargetPicker feature="files" value={target} onChange={setTarget} />
+                    <div className="search-field">
+                        <Search size={14} className="search-field-icon" />
                         <input
                             type="text"
-                            placeholder="Search files..."
+                            placeholder="Search files…"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                         />
-                        {searchResults && (
-                            <button className="btn btn-icon btn-sm" onClick={() => setSearchResults(null)}>
-                                <X size={14} />
+                        {(searchResults || searchQuery) && (
+                            <button
+                                className="search-field-clear"
+                                onClick={() => { setSearchResults(null); setSearchQuery(''); }}
+                                title="Clear"
+                            >
+                                <X size={12} />
                             </button>
                         )}
                     </div>
-                    <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={analyzeDirectory}
-                        disabled={analysisLoading}
-                        title="Analyze directory sizes"
-                    >
-                        <BarChart3 size={14} />
-                        Analyze
+                    <button className="toolbar-chip" onClick={() => fileInputRef.current?.click()} disabled={isRemote}>
+                        <Upload size={14} />
+                        <span>Upload</span>
                     </button>
-                    <label className="checkbox-label">
-                        <input
-                            type="checkbox"
-                            checked={showHidden}
-                            onChange={(e) => setShowHidden(e.target.checked)}
-                        />
+                    <div className="view-toggle">
+                        <button
+                            className={`view-toggle-btn ${viewMode === 'grid' ? 'active' : ''}`}
+                            onClick={() => setViewMode('grid')}
+                            title="Grid view"
+                        >
+                            <LayoutGrid size={14} />
+                        </button>
+                        <button
+                            className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`}
+                            onClick={() => setViewMode('list')}
+                            title="List view"
+                        >
+                            <List size={14} />
+                        </button>
+                    </div>
+                    <button
+                        className={`toolbar-icon-btn ${showHidden ? 'active' : ''}`}
+                        onClick={() => setShowHidden(!showHidden)}
+                        title="Toggle hidden files"
+                    >
                         {showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
-                        Hidden
-                    </label>
-                    <button className="btn btn-icon" onClick={() => loadDirectory(currentPath)} title="Refresh">
-                        <RefreshCw size={16} />
                     </button>
                     <button
-                        className="btn btn-icon"
-                        onClick={() => setSidebarVisible(!sidebarVisible)}
-                        title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+                        className="toolbar-icon-btn"
+                        onClick={() => loadDirectory(currentPath)}
+                        title="Refresh"
                     >
-                        {sidebarVisible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                        <RefreshCw size={14} className={loading ? 'spinning' : ''} />
                     </button>
                 </div>
             </div>
 
-            <div className="file-manager-layout">
-                <div className="file-manager-main">
-                    <div className="file-manager-content">
-                        <div className="file-list-container">
-                            {loading ? (
-                                <div className="loading-state">
-                                    <Spinner />
-                                </div>
-                            ) : displayedEntries.length === 0 ? (
-                                <div className="empty-state">
-                                    <Folder size={48} strokeWidth={1.5} />
-                                    <p>{searchResults ? 'No files found matching your search' : 'This directory is empty'}</p>
-                                </div>
-                            ) : (
-                                <div className="file-list">
-                                    <div className="file-list-header">
-                                        <span className="col-name">Name</span>
-                                        <span className="col-size">Size</span>
-                                        <span className="col-modified">Modified</span>
-                                        <span className="col-permissions">Permissions</span>
-                                        <span className="col-actions">Actions</span>
-                                    </div>
-                                    {displayedEntries.map((entry) => (
-                                        <div
-                                            key={entry.path}
-                                            className={`file-item ${selectedFile?.path === entry.path ? 'selected' : ''}`}
-                                            onClick={() => handleNavigate(entry)}
-                                        >
-                                            <span className="col-name">
-                                                {getFileIcon(entry)}
-                                                {entry.name}
-                                                {entry.is_link && <span className="link-indicator">→</span>}
-                                            </span>
-                                            <span className="col-size">{entry.is_dir ? '-' : entry.size_human}</span>
-                                            <span className="col-modified">
-                                                {new Date(entry.modified).toLocaleDateString()}
-                                            </span>
-                                            <span className="col-permissions">{entry.permissions}</span>
-                                            <span className="col-actions" onClick={(e) => e.stopPropagation()}>
-                                                {!entry.is_dir && (
-                                                    <button
-                                                        className="btn btn-icon btn-sm"
-                                                        onClick={() => handleDownload(entry)}
-                                                        title="Download"
-                                                    >
-                                                        <Download size={14} />
-                                                    </button>
-                                                )}
-                                                <button
-                                                    className="btn btn-icon btn-sm"
-                                                    onClick={() => openRenameModal(entry)}
-                                                    title="Rename"
-                                                >
-                                                    <Edit3 size={14} />
-                                                </button>
-                                                <button
-                                                    className="btn btn-icon btn-sm"
-                                                    onClick={() => openPermissionsModal(entry)}
-                                                    title="Permissions"
-                                                >
-                                                    <Lock size={14} />
-                                                </button>
-                                                <button
-                                                    className="btn btn-icon btn-sm btn-danger"
-                                                    onClick={() => handleDelete(entry)}
-                                                    title="Delete"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </span>
-                                        </div>
-                                    ))}
+            {selectedPaths.size > 0 && (
+                <div className="bulk-bar">
+                    <div className="bulk-bar-info">
+                        <Check size={14} />
+                        <span>{selectedPaths.size} selected · {formatBytes(stats.selectedBytes)}</span>
+                    </div>
+                    <div className="bulk-bar-actions">
+                        <button className="bulk-btn" onClick={downloadSelected}>
+                            <Download size={14} /> Download
+                        </button>
+                        {selectedEntries.length === 1 && (
+                            <>
+                                <button className="bulk-btn" onClick={() => openRenameModal(selectedEntries[0])}>
+                                    <Edit3 size={14} /> Rename
+                                </button>
+                                <button className="bulk-btn" onClick={() => copyPathToClipboard(selectedEntries[0].path)}>
+                                    <Copy size={14} /> Copy path
+                                </button>
+                            </>
+                        )}
+                        <button className="bulk-btn danger" onClick={() => handleDelete(selectedEntries)}>
+                            <Trash2 size={14} /> Delete
+                        </button>
+                        <button className="bulk-btn ghost" onClick={clearSelection}>
+                            <X size={14} /> Clear
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            <div className="file-manager-body">
+                {sidebarVisible && (
+                    <aside className="file-manager-sidebar left">
+                        {/* Folder Tree */}
+                        <div className="sidebar-section">
+                            <div className="sidebar-section-header sidebar-section-header--split">
+                                <button className="sidebar-section-toggle" onClick={() => setTreeCollapsed(!treeCollapsed)}>
+                                    <FolderTreeIcon size={16} />
+                                    <span>Folders</span>
+                                    {treeCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                                </button>
+                                <button
+                                    className="sidebar-action-btn"
+                                    onClick={() => setShowNewFolderModal(true)}
+                                    disabled={isRemote}
+                                    title="New folder"
+                                >
+                                    <FolderPlus size={14} />
+                                </button>
+                            </div>
+                            {!treeCollapsed && (
+                                <div className="sidebar-section-content tree-content">
+                                    <FolderTree
+                                        roots={TREE_ROOTS}
+                                        expanded={treeExpanded}
+                                        treeCache={treeCache}
+                                        treeLoading={treeLoading}
+                                        currentPath={currentPath}
+                                        onNavigate={navigateTo}
+                                        onToggle={toggleTreeExpand}
+                                    />
                                 </div>
                             )}
                         </div>
 
-                        {selectedFile && !selectedFile.is_dir && (
-                            <div className="file-preview">
-                                <div className="preview-header">
-                                    <h3>{selectedFile.name}</h3>
-                                    <div className="preview-actions">
-                                        {selectedFile.is_editable && !editingFile && (
-                                            <button className="btn btn-primary btn-sm" onClick={handleEditFile}>
-                                                <Edit3 size={14} />
-                                                Edit
-                                            </button>
-                                        )}
-                                        {editingFile && (
-                                            <>
-                                                <button className="btn btn-secondary btn-sm" onClick={() => setEditingFile(null)}>
-                                                    Cancel
-                                                </button>
-                                                <button className="btn btn-primary btn-sm" onClick={handleSaveFile}>
-                                                    Save
-                                                </button>
-                                            </>
-                                        )}
-                                        <button className="btn btn-icon btn-sm" onClick={() => setSelectedFile(null)}>
-                                            <X size={16} />
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="preview-info">
-                                    <span>Size: {selectedFile.size_human}</span>
-                                    <span>Owner: {selectedFile.owner}</span>
-                                    <span>Group: {selectedFile.group}</span>
-                                    {selectedFile.mime_type && <span>Type: {selectedFile.mime_type}</span>}
-                                </div>
-                                {selectedFile.is_editable ? (
-                                    <textarea
-                                        className="file-editor"
-                                        value={fileContent}
-                                        onChange={(e) => setFileContent(e.target.value)}
-                                        readOnly={!editingFile}
-                                        spellCheck={false}
-                                    />
-                                ) : (
-                                    <div className="preview-unavailable">
-                                        <EyeOff size={48} strokeWidth={1.5} />
-                                        <p>Preview not available for this file type</p>
-                                        <button className="btn btn-primary" onClick={() => handleDownload(selectedFile)}>
-                                            <Download size={16} />
-                                            Download File
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Sidebar */}
-                {sidebarVisible && (
-                    <div className="file-manager-sidebar">
-                        {/* Disk Usage Section */}
+                        {/* Types */}
                         <div className="sidebar-section">
-                            <button
-                                className="sidebar-section-header"
-                                onClick={() => setDiskCollapsed(!diskCollapsed)}
-                            >
+                            <div className="sidebar-section-header static">
+                                <File size={16} />
+                                <span>Types</span>
+                            </div>
+                            <div className="sidebar-section-content type-filter-panel">
+                                <div className="type-filter-list">
+                                    {FILTER_OPTIONS.map((opt) => {
+                                        const count = filterCounts[opt.id] ?? 0;
+                                        return (
+                                            <button
+                                                key={opt.id}
+                                                className={`type-filter-item ${activeFilter === opt.id ? 'active' : ''}`}
+                                                onClick={() => setActiveFilter(opt.id)}
+                                                disabled={opt.id !== 'all' && count === 0}
+                                            >
+                                                <span>{opt.label}</span>
+                                                <span>{count}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <label className="sidebar-sort-control">
+                                    <span><ArrowUpDown size={12} /> Sort</span>
+                                    <select value={sortValue} onChange={(e) => handleSortChange(e.target.value)}>
+                                        <option value="name-asc">Name A-Z</option>
+                                        <option value="name-desc">Name Z-A</option>
+                                        <option value="modified-desc">Newest</option>
+                                        <option value="modified-asc">Oldest</option>
+                                        <option value="size-desc">Largest</option>
+                                        <option value="size-asc">Smallest</option>
+                                        <option value="type-asc">Type</option>
+                                        <option value="type-desc">Type Z-A</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+
+                        {/* Disk Usage */}
+                        <div className="sidebar-section">
+                            <button className="sidebar-section-header" onClick={() => setDiskCollapsed(!diskCollapsed)}>
                                 <HardDrive size={16} />
                                 <span>Disk Usage</span>
                                 {diskCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
                             </button>
-
                             {!diskCollapsed && (
                                 <div className="sidebar-section-content">
                                     <div className="disk-header-row">
@@ -576,16 +1028,10 @@ function FileManager() {
                                                 {diskLastUpdated.toLocaleTimeString()}
                                             </span>
                                         )}
-                                        <button
-                                            className="btn btn-icon btn-sm"
-                                            onClick={loadDiskMounts}
-                                            disabled={diskLoading}
-                                            title="Refresh"
-                                        >
+                                        <button className="toolbar-icon-btn small" onClick={loadDiskMounts} disabled={diskLoading} title="Refresh">
                                             <RefreshCw size={12} className={diskLoading ? 'spinning' : ''} />
                                         </button>
                                     </div>
-
                                     {diskMounts.map((mount, idx) => (
                                         <div key={idx} className="disk-mount-item">
                                             <div className="disk-mount-header">
@@ -595,10 +1041,7 @@ function FileManager() {
                                                 </span>
                                             </div>
                                             <div className={`disk-progress ${getDiskColor(mount.percent)}`}>
-                                                <div
-                                                    className="disk-progress-fill"
-                                                    style={{ width: `${mount.percent}%` }}
-                                                />
+                                                <div className="disk-progress-fill" style={{ width: `${mount.percent}%` }} />
                                             </div>
                                             <div className="disk-mount-info">
                                                 <span>{mount.used_human} / {mount.total_human}</span>
@@ -610,275 +1053,264 @@ function FileManager() {
                             )}
                         </div>
 
-                        {/* Analysis Section */}
-                        {(directoryAnalysis || analysisLoading) && (
-                            <div className="sidebar-section analysis-section">
-                                <div className="sidebar-section-header static">
-                                    <BarChart3 size={16} />
-                                    <span>Directory Analysis</span>
-                                    <button
-                                        className="btn btn-icon btn-sm close-btn"
-                                        onClick={closeAnalysis}
-                                    >
-                                        <X size={14} />
-                                    </button>
-                                </div>
+                    </aside>
+                )}
 
-                                <div className="sidebar-section-content">
-                                    {analysisLoading ? (
-                                        <div className="analysis-loading">
-                                            <Spinner />
-                                            <span>Analyzing...</span>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <div className="analysis-total">
-                                                Total: {directoryAnalysis.total_size_human}
-                                            </div>
-
-                                            {/* View Toggle */}
-                                            <div className="analysis-tabs">
-                                                <button
-                                                    className={`analysis-tab ${analysisView === 'directories' ? 'active' : ''}`}
-                                                    onClick={() => setAnalysisView('directories')}
-                                                >
-                                                    <Folder size={14} />
-                                                    Directories
-                                                </button>
-                                                <button
-                                                    className={`analysis-tab ${analysisView === 'files' ? 'active' : ''}`}
-                                                    onClick={() => setAnalysisView('files')}
-                                                >
-                                                    <File size={14} />
-                                                    Files
-                                                </button>
-                                            </div>
-
-                                            {/* Directory Sizes */}
-                                            {analysisView === 'directories' && (
-                                                <div className="analysis-bars">
-                                                    {directoryAnalysis.directories.slice(0, 10).map((dir, idx) => (
-                                                        <div
-                                                            key={idx}
-                                                            className="analysis-bar-item"
-                                                            onClick={() => setCurrentPath(dir.path)}
-                                                        >
-                                                            <div className="analysis-bar-header">
-                                                                <span className="analysis-bar-name">
-                                                                    <Folder size={12} />
-                                                                    {dir.name}
-                                                                </span>
-                                                                <span className="analysis-bar-size">{dir.size_human}</span>
-                                                            </div>
-                                                            <div className="analysis-bar-track">
-                                                                <div
-                                                                    className="analysis-bar-fill"
-                                                                    style={{ width: `${dir.percent}%` }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                    {directoryAnalysis.directories.length === 0 && (
-                                                        <div className="analysis-empty">No subdirectories</div>
-                                                    )}
-                                                </div>
-                                            )}
-
-                                            {/* Largest Files */}
-                                            {analysisView === 'files' && (
-                                                <div className="analysis-files">
-                                                    {directoryAnalysis.largest_files.slice(0, 10).map((file, idx) => (
-                                                        <div
-                                                            key={idx}
-                                                            className="analysis-file-item"
-                                                            onClick={() => handleFileClick(file)}
-                                                        >
-                                                            <File size={12} />
-                                                            <span className="analysis-file-name">{file.name}</span>
-                                                            <span className="analysis-file-size">{file.size_human}</span>
-                                                        </div>
-                                                    ))}
-                                                    {directoryAnalysis.largest_files.length === 0 && (
-                                                        <div className="analysis-empty">No files</div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </>
-                                    )}
+                <main className="file-manager-main">
+                    <div
+                        className="file-list-container"
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget) clearSelection();
+                        }}
+                    >
+                        {dragActive && (
+                            <div className="drag-overlay">
+                                <div className="drag-overlay-inner">
+                                    <CloudUpload size={56} strokeWidth={1.5} />
+                                    <h3>Drop to upload</h3>
+                                    <p>Files will be uploaded to <code>{currentPath}</code></p>
                                 </div>
                             </div>
                         )}
 
-                        {/* Type Breakdown Section */}
-                        {typeBreakdown && typeBreakdown.breakdown && typeBreakdown.breakdown.length > 0 && (
-                            <div className="sidebar-section">
-                                <div className="sidebar-section-header static">
-                                    <PieChart size={16} />
-                                    <span>File Types</span>
+                        {loading ? (
+                            <div className="loading-state">
+                                <Spinner />
+                            </div>
+                        ) : sortedFiltered.length === 0 ? (
+                            <div className="empty-state">
+                                <Folder size={56} strokeWidth={1.25} />
+                                <h3>{searchResults ? 'No matches' : activeFilter !== 'all' ? `No ${activeFilter} files` : 'This folder is empty'}</h3>
+                                <p>
+                                    {searchResults
+                                        ? 'Try a different search term or browse another folder.'
+                                        : activeFilter !== 'all'
+                                            ? 'Try a different filter.'
+                                            : 'Drop files here, or use the buttons above to create something new.'}
+                                </p>
+                            </div>
+                        ) : viewMode === 'grid' ? (
+                            <div className="file-grid">
+                                {sortedFiltered.map((entry) => (
+                                    <FileCard
+                                        key={entry.path}
+                                        entry={entry}
+                                        selected={selectedPaths.has(entry.path)}
+                                        selectMode={selectMode}
+                                        onOpen={handleOpen}
+                                        onToggleSelect={handleToggleSelect}
+                                        onContext={openContextMenu}
+                                    />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="file-list">
+                                <div className="file-list-header">
+                                    <span className="col-check">
+                                        <button
+                                            className="checkbox-btn"
+                                            onClick={() => {
+                                                if (selectedPaths.size === sortedFiltered.length) clearSelection();
+                                                else {
+                                                    setSelectedPaths(new Set(sortedFiltered.map((x) => x.path)));
+                                                    setSelectMode(sortedFiltered.length > 0);
+                                                }
+                                            }}
+                                        >
+                                            <span className={`checkbox ${selectedPaths.size === sortedFiltered.length && sortedFiltered.length > 0 ? 'checked' : ''}`}>
+                                                {selectedPaths.size === sortedFiltered.length && sortedFiltered.length > 0 && <Check size={12} />}
+                                            </span>
+                                        </button>
+                                    </span>
+                                    <span className="col-name">Name</span>
+                                    <span className="col-size">Size</span>
+                                    <span className="col-modified">Modified</span>
+                                    <span className="col-permissions">Permissions</span>
+                                    <span className="col-actions">Actions</span>
                                 </div>
-                                <div className="sidebar-section-content">
-                                    <div className="type-breakdown-chart">
-                                        <ResponsiveContainer width="100%" height={180}>
-                                            <RechartsPie>
-                                                <Pie
-                                                    data={typeBreakdown.breakdown}
-                                                    dataKey="size"
-                                                    nameKey="name"
-                                                    cx="50%"
-                                                    cy="50%"
-                                                    outerRadius={60}
-                                                    innerRadius={35}
-                                                    paddingAngle={2}
-                                                >
-                                                    {typeBreakdown.breakdown.map((entry, idx) => (
-                                                        <Cell key={idx} fill={entry.color} />
-                                                    ))}
-                                                </Pie>
-                                                <Tooltip
-                                                    formatter={(value, name) => [
-                                                        typeBreakdown.breakdown.find(b => b.name === name)?.size_human || value,
-                                                        name
-                                                    ]}
-                                                />
-                                            </RechartsPie>
-                                        </ResponsiveContainer>
-                                    </div>
-                                    <div className="type-breakdown-legend">
-                                        {typeBreakdown.breakdown.map((cat, idx) => (
-                                            <div key={idx} className="type-legend-item">
-                                                <span
-                                                    className="type-legend-color"
-                                                    style={{ background: cat.color }}
-                                                />
-                                                <span className="type-legend-name">{cat.name}</span>
-                                                <span className="type-legend-size">{cat.size_human}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+                                {sortedFiltered.map((entry) => (
+                                    <FileRow
+                                        key={entry.path}
+                                        entry={entry}
+                                        selected={selectedPaths.has(entry.path)}
+                                        selectMode={selectMode}
+                                        onOpen={handleOpen}
+                                        onToggleSelect={handleToggleSelect}
+                                        onContext={openContextMenu}
+                                        onDownload={(e) => api.downloadFile(e.path)}
+                                        onRename={openRenameModal}
+                                        onPermissions={openPermissionsModal}
+                                        onDelete={(e) => handleDelete(e)}
+                                    />
+                                ))}
                             </div>
                         )}
                     </div>
-                )}
+                </main>
             </div>
 
-            {/* New File Modal */}
+            <div className="status-bar">
+                <div className="status-bar-left">
+                    <span className="status-item">
+                        <span className="status-label">Total</span>
+                        <span className="status-value">{stats.total} item{stats.total !== 1 ? 's' : ''}</span>
+                    </span>
+                    <span className="status-divider" />
+                    <span className="status-item">
+                        <Folder size={12} />
+                        <span>{stats.folders} folder{stats.folders !== 1 ? 's' : ''}</span>
+                    </span>
+                    <span className="status-item">
+                        <File size={12} />
+                        <span>{stats.files} file{stats.files !== 1 ? 's' : ''}</span>
+                    </span>
+                    {stats.totalBytes > 0 && (
+                        <>
+                            <span className="status-divider" />
+                            <span className="status-item">
+                                <span className="status-label">Size</span>
+                                <span className="status-value">{formatBytes(stats.totalBytes)}</span>
+                            </span>
+                        </>
+                    )}
+                </div>
+                <div className="status-bar-right">
+                    {stats.selectedCount > 0 && (
+                        <span className="status-selection">
+                            {stats.selectedCount} selected · {formatBytes(stats.selectedBytes)}
+                        </span>
+                    )}
+                    <span className="status-shortcuts" title="Keyboard shortcuts">
+                        ⌫ Up · Del Delete · F2 Rename · ⌘A All
+                    </span>
+                </div>
+            </div>
+
+            <ContextMenu
+                menu={contextMenu}
+                selectionCount={selectedEntries.length}
+                onClose={() => setContextMenu(null)}
+                onOpen={handleOpen}
+                onDownload={(e) => api.downloadFile(e.path)}
+                onRename={openRenameModal}
+                onPermissions={openPermissionsModal}
+                onCopyPath={copyPathToClipboard}
+                onDelete={(e) => handleDelete(selectedEntries.length > 1 ? selectedEntries : e)}
+            />
+
+            <PreviewDrawer
+                file={previewFile}
+                fileContent={fileContent}
+                setFileContent={setFileContent}
+                editing={editing}
+                onStartEdit={() => setEditing(true)}
+                onCancelEdit={() => setEditing(false)}
+                onSave={handleSaveFile}
+                onClose={() => { setPreviewFile(null); setEditing(false); }}
+                onDownload={(e) => api.downloadFile(e.path)}
+                onRename={openRenameModal}
+                onPermissions={openPermissionsModal}
+                onCopyPath={copyPathToClipboard}
+                onDelete={(e) => handleDelete(e)}
+            />
+
+            {/* Modals */}
             {showNewFileModal && (
                 <div className="modal-overlay" onClick={() => setShowNewFileModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Create New File</h2>
-                            <button className="btn btn-icon" onClick={() => setShowNewFileModal(false)}>
-                                <X size={20} />
-                            </button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowNewFileModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
-                                <label>File Name</label>
-                                <input
+                                <Label>File Name</Label>
+                                <Input
                                     type="text"
                                     value={newFileName}
                                     onChange={(e) => setNewFileName(e.target.value)}
                                     placeholder="example.txt"
                                     autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateFile()}
                                 />
                             </div>
-                            <p className="text-muted">File will be created in: {currentPath}</p>
+                            <p className="text-muted">Will be created in: <code>{currentPath}</code></p>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setShowNewFileModal(false)}>
-                                Cancel
-                            </button>
-                            <button className="btn btn-primary" onClick={handleCreateFile}>
-                                Create File
-                            </button>
+                            <Button variant="outline" onClick={() => setShowNewFileModal(false)}>Cancel</Button>
+                            <Button onClick={handleCreateFile}>Create File</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* New Folder Modal */}
             {showNewFolderModal && (
                 <div className="modal-overlay" onClick={() => setShowNewFolderModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Create New Folder</h2>
-                            <button className="btn btn-icon" onClick={() => setShowNewFolderModal(false)}>
-                                <X size={20} />
-                            </button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowNewFolderModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
-                                <label>Folder Name</label>
-                                <input
+                                <Label>Folder Name</Label>
+                                <Input
                                     type="text"
                                     value={newFolderName}
                                     onChange={(e) => setNewFolderName(e.target.value)}
                                     placeholder="new-folder"
                                     autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
                                 />
                             </div>
-                            <p className="text-muted">Folder will be created in: {currentPath}</p>
+                            <p className="text-muted">Will be created in: <code>{currentPath}</code></p>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setShowNewFolderModal(false)}>
-                                Cancel
-                            </button>
-                            <button className="btn btn-primary" onClick={handleCreateFolder}>
-                                Create Folder
-                            </button>
+                            <Button variant="outline" onClick={() => setShowNewFolderModal(false)}>Cancel</Button>
+                            <Button onClick={handleCreateFolder}>Create Folder</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Rename Modal */}
             {showRenameModal && (
                 <div className="modal-overlay" onClick={() => setShowRenameModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Rename {renameTarget?.is_dir ? 'Folder' : 'File'}</h2>
-                            <button className="btn btn-icon" onClick={() => setShowRenameModal(false)}>
-                                <X size={20} />
-                            </button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowRenameModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
-                                <label>New Name</label>
-                                <input
+                                <Label>New Name</Label>
+                                <Input
                                     type="text"
                                     value={newName}
                                     onChange={(e) => setNewName(e.target.value)}
                                     autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleRename()}
                                 />
                             </div>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setShowRenameModal(false)}>
-                                Cancel
-                            </button>
-                            <button className="btn btn-primary" onClick={handleRename}>
-                                Rename
-                            </button>
+                            <Button variant="outline" onClick={() => setShowRenameModal(false)}>Cancel</Button>
+                            <Button onClick={handleRename}>Rename</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Permissions Modal */}
             {showPermissionsModal && (
                 <div className="modal-overlay" onClick={() => setShowPermissionsModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Change Permissions</h2>
-                            <button className="btn btn-icon" onClick={() => setShowPermissionsModal(false)}>
-                                <X size={20} />
-                            </button>
+                            <Button variant="ghost" size="icon" onClick={() => setShowPermissionsModal(false)}><X size={20} /></Button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
-                                <label>Permissions (Octal)</label>
-                                <input
+                                <Label>Permissions (Octal)</Label>
+                                <Input
                                     type="text"
                                     value={newPermissions}
                                     onChange={(e) => setNewPermissions(e.target.value)}
@@ -887,31 +1319,24 @@ function FileManager() {
                                     autoFocus
                                 />
                             </div>
-                            <p className="text-muted">
-                                Current: {permissionsTarget?.permissions} ({permissionsTarget?.permissions_octal})
-                            </p>
+                            <p className="text-muted">Current: {permissionsTarget?.permissions} ({permissionsTarget?.permissions_octal})</p>
                             <div className="permissions-help">
-                                <p>Common permissions:</p>
+                                <p>Common values:</p>
                                 <ul>
-                                    <li><code>755</code> - Owner: rwx, Group/Other: rx (directories)</li>
-                                    <li><code>644</code> - Owner: rw, Group/Other: r (files)</li>
-                                    <li><code>600</code> - Owner: rw only (private files)</li>
+                                    <li><code>755</code> Owner: rwx, Group/Other: rx (directories)</li>
+                                    <li><code>644</code> Owner: rw, Group/Other: r (files)</li>
+                                    <li><code>600</code> Owner: rw only (private files)</li>
                                 </ul>
                             </div>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setShowPermissionsModal(false)}>
-                                Cancel
-                            </button>
-                            <button className="btn btn-primary" onClick={handleChangePermissions}>
-                                Apply
-                            </button>
+                            <Button variant="outline" onClick={() => setShowPermissionsModal(false)}>Cancel</Button>
+                            <Button onClick={handleChangePermissions}>Apply</Button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Confirm Dialog */}
             {confirmDialog && (
                 <ConfirmDialog
                     title={confirmDialog.title}

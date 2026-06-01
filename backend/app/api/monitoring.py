@@ -86,6 +86,9 @@ def update_config():
     current_config = MonitoringService.get_config()
 
     # Update config with new values
+    if 'enabled' in data:
+        current_config['enabled'] = bool(data['enabled'])
+
     if 'thresholds' in data:
         current_config['thresholds'] = {**current_config.get('thresholds', {}), **data['thresholds']}
 

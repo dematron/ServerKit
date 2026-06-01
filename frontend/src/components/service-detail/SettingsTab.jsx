@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
+import { DangerZone } from '../DangerZone';
+import { Button } from '@/components/ui/button';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 
 const SettingsTab = ({ app, deployConfig, onUpdate, onOpenGitModal }) => {
     const navigate = useNavigate();
@@ -78,9 +81,9 @@ const SettingsTab = ({ app, deployConfig, onUpdate, onOpenGitModal }) => {
                             </span>
                         </div>
                         <div className="settings-control">
-                            <button className="btn btn-secondary" onClick={onOpenGitModal}>
+                            <Button variant="outline" onClick={onOpenGitModal}>
                                 {deployConfig ? 'Edit' : 'Connect'}
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 </div>
@@ -105,17 +108,21 @@ const SettingsTab = ({ app, deployConfig, onUpdate, onOpenGitModal }) => {
                                     {envLabels[app.environment_type] || app.environment_type}
                                 </span>
                             ) : (
-                                <select
+                                <Select
                                     value={environmentType}
-                                    onChange={(e) => handleEnvironmentChange(e.target.value)}
+                                    onValueChange={handleEnvironmentChange}
                                     disabled={savingEnvironment}
-                                    className="settings-select"
                                 >
-                                    <option value="standalone">Standalone</option>
-                                    <option value="development">Development</option>
-                                    <option value="staging">Staging</option>
-                                    <option value="production">Production</option>
-                                </select>
+                                    <SelectTrigger className="settings-select">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="standalone">Standalone</SelectItem>
+                                        <SelectItem value="development">Development</SelectItem>
+                                        <SelectItem value="staging">Staging</SelectItem>
+                                        <SelectItem value="production">Production</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             )}
                             {savingEnvironment && <span className="settings-saving">Saving...</span>}
                         </div>
@@ -130,13 +137,13 @@ const SettingsTab = ({ app, deployConfig, onUpdate, onOpenGitModal }) => {
                                 </span>
                             </div>
                             <div className="settings-control">
-                                <button
-                                    className="btn btn-secondary"
+                                <Button
+                                    variant="outline"
                                     onClick={handleUnlink}
                                     disabled={unlinking}
                                 >
                                     {unlinking ? 'Unlinking...' : 'Unlink'}
-                                </button>
+                                </Button>
                             </div>
                         </div>
                     )}
@@ -146,16 +153,14 @@ const SettingsTab = ({ app, deployConfig, onUpdate, onOpenGitModal }) => {
             {/* Danger Zone */}
             <div className="svc-settings__section">
                 <h3 className="svc-settings__section-title">Danger Zone</h3>
-                <div className="card danger-zone">
-                    <p>Once you delete a service, there is no going back. All data will be permanently removed.</p>
-                    <button
-                        className="btn btn-danger"
-                        onClick={handleDelete}
-                        disabled={deleting}
-                    >
-                        {deleting ? 'Deleting...' : 'Delete Service'}
-                    </button>
-                </div>
+                <DangerZone
+                    description="Once you delete a service, there is no going back. All data will be permanently removed."
+                    action={
+                        <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+                            {deleting ? 'Deleting...' : 'Delete Service'}
+                        </Button>
+                    }
+                />
             </div>
         </div>
     );

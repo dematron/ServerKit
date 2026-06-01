@@ -179,6 +179,9 @@ cmd_help() {
     echo ""
     echo "App Management:"
     echo "  create-app        Show how to create apps (via web UI)"
+    echo "  deploy-template   Deploy a template to local or remote server"
+    echo "  list-servers      List deployment target servers"
+    echo "  deployment-status Show deployment job status and logs"
     echo "  list-apps [--all] List deployed apps (--all shows Docker containers)"
     echo "  start-app         Start an app"
     echo "  stop-app          Stop an app"
@@ -766,6 +769,23 @@ cmd_create_app() {
     echo ""
 }
 
+cmd_deploy_template() {
+    check_installed
+    shift
+    run_cli deploy-template "$@"
+}
+
+cmd_list_servers() {
+    check_installed
+    run_cli list-servers
+}
+
+cmd_deployment_status() {
+    check_installed
+    shift
+    run_cli deployment-status "$@"
+}
+
 cmd_list_apps() {
     check_installed
     # Pass --all flag if provided
@@ -1348,6 +1368,15 @@ case "${1:-help}" in
         ;;
     create-app)
         cmd_create_app "$2" "$3" "$4"
+        ;;
+    deploy-template)
+        cmd_deploy_template "$@"
+        ;;
+    list-servers)
+        cmd_list_servers
+        ;;
+    deployment-status)
+        cmd_deployment_status "$@"
         ;;
     list-apps)
         cmd_list_apps "$2"

@@ -3,6 +3,14 @@ import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../hooks/useConfirm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { StatCard, StatsGrid } from '../components/StatCard';
+import { Clock, FileText, CheckCircle, Monitor } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const CronJobs = () => {
     const toast = useToast();
@@ -184,28 +192,28 @@ const CronJobs = () => {
     }
 
     return (
-        <div className="page cron-page">
+        <div className="page-container cron-page">
             <div className="page-header">
                 <div>
                     <h1>Cron Jobs</h1>
                     <p className="page-subtitle">Manage scheduled tasks and automated jobs</p>
                 </div>
                 <div className="page-header-actions">
-                    <button className="btn btn-secondary" onClick={loadData}>
+                    <Button variant="outline" onClick={loadData}>
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                             <polyline points="23 4 23 10 17 10"/>
                             <polyline points="1 20 1 14 7 14"/>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                         </svg>
                         Refresh
-                    </button>
-                    <button className="btn btn-primary" onClick={openCreateModal}>
+                    </Button>
+                    <Button onClick={openCreateModal}>
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                             <line x1="12" y1="5" x2="12" y2="19"/>
                             <line x1="5" y1="12" x2="19" y2="12"/>
                         </svg>
                         Create Job
-                    </button>
+                    </Button>
                 </div>
             </div>
 
@@ -217,63 +225,12 @@ const CronJobs = () => {
             )}
 
             {/* Status Cards */}
-            <div className="stats-grid">
-                <div className="stat-card">
-                    <div className="stat-icon cron">
-                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" strokeWidth="2">
-                            <circle cx="12" cy="12" r="10"/>
-                            <polyline points="12 6 12 12 16 14"/>
-                        </svg>
-                    </div>
-                    <div className="stat-content">
-                        <span className="stat-label">Cron Service</span>
-                        <span className="stat-value">{status?.available ? 'Available' : 'Not Available'}</span>
-                    </div>
-                </div>
-
-                <div className="stat-card">
-                    <div className="stat-icon jobs">
-                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" strokeWidth="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                            <polyline points="10 9 9 9 8 9"/>
-                        </svg>
-                    </div>
-                    <div className="stat-content">
-                        <span className="stat-label">Total Jobs</span>
-                        <span className="stat-value">{jobs.length}</span>
-                    </div>
-                </div>
-
-                <div className="stat-card">
-                    <div className="stat-icon active">
-                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" strokeWidth="2">
-                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                            <polyline points="22 4 12 14.01 9 11.01"/>
-                        </svg>
-                    </div>
-                    <div className="stat-content">
-                        <span className="stat-label">Active Jobs</span>
-                        <span className="stat-value">{jobs.filter(j => j.enabled).length}</span>
-                    </div>
-                </div>
-
-                <div className="stat-card">
-                    <div className="stat-icon platform">
-                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" strokeWidth="2">
-                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                            <line x1="8" y1="21" x2="16" y2="21"/>
-                            <line x1="12" y1="17" x2="12" y2="21"/>
-                        </svg>
-                    </div>
-                    <div className="stat-content">
-                        <span className="stat-label">Platform</span>
-                        <span className="stat-value">{status?.platform || 'Unknown'}</span>
-                    </div>
-                </div>
-            </div>
+            <StatsGrid>
+                <StatCard icon={Clock} iconVariant="cron" label="Cron Service" value={status?.available ? 'Available' : 'Not Available'} />
+                <StatCard icon={FileText} iconVariant="jobs" label="Total Jobs" value={jobs.length} />
+                <StatCard icon={CheckCircle} iconVariant="active" label="Active Jobs" value={jobs.filter(j => j.enabled).length} />
+                <StatCard icon={Monitor} iconVariant="platform" label="Platform" value={status?.platform || 'Unknown'} />
+            </StatsGrid>
 
             {/* Jobs List */}
             <div className="card">
@@ -289,9 +246,9 @@ const CronJobs = () => {
                             </svg>
                             <h3>No Cron Jobs</h3>
                             <p>No scheduled jobs found. Create your first cron job to automate tasks.</p>
-                            <button className="btn btn-primary" onClick={openCreateModal}>
+                            <Button onClick={openCreateModal}>
                                 Create Job
-                            </button>
+                            </Button>
                         </div>
                     ) : (
                         <div className="cron-list">
@@ -325,14 +282,15 @@ const CronJobs = () => {
                                     </div>
 
                                     <div className="cron-item-status">
-                                        <span className={`badge badge-${job.enabled ? 'success' : 'secondary'}`}>
+                                        <Badge variant={job.enabled ? 'success' : 'secondary'}>
                                             {job.enabled ? 'Active' : 'Disabled'}
-                                        </span>
+                                        </Badge>
                                     </div>
 
                                     <div className="cron-item-actions" onClick={e => e.stopPropagation()}>
-                                        <button
-                                            className="btn btn-sm btn-secondary"
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
                                             onClick={() => handleRunJob(job.id)}
                                             disabled={runningJobId === job.id}
                                             title="Run now"
@@ -344,9 +302,10 @@ const CronJobs = () => {
                                                     <polygon points="5 3 19 12 5 21 5 3"/>
                                                 </svg>
                                             )}
-                                        </button>
-                                        <button
-                                            className="btn btn-sm btn-secondary"
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
                                             onClick={() => openEditModal(job)}
                                             title="Edit"
                                         >
@@ -354,9 +313,10 @@ const CronJobs = () => {
                                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                                             </svg>
-                                        </button>
-                                        <button
-                                            className={`btn btn-sm ${job.enabled ? 'btn-warning' : 'btn-success'}`}
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
                                             onClick={() => handleToggleJob(job.id, job.enabled)}
                                             title={job.enabled ? 'Disable' : 'Enable'}
                                         >
@@ -370,9 +330,10 @@ const CronJobs = () => {
                                                     <polygon points="5 3 19 12 5 21 5 3"/>
                                                 </svg>
                                             )}
-                                        </button>
-                                        <button
-                                            className="btn btn-sm btn-danger"
+                                        </Button>
+                                        <Button
+                                            variant="destructive"
+                                            size="sm"
                                             onClick={() => handleDeleteJob(job.id)}
                                             title="Delete"
                                         >
@@ -380,7 +341,7 @@ const CronJobs = () => {
                                                 <polyline points="3 6 5 6 21 6"/>
                                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                                             </svg>
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
                             ))}
@@ -400,8 +361,9 @@ const CronJobs = () => {
                         <form onSubmit={handleSubmitJob}>
                             <div className="modal-body">
                                 <div className="form-group">
-                                    <label>Job Name</label>
-                                    <input
+                                    <Label htmlFor="job-name">Job Name</Label>
+                                    <Input
+                                        id="job-name"
                                         type="text"
                                         value={jobForm.name}
                                         onChange={(e) => setJobForm({...jobForm, name: e.target.value})}
@@ -411,8 +373,9 @@ const CronJobs = () => {
                                 </div>
 
                                 <div className="form-group">
-                                    <label>Command</label>
-                                    <input
+                                    <Label htmlFor="job-command">Command</Label>
+                                    <Input
+                                        id="job-command"
                                         type="text"
                                         value={jobForm.command}
                                         onChange={(e) => setJobForm({...jobForm, command: e.target.value})}
@@ -424,10 +387,9 @@ const CronJobs = () => {
 
                                 <div className="form-group">
                                     <label className="checkbox-label">
-                                        <input
-                                            type="checkbox"
+                                        <Checkbox
                                             checked={jobForm.usePreset}
-                                            onChange={(e) => setJobForm({...jobForm, usePreset: e.target.checked})}
+                                            onCheckedChange={(checked) => setJobForm({...jobForm, usePreset: !!checked})}
                                         />
                                         <span>Use preset schedule</span>
                                     </label>
@@ -435,8 +397,9 @@ const CronJobs = () => {
 
                                 {jobForm.usePreset ? (
                                     <div className="form-group">
-                                        <label>Schedule Preset</label>
+                                        <Label htmlFor="job-preset">Schedule Preset</Label>
                                         <select
+                                            id="job-preset"
                                             value={jobForm.preset}
                                             onChange={(e) => setJobForm({...jobForm, preset: e.target.value})}
                                         >
@@ -449,8 +412,9 @@ const CronJobs = () => {
                                     </div>
                                 ) : (
                                     <div className="form-group">
-                                        <label>Cron Schedule</label>
-                                        <input
+                                        <Label htmlFor="job-schedule">Cron Schedule</Label>
+                                        <Input
+                                            id="job-schedule"
                                             type="text"
                                             value={jobForm.schedule}
                                             onChange={(e) => setJobForm({...jobForm, schedule: e.target.value})}
@@ -458,28 +422,29 @@ const CronJobs = () => {
                                             required={!jobForm.usePreset}
                                         />
                                         <span className="form-help">
-                                            Format: minute hour day month weekday (e.g., "0 0 * * *" for daily at midnight)
+                                            Format: minute hour day month weekday (e.g., &quot;0 0 * * *&quot; for daily at midnight)
                                         </span>
                                     </div>
                                 )}
 
                                 <div className="form-group">
-                                    <label>Description (optional)</label>
-                                    <textarea
+                                    <Label htmlFor="job-description">Description (optional)</Label>
+                                    <Textarea
+                                        id="job-description"
                                         value={jobForm.description}
                                         onChange={(e) => setJobForm({...jobForm, description: e.target.value})}
                                         placeholder="What does this job do?"
-                                        rows="2"
+                                        rows={2}
                                     />
                                 </div>
                             </div>
                             <div className="modal-footer">
-                                <button type="button" className="btn btn-secondary" onClick={closeJobModal}>
+                                <Button type="button" variant="outline" onClick={closeJobModal}>
                                     Cancel
-                                </button>
-                                <button type="submit" className="btn btn-primary">
+                                </Button>
+                                <Button type="submit">
                                     {editingJob ? 'Save Changes' : 'Create Job'}
-                                </button>
+                                </Button>
                             </div>
                         </form>
                     </div>
@@ -498,9 +463,9 @@ const CronJobs = () => {
                             <div className="run-output">
                                 <div className="run-output-exit">
                                     <span className="run-output-label">Exit Code</span>
-                                    <span className={`badge badge-${runOutput.exitCode === 0 ? 'success' : 'danger'}`}>
+                                    <Badge variant={runOutput.exitCode === 0 ? 'success' : 'destructive'}>
                                         {runOutput.exitCode}
-                                    </span>
+                                    </Badge>
                                 </div>
                                 {runOutput.stdout && (
                                     <div className="run-output-section">
@@ -520,7 +485,7 @@ const CronJobs = () => {
                             </div>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setRunOutput(null)}>Close</button>
+                            <Button variant="outline" onClick={() => setRunOutput(null)}>Close</Button>
                         </div>
                     </div>
                 </div>

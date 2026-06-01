@@ -1,14 +1,83 @@
 import os
 import json
+import re
+import shutil
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models import Application, User
+from app.services.build_service import BuildService
 from app.services.docker_service import DockerService
+from app.services.git_service import GitService
+from app.services.repository_manifest_service import RepositoryManifestService
+from app.services.source_connection_service import SourceConnectionService
+from app.services.remote_docker_service import RemoteDockerService
 from app.services.log_service import LogService
 from app import paths
 
 apps_bp = Blueprint('apps', __name__)
+
+
+def _compose_target(app):
+    if app.server_id and app.root_path:
+        return os.path.join(app.root_path, 'docker-compose.yml')
+    return app.root_path
+
+
+def _agent_result_failed(result):
+    data = result.get('data') if isinstance(result, dict) else None
+    return isinstance(data, dict) and data.get('success') is False
+
+
+def _agent_result_error(result, fallback):
+    data = result.get('data') if isinstance(result, dict) else None
+    if isinstance(data, dict):
+        return data.get('error') or result.get('error') or fallback
+    return result.get('error') or fallback
+
+
+def _service_slug(value):
+    return re.sub(r'[^a-z0-9-]+', '-', (value or '').strip().lower()).strip('-')
+
+
+def _derive_repo_app_type(detection):
+    if detection.get('has_dockerfile') or detection.get('has_docker_compose'):
+        return 'docker'
+    framework = detection.get('framework')
+    language = detection.get('language')
+    if framework == 'django':
+        return 'django'
+    if framework in ['flask', 'fastapi'] or language == 'python':
+        return 'flask'
+    if framework == 'laravel' or language == 'php':
+        return 'php'
+    return 'static'
+
+
+def _assert_managed_app_path(app_name):
+    base_dir = os.path.abspath(paths.APPS_DIR)
+    app_path = os.path.abspath(os.path.join(base_dir, app_name))
+    if app_path != base_dir and app_path.startswith(base_dir + os.sep):
+        return app_path
+    raise ValueError('Invalid application path')
+
+
+def _safe_repo_url(repo_url):
+    return re.sub(r'^(https?://)[^@]+@', r'\1', repo_url or '')
+
+
+def _attach_deploy_config(payload, deploy_configs=None):
+    deploy_configs = deploy_configs or GitService.get_config().get('apps', {})
+    deploy_config = deploy_configs.get(str(payload.get('id')))
+
+    payload['last_deploy_at'] = payload.get('last_deployed_at')
+    payload['deploy_configured'] = deploy_config is not None
+    if deploy_config:
+        payload['deploy_repo_url'] = _safe_repo_url(deploy_config.get('repo_url'))
+        payload['deploy_branch'] = deploy_config.get('branch')
+        payload['auto_deploy'] = deploy_config.get('auto_deploy', False)
+        payload['last_deploy_at'] = deploy_config.get('last_deploy')
+    return payload
 
 
 # ==================== ENVIRONMENT LINKING ====================
@@ -251,9 +320,13 @@ def get_apps():
         query = query.filter_by(environment_type=environment_filter)
 
     apps = query.all()
+    deploy_configs = GitService.get_config().get('apps', {})
 
     return jsonify({
-        'apps': [app.to_dict(include_linked=include_linked) for app in apps]
+        'apps': [
+            _attach_deploy_config(app.to_dict(include_linked=include_linked), deploy_configs)
+            for app in apps
+        ]
     }), 200
 
 
@@ -271,7 +344,171 @@ def get_app(app_id):
         return jsonify({'error': 'Access denied'}), 403
 
     # Single app requests include linked app info by default
-    return jsonify({'app': app.to_dict(include_linked=True)}), 200
+    return jsonify({'app': _attach_deploy_config(app.to_dict(include_linked=True))}), 200
+
+
+@apps_bp.route('/from-repository', methods=['POST'])
+@jwt_required()
+def create_app_from_repository():
+    """Create a new application by cloning a Git repository."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.get_json() or {}
+    name = _service_slug(data.get('name'))
+    repo_url = (data.get('repo_url') or '').strip()
+    source_connection_id = data.get('source_connection_id')
+    repository_full_name = (data.get('repository_full_name') or '').strip()
+    branch = (data.get('branch') or 'main').strip()
+    app_type = (data.get('app_type') or 'auto').strip().lower()
+    build_method = (data.get('build_method') or 'auto').strip().lower()
+    auto_deploy = bool(data.get('auto_deploy', True))
+    port = data.get('port')
+    dockerfile_path = (data.get('dockerfile_path') or '').strip() or None
+    custom_build_cmd = (data.get('custom_build_cmd') or '').strip() or None
+    custom_start_cmd = (data.get('custom_start_cmd') or '').strip() or None
+
+    if not name or len(name) < 2:
+        return jsonify({'error': 'Service name must be at least 2 characters'}), 400
+    if source_connection_id:
+        try:
+            source_repo = SourceConnectionService.get_authenticated_clone_url(
+                user_id=current_user_id,
+                connection_id=int(source_connection_id),
+                full_name=repository_full_name,
+            )
+            clone_repo_url = source_repo['clone_url']
+            deploy_repo_url = source_repo['public_url']
+        except (TypeError, ValueError) as exc:
+            return jsonify({'error': str(exc)}), 400
+    else:
+        clone_repo_url = repo_url
+        deploy_repo_url = repo_url
+
+    if not clone_repo_url:
+        return jsonify({'error': 'repo_url is required'}), 400
+
+    valid_app_types = ['auto', 'docker', 'flask', 'django', 'php', 'static']
+    if app_type not in valid_app_types:
+        return jsonify({'error': f'Invalid app_type. Must be one of: {", ".join(valid_app_types)}'}), 400
+
+    valid_build_methods = ['auto', 'dockerfile', 'nixpacks', 'custom']
+    if build_method not in valid_build_methods:
+        return jsonify({'error': f'Invalid build_method. Must be one of: {", ".join(valid_build_methods)}'}), 400
+
+    if port in ['', None]:
+        port = None
+    elif isinstance(port, int) or (isinstance(port, str) and port.isdigit()):
+        port = int(port)
+    else:
+        return jsonify({'error': 'port must be a number'}), 400
+
+    if Application.query.filter_by(name=name, server_id=None).first():
+        return jsonify({'error': f'An application named "{name}" already exists'}), 400
+
+    try:
+        app_path = _assert_managed_app_path(name)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    if os.path.exists(app_path):
+        return jsonify({'error': f'App directory already exists: {app_path}'}), 400
+
+    clone_result = GitService.clone_repository(app_path, clone_repo_url, branch or None)
+    if not clone_result.get('success'):
+        if clone_repo_url != deploy_repo_url and clone_result.get('error'):
+            clone_result['error'] = clone_result['error'].replace(clone_repo_url, deploy_repo_url)
+        return jsonify(clone_result), 400
+
+    manifest = RepositoryManifestService.analyze_path(app_path)
+    recommended = manifest.get('recommended') or {}
+    manifest_strategy = manifest.get('strategy')
+    detection = BuildService.detect_build_method(app_path)
+    manifest_app_type_strategies = {
+        'serverkit',
+        'docker_compose',
+        'render',
+        'railway',
+        'dockerfile',
+        'app_json',
+    }
+    resolved_app_type = (
+        (recommended.get('app_type') if manifest_strategy in manifest_app_type_strategies else None)
+        or _derive_repo_app_type(detection)
+    ) if app_type == 'auto' else app_type
+    resolved_build_method = build_method
+    if build_method == 'auto':
+        resolved_build_method = (
+            recommended.get('build_method') if manifest_strategy else None
+        ) or detection.get('build_method') or 'auto'
+        if resolved_build_method == 'custom' and not (custom_build_cmd or recommended.get('custom_build_cmd')):
+            resolved_build_method = 'auto'
+    if not port:
+        port = recommended.get('port')
+    dockerfile_path = dockerfile_path or recommended.get('dockerfile_path') or 'Dockerfile'
+    custom_build_cmd = custom_build_cmd or recommended.get('custom_build_cmd')
+    custom_start_cmd = custom_start_cmd or recommended.get('custom_start_cmd')
+
+    app = Application(
+        name=name,
+        app_type=resolved_app_type,
+        status='stopped',
+        root_path=app_path,
+        user_id=current_user_id,
+        port=port,
+    )
+
+    try:
+        db.session.add(app)
+        db.session.commit()
+
+        deploy_result = GitService.configure_deployment(
+            app_id=app.id,
+            app_path=app.root_path,
+            repo_url=deploy_repo_url,
+            branch=branch or 'main',
+            auto_deploy=auto_deploy,
+        )
+        if not deploy_result.get('success'):
+            raise RuntimeError(deploy_result.get('error', 'Failed to configure deployment'))
+
+        build_result = BuildService.configure_build(
+            app_id=app.id,
+            app_path=app.root_path,
+            build_method=resolved_build_method,
+            dockerfile_path=dockerfile_path,
+            custom_build_cmd=custom_build_cmd,
+            custom_start_cmd=custom_start_cmd,
+        )
+        if not build_result.get('success'):
+            raise RuntimeError(build_result.get('error', 'Failed to configure build'))
+
+        return jsonify({
+            'message': 'Repository service created',
+            'app': _attach_deploy_config(app.to_dict(include_linked=True)),
+            'deploy_config': {
+                'repo_url': _safe_repo_url(deploy_repo_url),
+                'branch': branch or 'main',
+                'auto_deploy': auto_deploy,
+                'webhook_url': deploy_result.get('webhook_url'),
+            },
+            'build_config': build_result.get('config'),
+            'detection': detection,
+            'manifest': manifest,
+        }), 201
+    except Exception as exc:
+        db.session.rollback()
+        if app.id:
+            GitService.remove_deployment(app.id)
+            existing_app = Application.query.get(app.id)
+            if existing_app:
+                db.session.delete(existing_app)
+                db.session.commit()
+        if os.path.abspath(app_path).startswith(os.path.abspath(paths.APPS_DIR) + os.sep):
+            shutil.rmtree(app_path, ignore_errors=True)
+        return jsonify({'error': str(exc)}), 400
 
 
 @apps_bp.route('', methods=['POST'])
@@ -425,9 +662,17 @@ def start_app(app_id):
 
     # Handle Docker apps
     if app.app_type == 'docker' and app.root_path:
-        result = DockerService.compose_up(app.root_path, detach=True)
-        if not result.get('success'):
-            return jsonify({'error': result.get('error', 'Failed to start containers')}), 400
+        if app.server_id:
+            result = RemoteDockerService.compose_up(
+                app.server_id,
+                _compose_target(app),
+                detach=True,
+                user_id=current_user_id
+            )
+        else:
+            result = DockerService.compose_up(app.root_path, detach=True)
+        if not result.get('success') or _agent_result_failed(result):
+            return jsonify({'error': _agent_result_error(result, 'Failed to start containers')}), 400
 
     app.status = 'running'
     db.session.commit()
@@ -453,9 +698,16 @@ def stop_app(app_id):
 
     # Handle Docker apps
     if app.app_type == 'docker' and app.root_path:
-        result = DockerService.compose_down(app.root_path)
-        if not result.get('success'):
-            return jsonify({'error': result.get('error', 'Failed to stop containers')}), 400
+        if app.server_id:
+            result = RemoteDockerService.compose_down(
+                app.server_id,
+                _compose_target(app),
+                user_id=current_user_id
+            )
+        else:
+            result = DockerService.compose_down(app.root_path)
+        if not result.get('success') or _agent_result_failed(result):
+            return jsonify({'error': _agent_result_error(result, 'Failed to stop containers')}), 400
 
     app.status = 'stopped'
     db.session.commit()
@@ -481,9 +733,16 @@ def restart_app(app_id):
 
     # Handle Docker apps
     if app.app_type == 'docker' and app.root_path:
-        result = DockerService.compose_restart(app.root_path)
-        if not result.get('success'):
-            return jsonify({'error': result.get('error', 'Failed to restart containers')}), 400
+        if app.server_id:
+            result = RemoteDockerService.compose_restart(
+                app.server_id,
+                _compose_target(app),
+                user_id=current_user_id
+            )
+        else:
+            result = DockerService.compose_restart(app.root_path)
+        if not result.get('success') or _agent_result_failed(result):
+            return jsonify({'error': _agent_result_error(result, 'Failed to restart containers')}), 400
 
     app.status = 'running'
     db.session.commit()
@@ -513,6 +772,15 @@ def get_app_logs(app_id):
 
     # For Docker apps, get docker compose logs
     if app.app_type == 'docker' and app.root_path:
+        if app.server_id:
+            result = RemoteDockerService.compose_logs(
+                app.server_id,
+                _compose_target(app),
+                tail=lines,
+                user_id=current_user_id
+            )
+            return jsonify(result.get('data') if result.get('success') else result), 200 if result.get('success') else 400
+
         result = LogService.get_docker_app_logs(app.name, app.root_path, lines)
         return jsonify(result), 200 if result.get('success') else 400
 
@@ -684,7 +952,17 @@ def get_app_status(app_id):
 
     if app.app_type == 'docker' and app.root_path:
         # Get container status from Docker
-        containers = DockerService.compose_ps(app.root_path)
+        if app.server_id:
+            result = RemoteDockerService.compose_ps(
+                app.server_id,
+                _compose_target(app),
+                user_id=current_user_id
+            )
+            if not result.get('success'):
+                return jsonify(result), 503 if result.get('code') == 'AGENT_OFFLINE' else 400
+            containers = result.get('data', [])
+        else:
+            containers = DockerService.compose_ps(app.root_path)
 
         # Determine overall status
         running_count = sum(1 for c in containers if c.get('Status', c.get('status', '')).startswith('Up'))
@@ -706,7 +984,7 @@ def get_app_status(app_id):
 
         # Check port accessibility
         port_status = None
-        if app.port:
+        if app.port and not app.server_id:
             port_status = DockerService.check_port_accessible(app.port)
 
         return jsonify({

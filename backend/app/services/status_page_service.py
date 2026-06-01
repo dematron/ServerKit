@@ -1,4 +1,5 @@
 import logging
+import re
 import socket
 import time
 from datetime import datetime, timedelta
@@ -12,6 +13,20 @@ logger = logging.getLogger(__name__)
 
 class StatusPageService:
     """Service for public status pages and automated health checks."""
+
+    SLUG_PATTERN = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+
+    @staticmethod
+    def normalize_slug(value):
+        slug = (value or '').strip().lower()
+        slug = re.sub(r'[\s_]+', '-', slug)
+        slug = re.sub(r'[^a-z0-9-]', '', slug)
+        slug = re.sub(r'-{2,}', '-', slug).strip('-')
+        if not slug:
+            raise ValueError('Slug is required')
+        if not StatusPageService.SLUG_PATTERN.match(slug):
+            raise ValueError('Slug can only contain lowercase letters, numbers, and hyphens')
+        return slug
 
     # --- Pages ---
 
@@ -29,7 +44,7 @@ class StatusPageService:
 
     @staticmethod
     def create_page(data):
-        slug = data.get('slug', '').strip().lower()
+        slug = StatusPageService.normalize_slug(data.get('slug'))
         if StatusPage.query.filter_by(slug=slug).first():
             raise ValueError(f"Status page '{slug}' already exists")
 

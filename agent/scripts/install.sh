@@ -191,7 +191,11 @@ install_agent() {
     # Create directories
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$LOG_DIR"
+    mkdir -p /var/lib/serverkit/apps
+    mkdir -p /var/serverkit/apps
     chown "$SERVICE_USER:$SERVICE_USER" "$LOG_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_USER" /var/lib/serverkit
+    chown -R "$SERVICE_USER:$SERVICE_USER" /var/serverkit
 }
 
 # Register with ServerKit
@@ -242,7 +246,7 @@ SyslogIdentifier=serverkit-agent
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=$LOG_DIR $CONFIG_DIR
+ReadWritePaths=$LOG_DIR $CONFIG_DIR /var/lib/serverkit /var/serverkit
 PrivateTmp=yes
 
 [Install]

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"fyne.io/systray"
+
+	"github.com/serverkit/agent/internal/config"
 )
 
 // AppConfig holds tray app configuration
@@ -18,6 +20,12 @@ type AppConfig struct {
 	ServerURL    string
 	DashboardURL string
 	LogFile      string
+	// NeedsSetup is set by runDesktop when the agent has no pairing config
+	// yet. The tray shows a prominent "Open setup wizard…" item in that case
+	// so the user can recover from a closed-without-pairing wizard window.
+	NeedsSetup     bool
+	OnOpenSetup    func()
+	OnOpenLogs     func()
 }
 
 // App is the system tray application
@@ -34,16 +42,17 @@ type App struct {
 	memPercent      float64
 
 	// Menu items
-	menuStatus      *systray.MenuItem
-	menuCPU         *systray.MenuItem
-	menuMem         *systray.MenuItem
-	menuStartAgent  *systray.MenuItem
-	menuStopAgent   *systray.MenuItem
+	menuSetup        *systray.MenuItem
+	menuStatus       *systray.MenuItem
+	menuCPU          *systray.MenuItem
+	menuMem          *systray.MenuItem
+	menuStartAgent   *systray.MenuItem
+	menuStopAgent    *systray.MenuItem
 	menuRestartAgent *systray.MenuItem
-	menuViewLogs    *systray.MenuItem
-	menuDashboard   *systray.MenuItem
-	menuAbout       *systray.MenuItem
-	menuQuit        *systray.MenuItem
+	menuViewLogs     *systray.MenuItem
+	menuDashboard    *systray.MenuItem
+	menuAbout        *systray.MenuItem
+	menuQuit         *systray.MenuItem
 
 	// Control channels
 	quitCh chan struct{}
@@ -73,7 +82,14 @@ func (a *App) onReady() {
 	// Set initial icon (gray/stopped)
 	systray.SetIcon(GetIcon(IconStateStopped))
 	systray.SetTitle("ServerKit")
-	systray.SetTooltip("ServerKit Agent - Checking...")
+	systray.SetTooltip("ServerKit Agent")
+
+	// Always create the setup item — its title flips between "Open setup
+	// wizard…" (unconfigured) and "Re-pair this server…" (configured) based
+	// on what refresh() observes. Putting it first means the user can always
+	// reach pairing from the tray, which is the user-visible recovery surface.
+	a.menuSetup = systray.AddMenuItem("Open setup wizard…", "Pair this server with a ServerKit panel")
+	systray.AddSeparator()
 
 	// Create menu items
 	a.menuStatus = systray.AddMenuItem("Status: Checking...", "Agent status")
@@ -135,6 +151,39 @@ func (a *App) refreshLoop() {
 }
 
 func (a *App) refresh() {
+	// Re-load config every refresh so the tray picks up freshly-saved
+	// credentials from a separate setup-wizard process the moment they
+	// land. Cheap; the file is tiny.
+	cfg, _ := config.Load("")
+	configured := cfg != nil && cfg.Agent.ID != ""
+
+	if a.menuSetup != nil {
+		if configured {
+			a.menuSetup.SetTitle("Re-pair this server…")
+			a.menuSetup.SetTooltip("Replace the current pairing with a fresh one")
+		} else {
+			a.menuSetup.SetTitle("Open setup wizard…")
+			a.menuSetup.SetTooltip("Pair this server with a ServerKit panel")
+		}
+	}
+
+	if !configured {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.agentRunning = false
+		a.connected = false
+		a.lastStatus = "Not configured"
+		systray.SetIcon(GetIcon(IconStateStopped))
+		systray.SetTooltip("ServerKit Agent - Setup required")
+		a.menuStatus.SetTitle("Status: Not configured")
+		a.menuCPU.SetTitle("CPU: --")
+		a.menuMem.SetTitle("Memory: --")
+		a.menuStartAgent.Disable()
+		a.menuStopAgent.Disable()
+		a.menuRestartAgent.Disable()
+		return
+	}
+
 	status, err := a.client.GetStatus()
 
 	a.mu.Lock()
@@ -199,6 +248,10 @@ func (a *App) handleMenuClicks() {
 		select {
 		case <-a.quitCh:
 			return
+		case <-a.menuSetup.ClickedCh:
+			if a.config.OnOpenSetup != nil {
+				a.config.OnOpenSetup()
+			}
 		case <-a.menuStartAgent.ClickedCh:
 			a.startAgent()
 		case <-a.menuStopAgent.ClickedCh:
@@ -237,17 +290,10 @@ func (a *App) stopAgent() {
 }
 
 func (a *App) restartAgent() {
-	// Try IPC restart first (graceful)
-	if a.client.IsAgentRunning() {
-		if err := a.client.Restart(); err == nil {
-			a.showNotification("Agent Restarting", "ServerKit agent is restarting")
-			time.Sleep(2 * time.Second)
-			a.refresh()
-			return
-		}
-	}
-
-	// Fall back to service restart
+	// IPC "restart" is actually just a graceful stop — SCM doesn't
+	// auto-relaunch a service that exits cleanly, so the previous
+	// IPC-first path silently left the user with a stopped agent and
+	// required a second click. Always do sc stop + sc start instead.
 	if err := restartService(); err != nil {
 		a.showNotification("Failed to Restart", err.Error())
 		return

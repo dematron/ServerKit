@@ -37,18 +37,28 @@ jobs:
 
       - name: Determine bump type
         id: bump
+        env:
+          # Pass the commit message through the environment, NOT string-
+          # interpolated into the run script. Splicing
+          # ${{ github.event.head_commit.message }} directly into the shell
+          # source means a body containing backticks, $(...) or | is parsed
+          # as code — which broke this job (commit e3337f0's body had
+          # `vagrant up | Out-Host`, a syntax error) and is a command-
+          # injection vector. As an env var it is inert text bash never re-parses.
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-
-          # Check for major version bump keywords
-          if echo "$COMMIT_MSG" | grep -qiE "^(BREAKING|breaking!|major):"; then
+          # Major if a [major] tag OR a BREAKING/major: conventional prefix is
+          # present; minor for [minor] tag OR feat/feature/minor: prefix;
+          # otherwise patch. Supporting both keeps existing conventional
+          # commits working while allowing explicit [minor]/[major] tags.
+          if echo "$COMMIT_MSG" | grep -qiE '\[major\]' || \
+             echo "$COMMIT_MSG" | grep -qiE '^(BREAKING|breaking!|major):'; then
             echo "type=major" >> $GITHUB_OUTPUT
             echo "Bump type: major"
-          # Check for minor version bump keywords
-          elif echo "$COMMIT_MSG" | grep -qiE "^(feat|feature|minor):"; then
+          elif echo "$COMMIT_MSG" | grep -qiE '\[minor\]' || \
+               echo "$COMMIT_MSG" | grep -qiE '^(feat|feature|minor):'; then
             echo "type=minor" >> $GITHUB_OUTPUT
             echo "Bump type: minor"
-          # Default to patch
           else
             echo "type=patch" >> $GITHUB_OUTPUT
             echo "Bump type: patch"
@@ -99,6 +109,10 @@ jobs:
           git push
 
       - name: Create summary
+        env:
+          # Same injection-safety reason as the bump step: keep the raw
+          # commit message out of the run script source.
+          TRIGGER_MSG: ${{ github.event.head_commit.message }}
         run: |
           echo "## Version Bump Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -107,4 +121,6 @@ jobs:
           echo "| Previous Version | ${{ steps.current.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
           echo "| New Version | ${{ steps.new.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Bump Type | ${{ steps.bump.outputs.type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Trigger Commit | ${{ github.event.head_commit.message }} |" >> $GITHUB_STEP_SUMMARY
+          # First line only, and via env — keeps a multi-line / special-char
+          # body from corrupting the markdown table or the script.
+          echo "| Trigger Commit | $(echo "$TRIGGER_MSG" | head -n1) |" >> $GITHUB_STEP_SUMMARY

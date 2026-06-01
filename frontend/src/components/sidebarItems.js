@@ -31,7 +31,6 @@ export const SIDEBAR_ITEMS = [
             { id: 'fleet', label: 'Agent Fleet', route: '/fleet', icon: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' },
             { id: 'fleet-monitor', label: 'Fleet Monitor', route: '/fleet-monitor', icon: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>' },
             { id: 'cloud', label: 'Cloud Servers', route: '/cloud', icon: '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>' },
-            { id: 'agent-plugins', label: 'Plugins', route: '/agent-plugins', icon: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>' },
             { id: 'server-templates', label: 'Config Templates', route: '/server-templates', icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>' }
         ]
     },
@@ -53,7 +52,9 @@ export const SIDEBAR_ITEMS = [
         category: 'infrastructure',
         icon: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
         subItems: [
-            { id: 'templates', label: 'Templates', route: '/templates', icon: '<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>' }
+            { id: 'new-service', label: 'New Service', route: '/services/new', icon: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>' },
+            { id: 'templates', label: 'Templates', route: '/templates', icon: '<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>' },
+            { id: 'deployments', label: 'Deploy Activity', route: '/deployments', icon: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>' }
         ]
     },
     {
@@ -86,13 +87,6 @@ export const SIDEBAR_ITEMS = [
         route: '/docker',
         category: 'infrastructure',
         icon: '<rect x="2" y="7" width="6" height="6" rx="1"/><rect x="9" y="7" width="6" height="6" rx="1"/><rect x="16" y="7" width="6" height="6" rx="1"/><rect x="2" y="14" width="6" height="6" rx="1"/><rect x="9" y="14" width="6" height="6" rx="1"/>'
-    },
-    {
-        id: 'git',
-        label: 'Git',
-        route: '/git',
-        category: 'infrastructure',
-        icon: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>'
     },
     {
         id: 'files',
@@ -197,15 +191,21 @@ export const SIDEBAR_PRESETS = {
     }
 };
 
-// Get visible items based on config
-export function getVisibleItems(sidebarConfig) {
+export function getHiddenItemIds(sidebarConfig) {
     const { preset = 'full', hiddenItems = [] } = sidebarConfig || {};
 
     const hidden = preset === 'custom'
         ? hiddenItems
         : (SIDEBAR_PRESETS[preset]?.hiddenItems || []);
 
+    return new Set(hidden);
+}
+
+// Get visible items based on config
+export function getVisibleItems(sidebarConfig) {
+    const hidden = getHiddenItemIds(sidebarConfig);
+
     return SIDEBAR_ITEMS.filter(item =>
-        item.alwaysVisible || !hidden.includes(item.id)
+        item.alwaysVisible || !hidden.has(item.id)
     );
 }

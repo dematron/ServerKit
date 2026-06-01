@@ -24,8 +24,9 @@ NC='\033[0m' # No Color
 
 # Configuration
 INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/serverkit"
-SERVICE_USER="serverkit"
+CONFIG_DIR="/etc/serverkit-agent"
+LOG_DIR="/var/log/serverkit-agent"
+SERVICE_USER="serverkit-agent"
 GITHUB_REPO="jhd3197/ServerKit"
 AGENT_BINARY="serverkit-agent"
 
@@ -217,27 +218,35 @@ create_user() {
 }
 
 create_config_dir() {
-    log_info "Creating configuration directory..."
-    mkdir -p "$CONFIG_DIR"
-    chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
-    chmod 750 "$CONFIG_DIR"
+    log_info "Creating configuration and log directories..."
+    mkdir -p "$CONFIG_DIR" "$LOG_DIR"
+    chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$LOG_DIR"
+    chmod 750 "$CONFIG_DIR" "$LOG_DIR"
 }
 
 register_agent() {
     log_info "Registering agent with ServerKit..."
 
-    REGISTER_CMD="${INSTALL_DIR}/${AGENT_BINARY} register --token \"${TOKEN}\" --server \"${SERVER_URL}\""
+    REGISTER_CMD=(
+        "${INSTALL_DIR}/${AGENT_BINARY}"
+        --config "${CONFIG_DIR}/config.yaml"
+        register
+        --token "${TOKEN}"
+        --server "${SERVER_URL}"
+    )
 
     if [[ -n "$SERVER_NAME" ]]; then
-        REGISTER_CMD="${REGISTER_CMD} --name \"${SERVER_NAME}\""
+        REGISTER_CMD+=(--name "${SERVER_NAME}")
     fi
 
-    if ! eval "$REGISTER_CMD"; then
+    if ! "${REGISTER_CMD[@]}"; then
         log_error "Agent registration failed"
     fi
 
     # Fix permissions on config files
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$LOG_DIR"
+    [[ -f "${CONFIG_DIR}/config.yaml" ]] && chmod 600 "${CONFIG_DIR}/config.yaml"
+    [[ -f "${CONFIG_DIR}/agent.key" ]] && chmod 600 "${CONFIG_DIR}/agent.key"
 
     log_success "Agent registered successfully"
 }
@@ -261,7 +270,7 @@ Wants=network-online.target
 Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
-ExecStart=${INSTALL_DIR}/${AGENT_BINARY} start
+ExecStart=${INSTALL_DIR}/${AGENT_BINARY} --config ${CONFIG_DIR}/config.yaml start
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -272,7 +281,7 @@ SyslogIdentifier=serverkit-agent
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${CONFIG_DIR}
+ReadWritePaths=${CONFIG_DIR} ${LOG_DIR}
 PrivateTmp=true
 
 # Environment
@@ -293,7 +302,7 @@ start_service() {
         log_warn "Cannot auto-start without systemd"
         echo ""
         echo "To start the agent manually:"
-        echo "  ${INSTALL_DIR}/${AGENT_BINARY} start"
+        echo "  ${INSTALL_DIR}/${AGENT_BINARY} --config ${CONFIG_DIR}/config.yaml start"
         return
     fi
 

@@ -36,11 +36,13 @@ class Application(db.Model):
 
     # Foreign keys
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    server_id = db.Column(db.String(36), db.ForeignKey('servers.id'), nullable=True, index=True)
 
     # Relationships
     # Use 'subquery' to eagerly load domains in a single query, avoiding N+1
     domains = db.relationship('Domain', backref='application', lazy='subquery', cascade='all, delete-orphan')
     linked_app = db.relationship('Application', remote_side=[id], backref='linked_from', foreign_keys=[linked_app_id])
+    server = db.relationship('Server', backref=db.backref('applications', lazy='dynamic'))
 
     def to_dict(self, include_linked=False):
         import json
@@ -65,6 +67,8 @@ class Application(db.Model):
             'updated_at': self.updated_at.isoformat(),
             'last_deployed_at': self.last_deployed_at.isoformat() if self.last_deployed_at else None,
             'user_id': self.user_id,
+            'server_id': self.server_id,
+            'server_name': self.server.name if self.server else 'Local server',
             'domains': [d.to_dict() for d in self.domains]
         }
         if include_linked and self.linked_app:

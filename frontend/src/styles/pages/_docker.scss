@@ -735,3 +735,1400 @@
         }
     }
 }
+
+// ============================================
+// DOCKER REDESIGN (dx-*)
+// ============================================
+.dx-page {
+    display: flex;
+    flex-direction: column;
+    gap: $space-3;
+}
+
+.dx-stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: $space-3;
+}
+
+.dx-stat {
+    display: flex;
+    align-items: center;
+    gap: $space-3;
+    padding: $space-4;
+    background: $bg-card;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+    @include transition(all);
+
+    &:hover {
+        border-color: $border-hover;
+        transform: translateY(-1px);
+        box-shadow: $shadow-md;
+    }
+
+    &[data-kind='containers'] .dx-stat-icon { color: #3b82f6; background: rgba(59, 130, 246, 0.12); }
+    &[data-kind='images']     .dx-stat-icon { color: #8b5cf6; background: rgba(139, 92, 246, 0.12); }
+    &[data-kind='volumes']    .dx-stat-icon { color: #10b981; background: rgba(16, 185, 129, 0.12); }
+    &[data-kind='networks']   .dx-stat-icon { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
+}
+
+.dx-stat-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: $radius-md;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.dx-stat-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.dx-stat-label {
+    font-size: 9px;
+    font-weight: $font-weight-semibold;
+    color: $text-tertiary;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.dx-stat-value {
+    font-size: $font-size-2xl;
+    font-weight: $font-weight-semibold;
+    color: $text-primary;
+    line-height: 1;
+}
+
+.dx-stat-meta {
+    display: flex;
+    gap: $space-2;
+    margin-top: 2px;
+    flex-wrap: wrap;
+}
+
+.dx-stat-sub {
+    font-size: $font-size-xs;
+    color: $text-tertiary;
+}
+
+.dx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 7px;
+    border-radius: $radius-full;
+    font-size: 10px;
+    font-weight: $font-weight-medium;
+    background: $bg-tertiary;
+    color: $text-secondary;
+
+    .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: $text-tertiary;
+    }
+
+    &.running {
+        background: fade($success, 12%);
+        color: $success;
+        .dot { background: $success; }
+    }
+    &.stopped {
+        background: $bg-tertiary;
+        color: $text-tertiary;
+    }
+}
+
+// ─── Tabs (replaces docker-panel-tabs) ──────────
+.dx-tabs {
+    display: flex;
+    gap: $space-1;
+    padding: 4px;
+    background: $bg-card;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+.dx-tab {
+    background: transparent;
+    border: none;
+    padding: 8px $space-4;
+    border-radius: $radius-md;
+    color: $text-secondary;
+    font-size: $font-size-sm;
+    font-weight: $font-weight-medium;
+    cursor: pointer;
+    white-space: nowrap;
+    @include transition(all);
+
+    &:hover { background: $bg-hover; color: $text-primary; }
+    &.active {
+        background: $accent-glow;
+        color: $accent-primary;
+    }
+}
+
+.dx-panel {
+    background: $bg-card;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+    overflow: hidden;
+    min-height: 400px;
+}
+
+.dx-tab-pane {
+    padding: $space-3;
+}
+
+.dx-tab-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: $space-3;
+    padding-bottom: $space-3;
+    margin-bottom: $space-3;
+    border-bottom: 1px solid $border-subtle;
+    flex-wrap: wrap;
+}
+
+.dx-tab-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    flex-wrap: wrap;
+}
+
+// ─── Container card grid ─────────────────────────
+.dx-container-grid {
+    display: grid;
+    gap: $space-3;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.dx-container-card {
+    position: relative;
+    background: $bg-elevated;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+    padding: $space-3 $space-4 $space-4;
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+    cursor: pointer;
+    @include transition(all);
+    overflow: hidden;
+
+    &::before {
+        content: '';
+        position: absolute;
+        left: 0; top: 0; bottom: 0;
+        width: 3px;
+        background: $border-default;
+    }
+
+    &.is-running::before { background: $success; }
+    &.is-stopped::before { background: $text-tertiary; }
+
+    &:hover {
+        border-color: $border-hover;
+        transform: translateY(-2px);
+        box-shadow: $shadow-md;
+    }
+}
+
+.dx-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: $space-2;
+}
+
+.dx-card-title {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    min-width: 0;
+    flex: 1;
+
+    h4 {
+        margin: 0;
+        font-size: $font-size-sm;
+        font-weight: $font-weight-semibold;
+        color: $text-primary;
+        @include truncate();
+    }
+}
+
+.dx-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+
+    &.running { background: $success; box-shadow: 0 0 0 3px fade($success, 16%); }
+    &.stopped { background: $text-tertiary; }
+}
+
+.dx-status-pill {
+    display: inline-flex;
+    padding: 1px 8px;
+    border-radius: $radius-full;
+    font-size: 10px;
+    font-weight: $font-weight-semibold;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: $bg-tertiary;
+    color: $text-tertiary;
+
+    &.running { background: fade($success, 14%); color: $success; }
+    &.stopped { background: $bg-tertiary; color: $text-tertiary; }
+}
+
+.dx-card-image {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: $text-tertiary;
+    font-family: $font-mono;
+    font-size: $font-size-xs;
+
+    span { @include truncate(); }
+    svg { color: #8b5cf6; flex-shrink: 0; }
+}
+
+.dx-card-detail {
+    font-size: $font-size-xs;
+    color: $text-secondary;
+    @include truncate();
+}
+
+.dx-card-ports {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.dx-port-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    background: $bg-tertiary;
+    border-radius: $radius-sm;
+    font-family: $font-mono;
+    font-size: 10px;
+    color: $text-secondary;
+    @include truncate();
+    max-width: 220px;
+}
+
+.dx-port-more {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    background: $bg-tertiary;
+    border-radius: $radius-sm;
+    font-size: 10px;
+    color: $text-tertiary;
+}
+
+.dx-card-resources {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: $space-1;
+}
+
+.dx-res {
+    display: grid;
+    grid-template-columns: 50px 1fr 50px;
+    gap: $space-2;
+    align-items: center;
+}
+
+.dx-res-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    color: $text-tertiary;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: $font-weight-semibold;
+}
+
+.dx-res-track {
+    height: 4px;
+    background: $border-default;
+    border-radius: $radius-sm;
+    overflow: hidden;
+}
+
+.dx-res-fill {
+    height: 100%;
+    @include transition(width);
+
+    &.cpu { background: $accent-primary; }
+    &.mem { background: #10b981; }
+}
+
+.dx-res-value {
+    text-align: right;
+    font-family: $font-mono;
+    font-size: 10px;
+    color: $text-secondary;
+}
+
+.dx-card-actions {
+    display: flex;
+    gap: $space-1;
+    flex-wrap: wrap;
+    padding-top: $space-2;
+    margin-top: auto;
+    border-top: 1px solid $border-subtle;
+}
+
+// Full-width manager shell
+.docker-page-new.dx-page {
+    height: 100vh;
+    min-height: 0;
+    padding: $space-5;
+    overflow: hidden;
+
+    .page-header,
+    .lv-header,
+    .dx-stats-row,
+    .dx-tabs {
+        flex-shrink: 0;
+    }
+
+    .page-header {
+        margin-bottom: 0;
+    }
+}
+
+.dx-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.dx-panel > div {
+    min-height: 0;
+    overflow: auto;
+}
+
+.dx-panel > .dx-tab-pane {
+    overflow: hidden;
+}
+
+.dx-containers-pane {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.dx-filter-chips {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    flex-wrap: wrap;
+
+    .filter-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-2;
+        min-height: 30px;
+        padding: 0 $space-3;
+        border: 1px solid $border-default;
+        border-radius: $radius-full;
+        background: transparent;
+        color: $text-secondary;
+        font-size: $font-size-xs;
+        cursor: pointer;
+        @include transition(all);
+
+        &:hover:not(:disabled),
+        &.active {
+            border-color: $accent-primary;
+            background: $accent-glow;
+            color: $accent-primary;
+        }
+
+        &:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+    }
+
+    .filter-chip-count {
+        font-family: $font-mono;
+        color: inherit;
+        opacity: 0.8;
+    }
+}
+
+.dx-search-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 280px;
+
+    .lv-search-field-icon {
+        position: absolute;
+        left: $space-3;
+        color: $text-tertiary;
+        pointer-events: none;
+    }
+
+    input {
+        width: 100%;
+        height: 32px;
+        border: 1px solid $border-default;
+        border-radius: $radius-md;
+        background: $bg-elevated;
+        color: $text-primary;
+        padding: 0 $space-8 0 $space-8;
+        font-size: $font-size-sm;
+
+        &:focus {
+            outline: none;
+            border-color: $accent-primary;
+            box-shadow: 0 0 0 2px $accent-glow;
+        }
+    }
+
+    .lv-search-field-clear {
+        position: absolute;
+        right: $space-2;
+        width: 22px;
+        height: 22px;
+        border: none;
+        border-radius: $radius-sm;
+        background: transparent;
+        color: $text-tertiary;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+
+        &:hover {
+            background: $bg-hover;
+            color: $text-primary;
+        }
+    }
+}
+
+.dx-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: $space-2;
+    color: $text-secondary;
+    font-size: $font-size-xs;
+    cursor: pointer;
+
+    input {
+        width: 14px;
+        height: 14px;
+        accent-color: $accent-primary;
+    }
+}
+
+.dx-manager-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    gap: $space-3;
+    overflow: hidden;
+}
+
+.dx-resource-list,
+.dx-inspector {
+    min-height: 0;
+    background: $bg-elevated;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+}
+
+.dx-resource-list {
+    overflow: hidden;
+}
+
+.dx-table-wrap {
+    height: 100%;
+    overflow: auto;
+}
+
+.dx-manager-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: $font-size-sm;
+
+    th,
+    td {
+        padding: $space-3 $space-4;
+        border-bottom: 1px solid $border-subtle;
+        vertical-align: middle;
+    }
+
+    th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: $bg-card;
+        color: $text-tertiary;
+        text-align: left;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-semibold;
+    }
+
+    th:nth-child(1) { width: 20%; }
+    th:nth-child(2) { width: 22%; }
+    th:nth-child(3) { width: 17%; }
+    th:nth-child(4) { width: 15%; }
+    th:nth-child(5) { width: 16%; }
+    th:nth-child(6) { width: 10%; }
+    th:nth-child(7) { width: 116px; }
+
+    tbody tr {
+        cursor: pointer;
+        @include transition(background);
+
+        &:hover,
+        &.is-selected {
+            background: $bg-hover;
+        }
+
+        &.is-selected {
+            box-shadow: inset 3px 0 0 $accent-primary;
+        }
+    }
+}
+
+.dx-name-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.dx-name-line {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    min-width: 0;
+    color: $text-primary;
+    font-weight: $font-weight-semibold;
+
+    span:last-child {
+        @include truncate();
+    }
+}
+
+.dx-muted-line {
+    display: block;
+    color: $text-tertiary;
+    font-size: $font-size-xs;
+    @include truncate();
+
+    &.mono {
+        font-family: $font-mono;
+    }
+}
+
+.dx-code-pill {
+    display: inline-flex;
+    max-width: 100%;
+    padding: 2px $space-2;
+    border-radius: $radius-sm;
+    background: $bg-tertiary;
+    color: $text-secondary;
+    font-family: $font-mono;
+    font-size: $font-size-xs;
+    @include truncate();
+}
+
+.dx-port-list {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    min-width: 0;
+
+    .dx-port-pill {
+        max-width: 150px;
+
+        &.is-empty {
+            opacity: 0.55;
+        }
+    }
+}
+
+.dx-mini-resources {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 150px;
+
+    &.is-muted {
+        opacity: 0.55;
+    }
+}
+
+.dx-mini-resource {
+    display: grid;
+    grid-template-columns: 34px minmax(48px, 1fr) 44px;
+    align-items: center;
+    gap: $space-2;
+
+    span {
+        color: $text-tertiary;
+        font-size: 10px;
+        font-weight: $font-weight-semibold;
+    }
+
+    strong {
+        color: $text-secondary;
+        font-family: $font-mono;
+        font-size: 10px;
+        font-weight: $font-weight-medium;
+        text-align: right;
+    }
+}
+
+.dx-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+}
+
+.dx-row-action {
+    width: 28px;
+    height: 28px;
+    border: 1px solid $border-default;
+    border-radius: $radius-sm;
+    background: transparent;
+    color: $text-tertiary;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    @include transition(all);
+
+    &:hover {
+        border-color: $border-hover;
+        background: $bg-hover;
+        color: $text-primary;
+    }
+
+    &.is-danger:hover {
+        border-color: fade($danger, 35%);
+        color: $danger;
+    }
+
+    &.is-success:hover {
+        border-color: fade($success, 35%);
+        color: $success;
+    }
+}
+
+.dx-action-btn {
+    min-height: 30px;
+    border: 1px solid $border-default;
+    border-radius: $radius-sm;
+    background: $bg-card;
+    color: $text-secondary;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: $space-2;
+    padding: 0 $space-3;
+    font-size: $font-size-xs;
+    cursor: pointer;
+    @include transition(all);
+
+    &:hover {
+        border-color: $border-hover;
+        background: $bg-hover;
+        color: $text-primary;
+    }
+
+    &.is-danger:hover {
+        border-color: fade($danger, 35%);
+        color: $danger;
+    }
+
+    &.is-success:hover {
+        border-color: fade($success, 35%);
+        color: $success;
+    }
+}
+
+.dx-inspector {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.dx-inspector-empty {
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: $space-8;
+    color: $text-secondary;
+
+    h3 {
+        margin: $space-3 0 $space-2;
+        color: $text-primary;
+        font-size: $font-size-base;
+    }
+
+    p {
+        margin: 0;
+        max-width: 260px;
+        font-size: $font-size-sm;
+    }
+}
+
+.dx-inspector-header {
+    display: flex;
+    align-items: center;
+    gap: $space-3;
+    padding: $space-4;
+    border-bottom: 1px solid $border-subtle;
+}
+
+.dx-inspector-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: $radius-md;
+    background: rgba(59, 130, 246, 0.12);
+    color: #3b82f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.dx-inspector-title {
+    min-width: 0;
+    flex: 1;
+
+    h3 {
+        margin: 0;
+        color: $text-primary;
+        font-size: $font-size-base;
+        font-weight: $font-weight-semibold;
+        @include truncate();
+    }
+
+    span {
+        color: $text-tertiary;
+        font-family: $font-mono;
+        font-size: $font-size-xs;
+    }
+}
+
+.dx-inspector-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $space-3;
+    padding: $space-3 $space-4;
+    border-bottom: 1px solid $border-subtle;
+    color: $text-tertiary;
+    font-size: $font-size-xs;
+}
+
+.dx-inspector-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: $space-2;
+    padding: $space-4;
+    border-bottom: 1px solid $border-subtle;
+}
+
+.dx-inspector-tabs {
+    display: flex;
+    gap: $space-1;
+    padding: $space-2 $space-4;
+    border-bottom: 1px solid $border-subtle;
+    overflow-x: auto;
+
+    button {
+        border: none;
+        border-radius: $radius-sm;
+        background: transparent;
+        color: $text-secondary;
+        font-size: $font-size-xs;
+        padding: $space-2 $space-3;
+        text-transform: capitalize;
+        cursor: pointer;
+
+        &:hover,
+        &.active {
+            background: $bg-hover;
+            color: $text-primary;
+        }
+    }
+}
+
+.dx-inspector-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: $space-4;
+    display: flex;
+    flex-direction: column;
+    gap: $space-4;
+}
+
+.dx-inspector-loading {
+    color: $text-secondary;
+    font-size: $font-size-sm;
+    padding: $space-4 0;
+}
+
+.dx-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: $space-2;
+
+    div {
+        min-width: 0;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-sm;
+        padding: $space-3;
+        background: $bg-card;
+    }
+
+    span {
+        display: block;
+        color: $text-tertiary;
+        font-size: 10px;
+        margin-bottom: 4px;
+    }
+
+    strong {
+        display: block;
+        color: $text-primary;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        @include truncate();
+    }
+}
+
+.dx-section-title {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    color: $text-secondary;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+}
+
+.dx-details-list {
+    display: grid;
+    grid-template-columns: minmax(90px, 0.42fr) minmax(0, 1fr);
+    gap: $space-2 $space-3;
+    align-items: center;
+
+    span {
+        min-width: 0;
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+        @include truncate();
+    }
+
+    code {
+        min-width: 0;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-sm;
+        color: $text-secondary;
+        font-family: $font-mono;
+        font-size: 10px;
+        padding: 3px $space-2;
+        @include truncate();
+    }
+}
+
+.dx-inspector-list {
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+
+    code {
+        display: block;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-sm;
+        color: $text-secondary;
+        font-family: $font-mono;
+        font-size: 10px;
+        padding: $space-2;
+        white-space: pre-wrap;
+        word-break: break-word;
+
+        &.is-empty {
+            color: $text-tertiary;
+        }
+    }
+}
+
+@media (max-width: $breakpoint-xl) {
+    .dx-manager-layout {
+        grid-template-columns: 1fr;
+        overflow: auto;
+    }
+
+    .dx-resource-list {
+        min-height: 420px;
+    }
+
+    .dx-inspector {
+        min-height: 460px;
+    }
+}
+
+@media (max-width: $breakpoint-md) {
+    .docker-page-new.dx-page {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+        padding: $space-4;
+    }
+
+    .dx-tab-toolbar,
+    .dx-tab-toolbar-right {
+        align-items: stretch;
+    }
+
+    .dx-search-field {
+        min-width: 100%;
+    }
+
+    .dx-manager-table {
+        min-width: 960px;
+    }
+
+    .dx-detail-grid,
+    .dx-inspector-actions {
+        grid-template-columns: 1fr;
+    }
+}
+
+// Docker workspace polish: File Manager-style rail + click-open details drawer
+.docker-page-new.dx-page {
+    padding: $space-3;
+    gap: $space-3;
+    background: transparent;
+
+    .page-header,
+    .lv-header,
+    .dx-stats-row,
+    .dx-tabs {
+        display: none;
+    }
+}
+
+.dx-workspace {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 252px minmax(0, 1fr);
+    gap: $space-3;
+    overflow: hidden;
+}
+
+.dx-docker-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+
+    &::-webkit-scrollbar { width: 4px; }
+    &::-webkit-scrollbar-thumb { background: $border-default; border-radius: $radius-sm; }
+}
+
+.dx-sidebar-section {
+    background: $bg-card;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.dx-sidebar-section-header {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    padding: $space-3;
+    background: $bg-elevated;
+    border-bottom: 1px solid $border-subtle;
+    color: $text-primary;
+    font-size: $font-size-sm;
+    font-weight: $font-weight-medium;
+
+    svg {
+        color: $accent-primary;
+        flex-shrink: 0;
+    }
+}
+
+.dx-sidebar-section-content {
+    padding: $space-2;
+
+    .btn,
+    button {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+.dx-resource-nav {
+    display: grid;
+    gap: 2px;
+    padding: $space-2;
+}
+
+.dx-resource-nav-item {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: $space-2;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 $space-2;
+    border: none;
+    border-radius: $radius-md;
+    background: transparent;
+    color: $text-secondary;
+    font-size: $font-size-sm;
+    text-align: left;
+    cursor: pointer;
+    @include transition(all);
+
+    svg {
+        color: $text-tertiary;
+    }
+
+    span {
+        @include truncate();
+    }
+
+    strong {
+        min-width: 24px;
+        padding: 1px 7px;
+        border-radius: $radius-full;
+        background: $bg-tertiary;
+        color: $text-tertiary;
+        font-family: $font-mono;
+        font-size: 10px;
+        font-weight: $font-weight-medium;
+        text-align: center;
+    }
+
+    &:hover {
+        background: $bg-hover;
+        color: $text-primary;
+    }
+
+    &.active {
+        background: $accent-glow;
+        color: $accent-primary;
+
+        svg { color: $accent-primary; }
+        strong {
+            background: fade($accent-primary-raw, 18%);
+            color: $accent-primary;
+        }
+    }
+}
+
+.dx-inventory-list {
+    display: grid;
+    gap: 1px;
+    padding: $space-2;
+}
+
+.dx-inventory-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $space-2;
+    min-height: 30px;
+    padding: 0 $space-2;
+    border-radius: $radius-md;
+
+    span {
+        color: $text-secondary;
+        font-size: $font-size-xs;
+    }
+
+    strong {
+        color: $text-primary;
+        font-family: $font-mono;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        @include truncate();
+    }
+}
+
+.dx-main {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+}
+
+.dx-workbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $space-3;
+    min-height: 46px;
+    padding: $space-2;
+    background: $bg-card;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+    flex-shrink: 0;
+}
+
+.dx-workbar-title {
+    display: flex;
+    align-items: baseline;
+    gap: $space-2;
+    min-width: 0;
+
+    span {
+        color: $text-tertiary;
+        font-size: 10px;
+        font-weight: $font-weight-semibold;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+
+    strong {
+        color: $text-primary;
+        font-size: $font-size-base;
+        font-weight: $font-weight-semibold;
+    }
+
+    em {
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+        font-style: normal;
+        @include truncate();
+    }
+}
+
+.dx-workbar-actions {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+    flex-wrap: wrap;
+
+    .btn,
+    button {
+        min-height: 32px;
+    }
+}
+
+.dx-panel {
+    flex: 1;
+    min-height: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.dx-tab-pane {
+    padding: 0;
+}
+
+.dx-containers-pane {
+    gap: $space-2;
+}
+
+.dx-tab-toolbar {
+    margin: 0;
+    padding: $space-2;
+    background: $bg-card;
+    border: 1px solid $border-default;
+    border-radius: $radius-lg;
+}
+
+.dx-tab-toolbar-right {
+    margin-left: auto;
+}
+
+.dx-sort-control {
+    display: inline-flex;
+    align-items: center;
+    gap: $space-1;
+
+    span {
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-semibold;
+    }
+
+    select {
+        height: 32px;
+        min-width: 108px;
+        padding: 0 $space-6 0 $space-2;
+        border: 1px solid $border-default;
+        border-radius: $radius-md;
+        background: $bg-elevated;
+        color: $text-primary;
+        font-size: $font-size-xs;
+        outline: none;
+
+        &:focus {
+            border-color: $accent-primary;
+            box-shadow: 0 0 0 2px $accent-glow;
+        }
+    }
+}
+
+.dx-manager-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+}
+
+.dx-resource-list {
+    background: $bg-card;
+    border-color: $border-default;
+}
+
+.dx-table-wrap {
+    background: $bg-card;
+}
+
+.dx-manager-table {
+    th {
+        background: $bg-elevated;
+    }
+
+    th,
+    td {
+        padding: $space-3;
+    }
+
+    tbody tr {
+        background: $bg-card;
+
+        &:hover {
+            background: $bg-hover;
+        }
+
+        &.is-selected {
+            background: $accent-glow;
+        }
+    }
+}
+
+.dx-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.08);
+    backdrop-filter: none;
+    z-index: $z-modal-backdrop;
+    animation: drawer-fade 0.18s ease;
+}
+
+.dx-inspector-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(540px, 100vw);
+    max-width: 100%;
+    box-sizing: border-box;
+    background: $bg-card;
+    border: none;
+    border-left: 1px solid $border-default;
+    border-radius: 0;
+    box-shadow: -10px 0 36px rgba(0, 0, 0, 0.42);
+    z-index: $z-modal;
+    animation: drawer-slide 0.24s cubic-bezier(0.32, 0.72, 0.24, 1);
+}
+
+@keyframes drawer-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes drawer-slide {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+
+@media (max-width: $breakpoint-xl) {
+    .dx-workspace {
+        grid-template-columns: 220px minmax(0, 1fr);
+    }
+}
+
+@media (max-width: $breakpoint-lg) {
+    .dx-workspace {
+        grid-template-columns: 1fr;
+        overflow: auto;
+    }
+
+    .dx-docker-sidebar {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        overflow: visible;
+    }
+
+    .dx-main {
+        min-height: 620px;
+    }
+}
+
+@media (max-width: $breakpoint-md) {
+    .dx-docker-sidebar {
+        grid-template-columns: 1fr;
+    }
+
+    .dx-workbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .dx-workbar-actions {
+        width: 100%;
+
+        > * {
+            flex: 1;
+        }
+    }
+
+    .dx-tab-toolbar-right {
+        margin-left: 0;
+    }
+
+    .dx-inspector-drawer {
+        width: 100%;
+    }
+}

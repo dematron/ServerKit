@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
+import { Button } from '@/components/ui/button';
 
 // Platform icons as SVG components
 const LinuxIcon = () => (
@@ -96,7 +97,7 @@ function Downloads() {
         if (import.meta.env.PROD) {
             return window.location.origin;
         }
-        return import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000';
+        return import.meta.env.VITE_API_URL?.replace('/api/v1', '') || window.location.origin;
     };
 
     const platforms = [
@@ -107,7 +108,7 @@ function Downloads() {
             icon: LinuxIcon,
             os: 'linux',
             archKey: 'amd64',
-            command: `curl -fsSL ${getBaseUrl()}/api/servers/install.sh | sudo bash -s -- --token "YOUR_TOKEN" --server "${getBaseUrl()}"`,
+            command: `curl -fsSL ${getBaseUrl()}/api/v1/servers/install.sh | sudo bash -s -- --token "YOUR_TOKEN" --server "${getBaseUrl()}"`,
         },
         {
             id: 'linux-arm64',
@@ -116,7 +117,7 @@ function Downloads() {
             icon: LinuxIcon,
             os: 'linux',
             archKey: 'arm64',
-            command: `curl -fsSL ${getBaseUrl()}/api/servers/install.sh | sudo bash -s -- --token "YOUR_TOKEN" --server "${getBaseUrl()}"`,
+            command: `curl -fsSL ${getBaseUrl()}/api/v1/servers/install.sh | sudo bash -s -- --token "YOUR_TOKEN" --server "${getBaseUrl()}"`,
         },
         {
             id: 'windows-amd64',
@@ -125,7 +126,7 @@ function Downloads() {
             icon: WindowsIcon,
             os: 'windows',
             archKey: 'amd64',
-            command: `irm ${getBaseUrl()}/api/servers/install.ps1 | iex; Install-ServerKitAgent -Token "YOUR_TOKEN" -Server "${getBaseUrl()}"`,
+            command: `irm ${getBaseUrl()}/api/v1/servers/install.ps1 | iex; Install-ServerKitAgent -Token "YOUR_TOKEN" -Server "${getBaseUrl()}"`,
         },
     ];
 
@@ -138,7 +139,7 @@ function Downloads() {
 
     if (loading) {
         return (
-            <div className="page downloads-page">
+            <div className="page-container downloads-page">
                 <div className="page-header">
                     <h1>Downloads</h1>
                 </div>
@@ -151,7 +152,7 @@ function Downloads() {
     }
 
     return (
-        <div className="page downloads-page">
+        <div className="page-container downloads-page">
             <div className="page-header">
                 <div className="page-header-content">
                     <h1>ServerKit Agent Downloads</h1>
@@ -159,10 +160,10 @@ function Downloads() {
                         Download and install the ServerKit Agent on your servers to enable remote management.
                     </p>
                 </div>
-                <button className="btn btn-secondary" onClick={fetchVersionInfo}>
+                <Button variant="outline" onClick={fetchVersionInfo}>
                     <RefreshIcon />
                     Refresh
-                </button>
+                </Button>
             </div>
 
             {error && (
@@ -225,14 +226,14 @@ function Downloads() {
                                             <h3>{platform.name}</h3>
                                             <span className="platform-arch">{platform.arch}</span>
                                         </div>
-                                        <button
-                                            className="btn btn-primary download-btn"
+                                        <Button
+                                            className="download-btn"
                                             onClick={() => handleDownload(platform.os, platform.archKey)}
                                             disabled={!isAvailable}
                                         >
                                             <DownloadIcon />
                                             {isAvailable ? 'Download' : 'Not Available'}
-                                        </button>
+                                        </Button>
                                     </div>
                                 );
                             })}
@@ -242,7 +243,7 @@ function Downloads() {
                     <section className="downloads-section">
                         <h2>Quick Install Commands</h2>
                         <p className="section-description">
-                            Use these one-liner commands to download and install the agent. Replace <code>YOUR_TOKEN</code> with your server's registration token.
+                            Use these one-liner commands to download and install the agent. Replace <code>YOUR_TOKEN</code> with the server registration token.
                         </p>
 
                         <div className="install-commands">
@@ -314,7 +315,7 @@ function Downloads() {
                                 <div className="step-content">
                                     <h4>Register the Agent</h4>
                                     <p>Run the registration command with your token:</p>
-                                    <pre><code>serverkit-agent register --token "YOUR_TOKEN" --server "{getBaseUrl()}"</code></pre>
+                                    <pre><code>{`serverkit-agent register --token "YOUR_TOKEN" --server "${getBaseUrl()}"`}</code></pre>
                                 </div>
                             </div>
                             <div className="step">
@@ -335,15 +336,16 @@ function Downloads() {
                             Verify your download using the SHA256 checksums:
                         </p>
                         {versionInfo.checksums_url && (
-                            <a
-                                href={versionInfo.checksums_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="btn btn-secondary"
-                            >
-                                <DownloadIcon />
-                                Download Checksums
-                            </a>
+                            <Button variant="outline" asChild>
+                                <a
+                                    href={versionInfo.checksums_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                >
+                                    <DownloadIcon />
+                                    Download Checksums
+                                </a>
+                            </Button>
                         )}
                         <div className="verification-command">
                             <pre><code>sha256sum -c checksums.txt</code></pre>

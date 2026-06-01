@@ -1,22 +1,115 @@
-import React, { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext } from 'react';
 import useTabParam from '../hooks/useTabParam';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../hooks/useConfirm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import LogToolbar from '../components/log-viewer/LogToolbar';
+import LogContent from '../components/log-viewer/LogContent';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+    Box, Layers, HardDrive, Network as NetworkIcon, Search, X, RefreshCw,
+    Trash2, Play, Square, RotateCw, Terminal as TerminalLucide, FileText,
+    Activity, Clock3, Copy, Database, Gauge, Package, Server as ServerIcon, ArrowUpDown,
+} from 'lucide-react';
 
 // Server context for Docker operations
 const ServerContext = createContext({ serverId: 'local', serverName: 'Local' });
 const useServer = () => useContext(ServerContext);
 
 const VALID_TABS = ['containers', 'compose', 'images', 'volumes', 'networks'];
+const LOCAL_DOCKER_TARGET = { id: 'local', name: 'Local (this server)', status: 'online', is_local: true };
+
+const unwrapRemoteData = (response) => {
+    if (response?.success && response.data !== undefined) {
+        return response.data;
+    }
+    return response;
+};
+
+// formatPorts normalises Docker port data from the two shapes the agent
+// returns: a comma-separated string (legacy `docker ps`-style output)
+// or an array of `{ip, private_port, public_port, type}` objects from
+// `docker inspect`. Always returns an array of human-readable strings,
+// or `['-']` when there are no ports — both call sites (the container
+// list grid and the inspector drawer) want array semantics. Rendering
+// the raw inspect array directly triggered React error #31.
+function formatPorts(ports) {
+    if (!ports) return ['-'];
+    if (Array.isArray(ports)) {
+        const formatted = ports
+            .map((p) => {
+                if (!p || typeof p !== 'object') return null;
+                const proto = p.type || p.protocol || 'tcp';
+                const priv = p.private_port ?? p.PrivatePort;
+                const pub = p.public_port ?? p.PublicPort;
+                const ip = p.ip || p.IP;
+                if (pub) {
+                    return `${ip ? `${ip}:` : ''}${pub}->${priv}/${proto}`;
+                }
+                return priv ? `${priv}/${proto}` : null;
+            })
+            .filter(Boolean);
+        return formatted.length > 0 ? formatted : ['-'];
+    }
+    if (typeof ports !== 'string') return ['-'];
+    const parts = ports.split(',').map((p) => p.trim()).filter(Boolean);
+    return parts.length > 0 ? parts : ['-'];
+}
+
+const normalizeListResponse = (response, key) => {
+    const data = unwrapRemoteData(response);
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.[key])) return data[key];
+    return [];
+};
+
+const shortId = (value) => value ? value.substring(0, 12) : '-';
+
+const getContainerId = (container) => (
+    container?.id || container?.ID || container?.Id || ''
+);
+
+const getContainerName = (container) => (
+    container?.name || container?.Names || container?.Name || 'unnamed'
+);
+
+const getContainerImage = (container) => (
+    container?.image || container?.Image || container?.Config?.Image || '-'
+);
+
+const getContainerStatus = (container) => (
+    container?.status || container?.Status || container?.State?.Status || '-'
+);
+
+const getContainerState = (container) => {
+    const state = container?.state || container?.State?.Status || container?.State || '';
+    return typeof state === 'string' ? state.toLowerCase() : '';
+};
+
+const isContainerRunning = (container) => getContainerState(container) === 'running';
+
+const getContainerStatusLabel = (container) => {
+    if (isContainerRunning(container)) return 'Running';
+    const state = getContainerState(container);
+    if (state === 'exited') return 'Exited';
+    if (state === 'created') return 'Created';
+    return state || 'Unknown';
+};
+
+const getContainerProjectName = (container, details) => {
+    const labels = details?.Config?.Labels || container?.Labels || {};
+    return labels['com.docker.compose.project'] || labels['com.docker.compose.service'] || '-';
+};
 
 const Docker = () => {
     const [activeTab, setActiveTab] = useTabParam('/docker', VALID_TABS);
     const [dockerStatus, setDockerStatus] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [servers, setServers] = useState([]);
-    const [selectedServer, setSelectedServer] = useState({ id: 'local', name: 'Local (this server)' });
+    const [selectedServer, setSelectedServer] = useState(LOCAL_DOCKER_TARGET);
+    const [availableServers, setAvailableServers] = useState([LOCAL_DOCKER_TARGET]);
     const [stats, setStats] = useState({
         containers: { total: 0, running: 0, stopped: 0 },
         images: { total: 0, size: '0 B' },
@@ -25,23 +118,33 @@ const Docker = () => {
     });
 
     useEffect(() => {
-        loadServers();
-    }, []);
+        checkDockerStatus();
+    }, [selectedServer]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
-        checkDockerStatus();
-    }, [selectedServer]);
+        let cancelled = false;
 
-    async function loadServers() {
-        try {
-            const data = await api.getAvailableServers();
-            setServers(Array.isArray(data) ? data : []);
-        } catch (err) {
-            console.error('Failed to load servers:', err);
-            // Default to just local
-            setServers([{ id: 'local', name: 'Local (this server)', status: 'online' }]);
+        async function loadAvailableServers() {
+            try {
+                const data = await api.getAvailableServers();
+                const servers = Array.isArray(data) && data.length > 0 ? data : [LOCAL_DOCKER_TARGET];
+                if (cancelled) return;
+                setAvailableServers(servers);
+                setSelectedServer(prev => (
+                    servers.some(server => server.id === prev.id)
+                        ? prev
+                        : (servers[0] || LOCAL_DOCKER_TARGET)
+                ));
+            } catch {
+                if (cancelled) return;
+                setAvailableServers([LOCAL_DOCKER_TARGET]);
+                setSelectedServer(LOCAL_DOCKER_TARGET);
+            }
         }
-    }
+
+        loadAvailableServers();
+        return () => { cancelled = true; };
+    }, []);
 
     async function checkDockerStatus() {
         setLoading(true);
@@ -57,7 +160,7 @@ const Docker = () => {
             } else {
                 // For remote servers, check if the agent is online
                 const serverData = await api.getServer(selectedServer.id);
-                if (serverData.server?.status === 'online') {
+                if (serverData.status === 'online' || serverData.server?.status === 'online') {
                     setDockerStatus({ installed: true, running: true });
                     loadStats();
                 } else {
@@ -90,17 +193,20 @@ const Docker = () => {
                     api.getRemoteNetworks(selectedServer.id)
                 ]);
 
-                // Transform remote response format
-                if (containersData.success) containersData = { containers: containersData.data };
-                if (imagesData.success) imagesData = { images: imagesData.data };
-                if (volumesData.success) volumesData = { volumes: volumesData.data };
-                if (networksData.success) networksData = { networks: networksData.data };
             }
 
-            const containers = containersData.containers || [];
-            const images = imagesData.images || [];
-            const volumes = volumesData.volumes || [];
-            const networks = networksData.networks || [];
+            const containers = selectedServer.id === 'local'
+                ? containersData.containers || []
+                : normalizeListResponse(containersData, 'containers');
+            const images = selectedServer.id === 'local'
+                ? imagesData.images || []
+                : normalizeListResponse(imagesData, 'images');
+            const volumes = selectedServer.id === 'local'
+                ? volumesData.volumes || []
+                : normalizeListResponse(volumesData, 'volumes');
+            const networks = selectedServer.id === 'local'
+                ? networksData.networks || []
+                : normalizeListResponse(networksData, 'networks');
 
             const running = containers.filter(c => c.state === 'running').length;
 
@@ -146,7 +252,7 @@ const Docker = () => {
 
     if (!dockerStatus?.installed) {
         return (
-            <div className="page docker-page">
+            <div className="page-container docker-page">
                 <div className="page-header">
                     <div className="page-header-content">
                         <h1>Docker</h1>
@@ -179,31 +285,28 @@ const Docker = () => {
                             <li>Verify the user has permissions to access Docker</li>
                         </ul>
                     </div>
-                    <button className="btn btn-primary" onClick={checkDockerStatus}>
+                    <Button onClick={checkDockerStatus}>
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                             <path d="M23 4v6h-6M1 20v-6h6"/>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                         </svg>
                         Retry Connection
-                    </button>
+                    </Button>
                 </div>
             </div>
         );
     }
 
     const tabs = [
-        { id: 'containers', label: 'Containers' },
-        { id: 'compose', label: 'Compose' },
-        { id: 'images', label: 'Images' },
-        { id: 'volumes', label: 'Volumes' },
-        { id: 'networks', label: 'Networks' }
+        { id: 'containers', label: 'Containers', icon: Box, count: stats.containers.total },
+        { id: 'compose', label: 'Compose', icon: Package, count: null },
+        { id: 'images', label: 'Images', icon: Layers, count: stats.images.total },
+        { id: 'volumes', label: 'Volumes', icon: HardDrive, count: stats.volumes.total },
+        { id: 'networks', label: 'Networks', icon: NetworkIcon, count: stats.networks.total }
     ];
 
-    function handleServerChange(e) {
-        const serverId = e.target.value;
-        const server = servers.find(s => s.id === serverId) || { id: 'local', name: 'Local' };
-        setSelectedServer(server);
-    }
+    const activeTabMeta = tabs.find(tab => tab.id === activeTab) || tabs[0];
+    const hasMultipleTargets = availableServers.length > 1;
 
     const serverContextValue = {
         serverId: selectedServer.id,
@@ -213,105 +316,132 @@ const Docker = () => {
 
     return (
         <ServerContext.Provider value={serverContextValue}>
-        <div className="docker-page-new">
-            <div className="docker-page-header">
-                <div className="docker-page-title">
-                    <h2>Docker Management</h2>
-                    <div className="docker-page-subtitle">Manage Containers, Images, and Networks</div>
-                </div>
-                <div className="docker-page-actions">
-                    <div className="server-selector">
-                        <ServerSelectorIcon />
-                        <select value={selectedServer.id} onChange={handleServerChange}>
-                            {servers.map(server => (
-                                <option key={server.id} value={server.id} disabled={server.status === 'offline'}>
-                                    {server.name} {server.status === 'offline' ? '(Offline)' : ''}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    {activeTab === 'containers' && <RunContainerButton />}
-                    {activeTab === 'images' && <PullImageButton />}
-                    {activeTab === 'networks' && <CreateNetworkButton />}
-                    {activeTab === 'volumes' && <CreateVolumeButton />}
-                </div>
-            </div>
-
-            <div className="docker-stats-row">
-                <div className="docker-stat-card">
-                    <div className="docker-stat-label">Containers</div>
-                    <div className="docker-stat-value">{stats.containers.total}</div>
-                    <div className="docker-stat-meta">
-                        <span className="docker-stat-running">{stats.containers.running} Running</span>
-                        <span className="docker-stat-stopped">{stats.containers.stopped} Stopped</span>
-                    </div>
-                </div>
-                <div className="docker-stat-card">
-                    <div className="docker-stat-label">Images</div>
-                    <div className="docker-stat-value">{stats.images.total}</div>
-                    <div className="docker-stat-meta">{stats.images.size} Disk Usage</div>
-                </div>
-                <div className="docker-stat-card">
-                    <div className="docker-stat-label">Volumes</div>
-                    <div className="docker-stat-value">{stats.volumes.total}</div>
-                    <div className="docker-stat-meta">Persistent Data</div>
-                </div>
-                <div className="docker-stat-card">
-                    <div className="docker-stat-label">Networks</div>
-                    <div className="docker-stat-value">{stats.networks.total}</div>
-                    <div className="docker-stat-meta">Bridge / Host / None</div>
-                </div>
-            </div>
-
-            <div className="docker-panel">
-                <div className="docker-panel-header">
-                    <div className="docker-panel-tabs">
-                        {tabs.map(tab => (
-                            <div
-                                key={tab.id}
-                                className={`docker-panel-tab ${activeTab === tab.id ? 'active' : ''}`}
-                                onClick={() => setActiveTab(tab.id)}
-                            >
-                                {tab.label}
+        <div className="page-container page-container--full-bleed docker-page-new dx-page">
+            <div className="dx-workspace">
+                <aside className="dx-docker-sidebar">
+                    {hasMultipleTargets && (
+                        <section className="dx-sidebar-section">
+                            <div className="dx-sidebar-section-header">
+                                <ServerIcon size={14} />
+                                <span>Targets</span>
                             </div>
-                        ))}
-                    </div>
-                    <div className="docker-panel-actions">
-                        <PruneButton onPruned={loadStats} />
-                    </div>
-                </div>
+                            <div className="dx-resource-nav">
+                                {availableServers.map(server => (
+                                    <button
+                                        key={server.id}
+                                        className={`dx-resource-nav-item ${selectedServer.id === server.id ? 'active' : ''}`}
+                                        onClick={() => setSelectedServer(server)}
+                                    >
+                                        <ServerIcon size={15} />
+                                        <span>{server.name || server.hostname || server.id}</span>
+                                        <strong>{server.status || 'online'}</strong>
+                                    </button>
+                                ))}
+                            </div>
+                        </section>
+                    )}
 
-                <div className="docker-panel-content">
-                    {activeTab === 'containers' && <ContainersTab onStatsChange={loadStats} />}
-                    {activeTab === 'compose' && <ComposeTab onStatsChange={loadStats} />}
-                    {activeTab === 'images' && <ImagesTab onStatsChange={loadStats} />}
-                    {activeTab === 'networks' && <NetworksTab onStatsChange={loadStats} />}
-                    {activeTab === 'volumes' && <VolumesTab onStatsChange={loadStats} />}
-                </div>
+                    <section className="dx-sidebar-section">
+                        <div className="dx-sidebar-section-header">
+                            <Box size={14} />
+                            <span>Resources</span>
+                        </div>
+                        <div className="dx-resource-nav">
+                            {tabs.map(tab => {
+                                const Icon = tab.icon;
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        className={`dx-resource-nav-item ${activeTab === tab.id ? 'active' : ''}`}
+                                        onClick={() => setActiveTab(tab.id)}
+                                    >
+                                        <Icon size={15} />
+                                        <span>{tab.label}</span>
+                                        {tab.count !== null && <strong>{tab.count}</strong>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </section>
+
+                    <section className="dx-sidebar-section">
+                        <div className="dx-sidebar-section-header">
+                            <Activity size={14} />
+                            <span>Inventory</span>
+                        </div>
+                        <div className="dx-inventory-list">
+                            <div className="dx-inventory-item">
+                                <span>Running</span>
+                                <strong>{stats.containers.running}</strong>
+                            </div>
+                            <div className="dx-inventory-item">
+                                <span>Stopped</span>
+                                <strong>{stats.containers.stopped}</strong>
+                            </div>
+                            <div className="dx-inventory-item">
+                                <span>Images</span>
+                                <strong>{stats.images.size}</strong>
+                            </div>
+                            <div className="dx-inventory-item">
+                                <span>Volumes</span>
+                                <strong>{stats.volumes.total}</strong>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="dx-sidebar-section">
+                        <div className="dx-sidebar-section-header">
+                            <Trash2 size={14} />
+                            <span>Maintenance</span>
+                        </div>
+                        <div className="dx-sidebar-section-content">
+                            <PruneButton onPruned={loadStats} />
+                        </div>
+                    </section>
+                </aside>
+
+                <main className="dx-main">
+                    <div className="dx-workbar">
+                        <div className="dx-workbar-title">
+                            <span>Docker</span>
+                            <strong>{activeTabMeta.label}</strong>
+                            {hasMultipleTargets && <em>{selectedServer.name || selectedServer.id}</em>}
+                        </div>
+                        <div className="dx-workbar-actions">
+                            {activeTab === 'containers' && <RunContainerButton />}
+                            {activeTab === 'images' && <PullImageButton />}
+                            {activeTab === 'networks' && <CreateNetworkButton />}
+                            {activeTab === 'volumes' && <CreateVolumeButton />}
+                        </div>
+                    </div>
+
+                    <div className="dx-panel">
+                        {activeTab === 'containers' && <ContainersTab onStatsChange={loadStats} />}
+                        {activeTab === 'compose' && <ComposeTab onStatsChange={loadStats} />}
+                        {activeTab === 'images' && <ImagesTab onStatsChange={loadStats} />}
+                        {activeTab === 'networks' && <NetworksTab onStatsChange={loadStats} />}
+                        {activeTab === 'volumes' && <VolumesTab onStatsChange={loadStats} />}
+                    </div>
+                </main>
             </div>
         </div>
         </ServerContext.Provider>
     );
 };
 
-// Server Selector Icon
-const ServerSelectorIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
-        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-        <line x1="6" y1="6" x2="6.01" y2="6"/>
-        <line x1="6" y1="18" x2="6.01" y2="18"/>
-    </svg>
-);
-
 // Action Buttons
 const RunContainerButton = () => {
     const [showModal, setShowModal] = useState(false);
+    const { isRemote } = useServer();
     return (
         <>
-            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            <Button
+                onClick={() => setShowModal(true)}
+                disabled={isRemote}
+                title={isRemote ? 'Running new containers is only available on the local Docker target right now' : 'Run container'}
+            >
                 <span>+</span> Run Container
-            </button>
+            </Button>
             {showModal && <RunContainerModal onClose={() => setShowModal(false)} onCreated={() => window.location.reload()} />}
         </>
     );
@@ -321,9 +451,9 @@ const PullImageButton = () => {
     const [showModal, setShowModal] = useState(false);
     return (
         <>
-            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            <Button onClick={() => setShowModal(true)}>
                 <span>+</span> Pull Image
-            </button>
+            </Button>
             {showModal && <PullImageModal onClose={() => setShowModal(false)} onPulled={() => window.location.reload()} />}
         </>
     );
@@ -331,11 +461,16 @@ const PullImageButton = () => {
 
 const CreateNetworkButton = () => {
     const [showModal, setShowModal] = useState(false);
+    const { isRemote } = useServer();
     return (
         <>
-            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            <Button
+                onClick={() => setShowModal(true)}
+                disabled={isRemote}
+                title={isRemote ? 'Creating networks is only available on the local Docker target right now' : 'Create network'}
+            >
                 <span>+</span> Create Network
-            </button>
+            </Button>
             {showModal && <CreateNetworkModal onClose={() => setShowModal(false)} onCreated={() => window.location.reload()} />}
         </>
     );
@@ -343,11 +478,16 @@ const CreateNetworkButton = () => {
 
 const CreateVolumeButton = () => {
     const [showModal, setShowModal] = useState(false);
+    const { isRemote } = useServer();
     return (
         <>
-            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            <Button
+                onClick={() => setShowModal(true)}
+                disabled={isRemote}
+                title={isRemote ? 'Creating volumes is only available on the local Docker target right now' : 'Create volume'}
+            >
                 <span>+</span> Create Volume
-            </button>
+            </Button>
             {showModal && <CreateVolumeModal onClose={() => setShowModal(false)} onCreated={() => window.location.reload()} />}
         </>
     );
@@ -355,10 +495,15 @@ const CreateVolumeButton = () => {
 
 const PruneButton = ({ onPruned }) => {
     const toast = useToast();
+    const { isRemote } = useServer();
     const [loading, setLoading] = useState(false);
     const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm();
 
     async function handlePrune() {
+        if (isRemote) {
+            toast.error('Prune is only available on the local Docker target right now');
+            return;
+        }
         const confirmed = await confirm({ title: 'Docker Cleanup', message: 'Remove unused Docker resources? This will remove stopped containers, unused images, and unused networks.' });
         if (!confirmed) return;
 
@@ -367,7 +512,7 @@ const PruneButton = ({ onPruned }) => {
             await api.request('/docker/cleanup', { method: 'POST', body: {} });
             toast.success('Docker cleanup completed');
             onPruned?.();
-        } catch (err) {
+        } catch {
             toast.error('Failed to cleanup Docker resources');
         } finally {
             setLoading(false);
@@ -376,9 +521,15 @@ const PruneButton = ({ onPruned }) => {
 
     return (
         <>
-            <button className="btn btn-secondary btn-sm" onClick={handlePrune} disabled={loading}>
+            <Button
+                variant="outline"
+                size="sm"
+                onClick={handlePrune}
+                disabled={loading || isRemote}
+                title={isRemote ? 'Prune is only available on the local Docker target right now' : 'Prune unused Docker resources'}
+            >
                 {loading ? 'Cleaning...' : 'Prune Unused'}
-            </button>
+            </Button>
             <ConfirmDialog
                 isOpen={confirmState.isOpen}
                 title={confirmState.title}
@@ -393,24 +544,8 @@ const PruneButton = ({ onPruned }) => {
     );
 };
 
-// Resource Bar Component
-const ResourceBar = ({ label, value, color }) => {
-    const numValue = parseFloat(value) || 0;
-    return (
-        <div className="docker-res-container">
-            <span className="docker-res-label">{label}</span>
-            <div className="docker-res-track">
-                <div
-                    className="docker-res-fill"
-                    style={{ width: `${Math.min(numValue, 100)}%`, backgroundColor: color }}
-                />
-            </div>
-            <span className="docker-res-value">{numValue.toFixed(0)}%</span>
-        </div>
-    );
-};
-
-// Icon Actions
+// Icon Action button used by remaining (legacy) tabs (Images, Networks, Volumes).
+// Containers tab now renders cards with full action buttons inline.
 const IconAction = ({ title, onClick, color, children, disabled }) => (
     <button
         className="docker-icon-action"
@@ -423,49 +558,7 @@ const IconAction = ({ title, onClick, color, children, disabled }) => (
     </button>
 );
 
-// Icons
-const LogsIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-        <line x1="16" y1="13" x2="8" y2="13"/>
-        <line x1="16" y1="17" x2="8" y2="17"/>
-    </svg>
-);
-
-const TerminalIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="4 17 10 11 4 5"/>
-        <line x1="12" y1="19" x2="20" y2="19"/>
-    </svg>
-);
-
-const RestartIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="23 4 23 10 17 10"/>
-        <polyline points="1 20 1 14 7 14"/>
-        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-    </svg>
-);
-
-const StopIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <rect x="6" y="6" width="12" height="12"/>
-    </svg>
-);
-
-const PlayIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <polygon points="5 3 19 12 5 21 5 3"/>
-    </svg>
-);
-
-const TrashIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="3 6 5 6 21 6"/>
-        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-    </svg>
-);
+const TrashIcon = () => <Trash2 size={14} />;
 
 // Containers Tab
 const ContainersTab = ({ onStatsChange }) => {
@@ -477,12 +570,95 @@ const ContainersTab = ({ onStatsChange }) => {
     const [loading, setLoading] = useState(true);
     const [showAll, setShowAll] = useState(true);
     const [selectedContainer, setSelectedContainer] = useState(null);
+    const [logsContainer, setLogsContainer] = useState(null);
     const [execContainer, setExecContainer] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [sortKey, setSortKey] = useState('status');
+    const [sortDirection, setSortDirection] = useState('asc');
+    const statsRequestSeq = useRef(0);
 
     useEffect(() => {
         loadContainers();
-    }, [showAll, serverId]);
+    }, [showAll, serverId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const fetchContainerStats = useCallback(async (container) => {
+        const containerId = getContainerId(container);
+        if (!containerId) return null;
+
+        if (isRemote) {
+            const result = await api.getRemoteContainerStats(serverId, containerId);
+            const payload = unwrapRemoteData(result);
+            return payload?.stats || payload;
+        }
+
+        const statsData = await api.getContainerStats(containerId);
+        return statsData.stats;
+    }, [isRemote, serverId]);
+
+    const refreshContainerStats = useCallback(async (containerList, requestSeq = statsRequestSeq.current) => {
+        const runningContainers = containerList.filter(isContainerRunning);
+        if (runningContainers.length === 0) return;
+
+        if (!isRemote) {
+            const containerIds = runningContainers.map(getContainerId).filter(Boolean);
+            if (containerIds.length === 0) return;
+
+            const resolveStats = (statsMap, container) => {
+                const containerId = getContainerId(container);
+                const containerName = getContainerName(container);
+                return statsMap[containerId] ||
+                    statsMap[containerName] ||
+                    statsMap[`/${containerName}`] ||
+                    null;
+            };
+
+            try {
+                const statsData = await api.getContainersStats(containerIds);
+                if (requestSeq !== statsRequestSeq.current) return;
+                const statsMap = statsData?.stats || {};
+                setContainerStats(prev => {
+                    const next = { ...prev };
+                    runningContainers.forEach(container => {
+                        next[getContainerId(container)] = resolveStats(statsMap, container);
+                    });
+                    return next;
+                });
+            } catch {
+                if (requestSeq !== statsRequestSeq.current) return;
+                setContainerStats(prev => {
+                    const next = { ...prev };
+                    runningContainers.forEach(container => {
+                        next[getContainerId(container)] = null;
+                    });
+                    return next;
+                });
+            }
+            return;
+        }
+
+        await Promise.all(runningContainers.map(async (container) => {
+            const containerId = getContainerId(container);
+            try {
+                const stats = await fetchContainerStats(container);
+                if (requestSeq !== statsRequestSeq.current || !stats) return;
+                setContainerStats(prev => ({ ...prev, [containerId]: stats }));
+            } catch {
+                if (requestSeq !== statsRequestSeq.current) return;
+                setContainerStats(prev => ({ ...prev, [containerId]: null }));
+            }
+        }));
+    }, [fetchContainerStats, isRemote]);
+
+    useEffect(() => {
+        if (loading || containers.length === 0) return undefined;
+
+        const timer = window.setInterval(() => {
+            refreshContainerStats(containers, statsRequestSeq.current);
+        }, 10000);
+
+        return () => window.clearInterval(timer);
+    }, [containers, loading, refreshContainerStats]);
 
     async function loadContainers() {
         setLoading(true);
@@ -490,39 +666,22 @@ const ContainersTab = ({ onStatsChange }) => {
             let data;
             if (isRemote) {
                 const result = await api.getRemoteContainers(serverId, showAll);
-                data = result.success ? { containers: result.data || [] } : { containers: [] };
+                data = { containers: normalizeListResponse(result, 'containers') };
             } else {
                 data = await api.getContainers(showAll);
             }
             const containerList = data.containers || [];
+            const requestSeq = ++statsRequestSeq.current;
             setContainers(containerList);
-
-            // Load stats for running containers
-            const runningContainers = containerList.filter(c => c.state === 'running');
-            const statsPromises = runningContainers.map(async (c) => {
-                try {
-                    let statsData;
-                    if (isRemote) {
-                        const result = await api.getRemoteContainerStats(serverId, c.id);
-                        statsData = result.success ? { stats: result.data } : { stats: null };
-                    } else {
-                        statsData = await api.getContainerStats(c.id);
-                    }
-                    return { id: c.id, stats: statsData.stats };
-                } catch {
-                    return { id: c.id, stats: null };
-                }
+            setContainerStats({});
+            setSelectedContainer(prev => {
+                if (!containerList.length || !prev) return null;
+                return containerList.find(c => getContainerId(c) === getContainerId(prev)) || null;
             });
-
-            const statsResults = await Promise.all(statsPromises);
-            const statsMap = {};
-            statsResults.forEach(({ id, stats }) => {
-                if (stats) statsMap[id] = stats;
-            });
-            setContainerStats(statsMap);
+            setLoading(false);
+            refreshContainerStats(containerList, requestSeq);
         } catch (err) {
             console.error('Failed to load containers:', err);
-        } finally {
             setLoading(false);
         }
     }
@@ -569,157 +728,274 @@ const ContainersTab = ({ onStatsChange }) => {
     }
 
     function parseStats(stats) {
-        if (!stats) return { cpu: 0, memory: 0 };
+        if (!stats) return { cpu: 0, memory: 0, available: false };
+        const source = stats.stats || stats;
+        const parsePercent = (value) => {
+            if (typeof value === 'number') return value;
+            if (value === null || value === undefined) return 0;
+            return parseFloat(String(value).replace('%', '')) || 0;
+        };
 
-        // CPU comes as "0.12%" format
-        const cpuStr = stats.CPUPerc || stats.cpu_percent || '0%';
-        const cpu = parseFloat(cpuStr.replace('%', '')) || 0;
+        const cpu = parsePercent(source.CPUPerc ?? source.cpu_percent ?? source.cpu?.percent);
+        const memory = parsePercent(source.MemPerc ?? source.memory_percent ?? source.memory?.percent);
 
-        // Memory comes as "0.12%" format
-        const memStr = stats.MemPerc || stats.memory_percent || '0%';
-        const memory = parseFloat(memStr.replace('%', '')) || 0;
-
-        return { cpu, memory };
+        return { cpu, memory, available: true };
     }
 
-    function formatPorts(portsStr) {
-        if (!portsStr) return '-';
-        // Parse ports like "0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp"
-        const ports = portsStr.split(',').map(p => p.trim()).filter(Boolean);
-        return ports.length > 0 ? ports : ['-'];
-    }
+    const counts = useMemo(() => {
+        const c = { all: containers.length, running: 0, stopped: 0 };
+        containers.forEach(x => { if (isContainerRunning(x)) c.running++; else c.stopped++; });
+        return c;
+    }, [containers]);
 
-    const filteredContainers = containers.filter(c => {
-        if (!searchTerm) return true;
+    const filteredContainers = useMemo(() => {
         const search = searchTerm.toLowerCase();
-        return c.name?.toLowerCase().includes(search) ||
-               c.id?.toLowerCase().includes(search) ||
-               c.image?.toLowerCase().includes(search);
-    });
+        const filtered = containers.filter(c => {
+            if (statusFilter === 'running' && !isContainerRunning(c)) return false;
+            if (statusFilter === 'stopped' && isContainerRunning(c)) return false;
+            if (!search) return true;
+            return getContainerName(c).toLowerCase().includes(search) ||
+                   getContainerId(c).toLowerCase().includes(search) ||
+                   getContainerImage(c).toLowerCase().includes(search);
+        });
+
+        const direction = sortDirection === 'asc' ? 1 : -1;
+        const statusRank = (container) => isContainerRunning(container) ? 0 : 1;
+        const createdTime = (container) => {
+            const raw = container.created || container.CreatedAt || '';
+            const parsed = Date.parse(raw);
+            return Number.isNaN(parsed) ? 0 : parsed;
+        };
+
+        return [...filtered].sort((a, b) => {
+            const statsA = parseStats(containerStats[getContainerId(a)]);
+            const statsB = parseStats(containerStats[getContainerId(b)]);
+            let result = 0;
+
+            if (sortKey === 'status') {
+                result = statusRank(a) - statusRank(b) ||
+                    getContainerStatus(a).localeCompare(getContainerStatus(b));
+            } else if (sortKey === 'name') {
+                result = getContainerName(a).localeCompare(getContainerName(b));
+            } else if (sortKey === 'image') {
+                result = getContainerImage(a).localeCompare(getContainerImage(b));
+            } else if (sortKey === 'cpu') {
+                result = statsA.cpu - statsB.cpu;
+            } else if (sortKey === 'memory') {
+                result = statsA.memory - statsB.memory;
+            } else if (sortKey === 'created') {
+                result = createdTime(a) - createdTime(b);
+            }
+
+            return result * direction;
+        });
+    }, [containers, statusFilter, searchTerm, sortKey, sortDirection, containerStats]);
+
+    const selectedStats = selectedContainer
+        ? parseStats(containerStats[getContainerId(selectedContainer)])
+        : { cpu: 0, memory: 0, available: false };
 
     if (loading) {
-        return <div className="docker-loading">Loading containers...</div>;
+        return (
+            <div className="dx-tab-pane">
+                <div className="docker-loading">Loading containers...</div>
+            </div>
+        );
     }
 
     return (
-        <div>
-            <div className="docker-table-header">
-                <label className="docker-filter-toggle">
-                    <input
-                        type="checkbox"
-                        checked={showAll}
-                        onChange={(e) => setShowAll(e.target.checked)}
-                    />
-                    Show stopped
-                </label>
-                <input
-                    type="text"
-                    className="docker-search"
-                    placeholder="Search ID or Name..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                />
+        <div className="dx-tab-pane dx-containers-pane">
+            <div className="dx-tab-toolbar">
+                <div className="dx-filter-chips">
+                    {[
+                        { id: 'all', label: 'All', count: counts.all },
+                        { id: 'running', label: 'Running', count: counts.running },
+                        { id: 'stopped', label: 'Stopped', count: counts.stopped },
+                    ].map(c => (
+                        <button
+                            key={c.id}
+                            className={`filter-chip ${statusFilter === c.id ? 'active' : ''}`}
+                            onClick={() => setStatusFilter(c.id)}
+                            disabled={c.id !== 'all' && c.count === 0}
+                        >
+                            <span>{c.label}</span>
+                            <span className="filter-chip-count">{c.count}</span>
+                        </button>
+                    ))}
+                </div>
+                <div className="dx-tab-toolbar-right">
+                    <div className="dx-sort-control">
+                        <span>Sort</span>
+                        <select value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
+                            <option value="status">Status</option>
+                            <option value="name">Name</option>
+                            <option value="image">Image</option>
+                            <option value="cpu">CPU</option>
+                            <option value="memory">RAM</option>
+                            <option value="created">Created</option>
+                        </select>
+                        <button
+                            className="lv-icon-btn"
+                            onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                            title={`Sort ${sortDirection === 'asc' ? 'ascending' : 'descending'}`}
+                        >
+                            <ArrowUpDown size={13} />
+                        </button>
+                    </div>
+                    <label className="dx-toggle">
+                        <input
+                            type="checkbox"
+                            checked={showAll}
+                            onChange={(e) => setShowAll(e.target.checked)}
+                        />
+                        <span>Include stopped</span>
+                    </label>
+                    <div className="dx-search-field">
+                        <Search size={13} className="lv-search-field-icon" />
+                        <input
+                            type="text"
+                            placeholder="Filter name, image, or ID..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        {searchTerm && (
+                            <button className="lv-search-field-clear" onClick={() => setSearchTerm('')} title="Clear search">
+                                <X size={11} />
+                            </button>
+                        )}
+                    </div>
+                    <button
+                        className="lv-icon-btn"
+                        onClick={loadContainers}
+                        title="Refresh"
+                    >
+                        <RefreshCw size={13} className={loading ? 'spinning' : ''} />
+                    </button>
+                </div>
             </div>
 
             {filteredContainers.length === 0 ? (
                 <div className="docker-empty">
-                    <h3>No containers</h3>
-                    <p>Run your first container to get started.</p>
+                    <Box size={32} />
+                    <p>{containers.length === 0 ? 'No containers yet. Run your first one.' : 'No containers match the current filters.'}</p>
                 </div>
             ) : (
-                <table className="docker-table">
-                    <thead>
-                        <tr>
-                            <th>Container</th>
-                            <th>Image</th>
-                            <th>Status</th>
-                            <th>Bindings</th>
-                            <th>Resources</th>
-                            <th className="text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {filteredContainers.map(container => {
-                            const stats = parseStats(containerStats[container.id]);
-                            const isRunning = container.state === 'running';
-                            const ports = formatPorts(container.ports);
-
-                            return (
-                                <tr key={container.id}>
-                                    <td>
-                                        <span className="docker-container-name">{container.name}</span>
-                                        <span className="docker-container-id">{container.id?.substring(0, 9)}</span>
-                                    </td>
-                                    <td>
-                                        <span className="docker-image-tag">{container.image}</span>
-                                    </td>
-                                    <td>
-                                        <span className={`docker-status-pill ${isRunning ? 'running' : 'exited'}`}>
-                                            <span className="docker-status-dot" />
-                                            {isRunning ? 'Running' : 'Exited'}
-                                        </span>
-                                        <div className="docker-status-detail">{container.status}</div>
-                                    </td>
-                                    <td>
-                                        <span className={`docker-ports ${!isRunning ? 'faded' : ''}`}>
-                                            {Array.isArray(ports) ? ports.map((p, i) => (
-                                                <span key={i}>{p}{i < ports.length - 1 && <br />}</span>
-                                            )) : ports}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <div className={!isRunning ? 'faded' : ''}>
-                                            <ResourceBar
-                                                label="CPU"
-                                                value={stats.cpu}
-                                                color={stats.cpu > 50 ? '#F59E0B' : '#6366F1'}
-                                            />
-                                            <ResourceBar
-                                                label="RAM"
-                                                value={stats.memory}
-                                                color="#10B981"
-                                            />
-                                        </div>
-                                    </td>
-                                    <td className="docker-actions-cell">
-                                        <IconAction title="Logs" onClick={() => setSelectedContainer(container)}>
-                                            <LogsIcon />
-                                        </IconAction>
-                                        {isRunning && (
-                                            <>
-                                                <IconAction title="Terminal" onClick={() => setExecContainer(container)}>
-                                                    <TerminalIcon />
-                                                </IconAction>
-                                                <IconAction title="Restart" onClick={() => handleAction(container.id, 'restart')}>
-                                                    <RestartIcon />
-                                                </IconAction>
-                                                <IconAction title="Stop" onClick={() => handleAction(container.id, 'stop')} color="#EF4444">
-                                                    <StopIcon />
-                                                </IconAction>
-                                            </>
-                                        )}
-                                        {!isRunning && (
-                                            <>
-                                                <IconAction title="Start" onClick={() => handleAction(container.id, 'start')} color="#10B981">
-                                                    <PlayIcon />
-                                                </IconAction>
-                                                <IconAction title="Delete" onClick={() => handleAction(container.id, 'remove')} color="#EF4444">
-                                                    <TrashIcon />
-                                                </IconAction>
-                                            </>
-                                        )}
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+                <div className="dx-manager-layout">
+                    <section className="dx-resource-list">
+                        <div className="dx-table-wrap">
+                            <table className="dx-manager-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Image</th>
+                                        <th>Status</th>
+                                        <th>Ports</th>
+                                        <th>Resources</th>
+                                        <th>Created</th>
+                                        <th className="text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredContainers.map(container => {
+                                        const containerId = getContainerId(container);
+                                        const stats = parseStats(containerStats[containerId]);
+                                        const isRunning = isContainerRunning(container);
+                                        const ports = formatPorts(container.ports);
+                                        const isSelected = getContainerId(selectedContainer) === containerId;
+                                        return (
+                                            <tr
+                                                key={containerId}
+                                                className={`${isRunning ? 'is-running' : 'is-stopped'} ${isSelected ? 'is-selected' : ''}`}
+                                                onClick={() => setSelectedContainer(container)}
+                                            >
+                                                <td>
+                                                    <div className="dx-name-stack">
+                                                        <span className="dx-name-line">
+                                                            <span className={`dx-status-dot ${isRunning ? 'running' : 'stopped'}`} />
+                                                            <span title={getContainerName(container)}>{getContainerName(container)}</span>
+                                                        </span>
+                                                        <span className="dx-muted-line mono">{shortId(containerId)}</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <span className="dx-code-pill" title={getContainerImage(container)}>
+                                                        {getContainerImage(container)}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span className={`dx-status-pill ${isRunning ? 'running' : 'stopped'}`}>
+                                                        {getContainerStatusLabel(container)}
+                                                    </span>
+                                                    <span className="dx-muted-line">{getContainerStatus(container)}</span>
+                                                </td>
+                                                <td>
+                                                    <div className="dx-port-list">
+                                                        {ports.slice(0, 2).map((port, i) => (
+                                                            <span key={i} className={`dx-port-pill ${port === '-' ? 'is-empty' : ''}`}>{port}</span>
+                                                        ))}
+                                                        {ports.length > 2 && <span className="dx-port-more">+{ports.length - 2}</span>}
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <ContainerResourceBars stats={stats} muted={!isRunning} />
+                                                </td>
+                                                <td>
+                                                    <span className="dx-muted-line">{container.created || container.CreatedAt || '-'}</span>
+                                                </td>
+                                                <td className="dx-row-actions" onClick={(e) => e.stopPropagation()}>
+                                                    <button className="dx-row-action" onClick={() => setLogsContainer(container)} title="Logs">
+                                                        <FileText size={13} />
+                                                    </button>
+                                                    {isRunning && !isRemote && (
+                                                        <button className="dx-row-action" onClick={() => setExecContainer(container)} title="Exec">
+                                                            <TerminalLucide size={13} />
+                                                        </button>
+                                                    )}
+                                                    {isRunning ? (
+                                                        <>
+                                                            <button className="dx-row-action" onClick={() => handleAction(containerId, 'restart')} title="Restart">
+                                                                <RotateCw size={13} />
+                                                            </button>
+                                                            <button className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'stop')} title="Stop">
+                                                                <Square size={13} />
+                                                            </button>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <button className="dx-row-action is-success" onClick={() => handleAction(containerId, 'start')} title="Start">
+                                                                <Play size={13} />
+                                                            </button>
+                                                            <button className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'remove')} title="Remove">
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
             )}
 
             {selectedContainer && (
-                <ContainerLogsModal
+                <ContainerInspector
                     container={selectedContainer}
+                    stats={selectedStats}
+                    onAction={handleAction}
+                    onOpenLogs={setLogsContainer}
+                    onOpenExec={setExecContainer}
                     onClose={() => setSelectedContainer(null)}
+                />
+            )}
+
+            {logsContainer && (
+                <ContainerLogsModal
+                    container={logsContainer}
+                    onClose={() => setLogsContainer(null)}
                 />
             )}
 
@@ -743,6 +1019,267 @@ const ContainersTab = ({ onStatsChange }) => {
     );
 };
 
+const ContainerResourceBars = ({ stats, muted = false }) => (
+    <div className={`dx-mini-resources ${muted || !stats.available ? 'is-muted' : ''}`}>
+        <div className="dx-mini-resource">
+            <span>CPU</span>
+            <div className="dx-res-track">
+                <div className="dx-res-fill cpu" style={{ width: `${stats.available ? Math.min(stats.cpu, 100) : 0}%` }} />
+            </div>
+            <strong>{stats.available ? `${stats.cpu.toFixed(1)}%` : '--'}</strong>
+        </div>
+        <div className="dx-mini-resource">
+            <span>RAM</span>
+            <div className="dx-res-track">
+                <div className="dx-res-fill mem" style={{ width: `${stats.available ? Math.min(stats.memory, 100) : 0}%` }} />
+            </div>
+            <strong>{stats.available ? `${stats.memory.toFixed(1)}%` : '--'}</strong>
+        </div>
+    </div>
+);
+
+const maskEnvValue = (entry) => {
+    const [key, ...rest] = String(entry).split('=');
+    if (!rest.length) return entry;
+    if (/pass|secret|token|key|credential/i.test(key)) {
+        return `${key}=****`;
+    }
+    return entry;
+};
+
+const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec, onClose }) => {
+    const toast = useToast();
+    const { serverId, isRemote } = useServer();
+    const [details, setDetails] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [activeSection, setActiveSection] = useState('overview');
+    const containerId = container ? getContainerId(container) : '';
+
+    useEffect(() => {
+        let mounted = true;
+        let loadingTimer;
+
+        async function loadDetails() {
+            if (!container) {
+                setDetails(null);
+                return;
+            }
+
+            setLoading(true);
+            loadingTimer = window.setTimeout(() => {
+                if (mounted) setLoading(false);
+            }, 2500);
+            setActiveSection('overview');
+            try {
+                let data;
+                if (isRemote) {
+                    data = unwrapRemoteData(await api.getRemoteContainer(serverId, containerId));
+                } else {
+                    const result = await api.getContainer(containerId);
+                    data = result.container || result;
+                }
+                if (mounted) setDetails(data || null);
+            } catch (err) {
+                console.error('Failed to inspect container:', err);
+                if (mounted) setDetails(null);
+            } finally {
+                window.clearTimeout(loadingTimer);
+                if (mounted) setLoading(false);
+            }
+        }
+
+        loadDetails();
+        return () => {
+            mounted = false;
+            window.clearTimeout(loadingTimer);
+        };
+    }, [container, containerId, serverId, isRemote]);
+
+    if (!container) {
+        return null;
+    }
+
+    const isRunning = isContainerRunning(container);
+    const ports = formatPorts(container.ports);
+    const envVars = details?.Config?.Env || [];
+    const mounts = details?.Mounts || [];
+    const networks = Object.entries(details?.NetworkSettings?.Networks || {});
+    const labels = details?.Config?.Labels || {};
+    const restartPolicy = details?.HostConfig?.RestartPolicy?.Name || '-';
+    const health = details?.State?.Health?.Status || getContainerStatusLabel(container);
+    const projectName = getContainerProjectName(container, details);
+
+    async function copyContainerId() {
+        try {
+            await navigator.clipboard.writeText(containerId);
+            toast.success('Container ID copied');
+        } catch {
+            toast.error('Could not copy container ID');
+        }
+    }
+
+    return (
+        <>
+        <div className="dx-drawer-backdrop" onClick={onClose} />
+        <aside className="dx-inspector dx-inspector-drawer">
+            <div className="dx-inspector-header">
+                <div className="dx-inspector-icon">
+                    <Box size={18} />
+                </div>
+                <div className="dx-inspector-title">
+                    <h3 title={getContainerName(container)}>{getContainerName(container)}</h3>
+                    <span>{shortId(containerId)}</span>
+                </div>
+                <button className="dx-row-action" onClick={copyContainerId} title="Copy container ID">
+                    <Copy size={13} />
+                </button>
+                <button className="dx-row-action" onClick={onClose} title="Close details">
+                    <X size={13} />
+                </button>
+            </div>
+
+            <div className="dx-inspector-status">
+                <span className={`dx-status-pill ${isRunning ? 'running' : 'stopped'}`}>
+                    {getContainerStatusLabel(container)}
+                </span>
+                <span>{health}</span>
+            </div>
+
+            <div className="dx-inspector-actions">
+                <button className="dx-action-btn" onClick={() => onOpenLogs(container)}>
+                    <FileText size={13} /> Logs
+                </button>
+                {isRunning && !isRemote && (
+                    <button className="dx-action-btn" onClick={() => onOpenExec(container)}>
+                        <TerminalLucide size={13} /> Exec
+                    </button>
+                )}
+                {isRunning ? (
+                    <>
+                        <button className="dx-action-btn" onClick={() => onAction(containerId, 'restart')}>
+                            <RotateCw size={13} /> Restart
+                        </button>
+                        <button className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'stop')}>
+                            <Square size={13} /> Stop
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <button className="dx-action-btn is-success" onClick={() => onAction(containerId, 'start')}>
+                            <Play size={13} /> Start
+                        </button>
+                        <button className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'remove')}>
+                            <Trash2 size={13} /> Remove
+                        </button>
+                    </>
+                )}
+            </div>
+
+            <div className="dx-inspector-tabs">
+                {['overview', 'ports', 'mounts', 'env'].map(section => (
+                    <button
+                        key={section}
+                        className={activeSection === section ? 'active' : ''}
+                        onClick={() => setActiveSection(section)}
+                    >
+                        {section}
+                    </button>
+                ))}
+            </div>
+
+            <div className="dx-inspector-body">
+                {loading && <div className="dx-inspector-loading">Inspecting container...</div>}
+
+                {activeSection === 'overview' && (
+                    <>
+                        <ContainerResourceBars stats={stats} muted={!isRunning} />
+                        <div className="dx-detail-grid">
+                            <div><span>Image</span><strong title={getContainerImage(container)}>{getContainerImage(container)}</strong></div>
+                            <div><span>Project</span><strong>{projectName}</strong></div>
+                            <div><span>Restart</span><strong>{restartPolicy}</strong></div>
+                            <div><span>Created</span><strong>{container.created || container.CreatedAt || '-'}</strong></div>
+                        </div>
+                        <div className="dx-section-title"><Gauge size={13} /> Runtime</div>
+                        <div className="dx-details-list">
+                            <span>Status</span><code>{getContainerStatus(container)}</code>
+                            <span>PID</span><code>{details?.State?.Pid || '-'}</code>
+                            <span>Platform</span><code>{details?.Platform || details?.Os || '-'}</code>
+                            <span>Driver</span><code>{details?.Driver || '-'}</code>
+                        </div>
+                    </>
+                )}
+
+                {activeSection === 'ports' && (
+                    <>
+                        <div className="dx-section-title"><Activity size={13} /> Published ports</div>
+                        <div className="dx-inspector-list">
+                            {ports.map((port, index) => (
+                                <code key={index} className={port === '-' ? 'is-empty' : ''}>{port}</code>
+                            ))}
+                        </div>
+                        <div className="dx-section-title"><ServerIcon size={13} /> Networks</div>
+                        <div className="dx-details-list">
+                            {networks.length === 0 ? (
+                                <>
+                                    <span>Networks</span><code>-</code>
+                                </>
+                            ) : networks.map(([name, network]) => (
+                                <React.Fragment key={name}>
+                                    <span>{name}</span>
+                                    <code>{network?.IPAddress || network?.Gateway || '-'}</code>
+                                </React.Fragment>
+                            ))}
+                        </div>
+                    </>
+                )}
+
+                {activeSection === 'mounts' && (
+                    <>
+                        <div className="dx-section-title"><Database size={13} /> Mounts and volumes</div>
+                        <div className="dx-inspector-list">
+                            {mounts.length === 0 ? (
+                                <code className="is-empty">No mounts</code>
+                            ) : mounts.map((mount, index) => (
+                                <code key={index}>
+                                    {mount.Name || mount.Source || '-'} -&gt; {mount.Destination || '-'}
+                                </code>
+                            ))}
+                        </div>
+                    </>
+                )}
+
+                {activeSection === 'env' && (
+                    <>
+                        <div className="dx-section-title"><Package size={13} /> Environment</div>
+                        <div className="dx-inspector-list">
+                            {envVars.length === 0 ? (
+                                <code className="is-empty">No environment variables</code>
+                            ) : envVars.slice(0, 24).map((entry, index) => (
+                                <code key={index}>{maskEnvValue(entry)}</code>
+                            ))}
+                            {envVars.length > 24 && <code>+{envVars.length - 24} more variables</code>}
+                        </div>
+                        <div className="dx-section-title"><Clock3 size={13} /> Labels</div>
+                        <div className="dx-details-list">
+                            {Object.keys(labels).length === 0 ? (
+                                <>
+                                    <span>Labels</span><code>-</code>
+                                </>
+                            ) : Object.entries(labels).slice(0, 12).map(([key, value]) => (
+                                <React.Fragment key={key}>
+                                    <span title={key}>{key}</span>
+                                    <code title={value}>{value}</code>
+                                </React.Fragment>
+                            ))}
+                        </div>
+                    </>
+                )}
+            </div>
+        </aside>
+        </>
+    );
+};
+
 // Images Tab
 const ImagesTab = ({ onStatsChange }) => {
     const toast = useToast();
@@ -762,7 +1299,7 @@ const ImagesTab = ({ onStatsChange }) => {
             let data;
             if (isRemote) {
                 const result = await api.getRemoteImages(serverId);
-                data = result.success ? { images: result.data || [] } : { images: [] };
+                data = { images: normalizeListResponse(result, 'images') };
             } else {
                 data = await api.getImages();
             }
@@ -809,7 +1346,7 @@ const ImagesTab = ({ onStatsChange }) => {
         <div>
             <div className="docker-table-header">
                 <div />
-                <input
+                <Input
                     type="text"
                     className="docker-search"
                     placeholder="Search images..."
@@ -891,7 +1428,7 @@ const NetworksTab = ({ onStatsChange }) => {
             let data;
             if (isRemote) {
                 const result = await api.getRemoteNetworks(serverId);
-                data = result.success ? { networks: result.data || [] } : { networks: [] };
+                data = { networks: normalizeListResponse(result, 'networks') };
             } else {
                 data = await api.getNetworks();
             }
@@ -908,7 +1445,11 @@ const NetworksTab = ({ onStatsChange }) => {
         if (!confirmed) return;
 
         try {
-            await api.removeNetwork(networkId);
+            if (isRemote) {
+                await api.removeRemoteNetwork(serverId, networkId);
+            } else {
+                await api.removeNetwork(networkId);
+            }
             toast.success('Network removed successfully');
             loadNetworks();
             onStatsChange?.();
@@ -997,7 +1538,7 @@ const VolumesTab = ({ onStatsChange }) => {
             let data;
             if (isRemote) {
                 const result = await api.getRemoteVolumes(serverId);
-                data = result.success ? { volumes: result.data || [] } : { volumes: [] };
+                data = { volumes: normalizeListResponse(result, 'volumes') };
             } else {
                 data = await api.getVolumes();
             }
@@ -1014,7 +1555,11 @@ const VolumesTab = ({ onStatsChange }) => {
         if (!confirmed) return;
 
         try {
-            await api.removeVolume(volumeName, true);
+            if (isRemote) {
+                await api.removeRemoteVolume(serverId, volumeName, true);
+            } else {
+                await api.removeVolume(volumeName, true);
+            }
             toast.success('Volume removed successfully');
             loadVolumes();
             onStatsChange?.();
@@ -1088,7 +1633,6 @@ const ComposeTab = ({ onStatsChange }) => {
     const { confirm: confirmCompose, confirmState: confirmComposeState, handleConfirm: handleComposeConfirm, handleCancel: handleComposeCancel } = useConfirm();
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [selectedProject, setSelectedProject] = useState(null);
     const [logsProject, setLogsProject] = useState(null);
     const [actionLoading, setActionLoading] = useState({});
 
@@ -1103,9 +1647,9 @@ const ComposeTab = ({ onStatsChange }) => {
             if (isRemote) {
                 data = await api.getRemoteComposeProjects(serverId);
             } else {
-                data = await api.request('/docker/compose/list');
+                data = await api.composeList();
             }
-            setProjects(Array.isArray(data) ? data : data.projects || []);
+            setProjects(normalizeListResponse(data, 'projects'));
         } catch (err) {
             console.error('Failed to load compose projects:', err);
             setProjects([]);
@@ -1124,12 +1668,11 @@ const ComposeTab = ({ onStatsChange }) => {
         setActionLoading(prev => ({ ...prev, [project.Name || project.name]: true }));
 
         try {
-            let result;
             if (action === 'up') {
                 if (isRemote) {
-                    result = await api.remoteComposeUp(serverId, projectPath);
+                    await api.remoteComposeUp(serverId, projectPath);
                 } else {
-                    result = await api.composeUp(projectPath, true, false);
+                    await api.composeUp(projectPath, true, false);
                 }
                 toast.success('Project started');
             } else if (action === 'down') {
@@ -1139,23 +1682,23 @@ const ComposeTab = ({ onStatsChange }) => {
                     return;
                 }
                 if (isRemote) {
-                    result = await api.remoteComposeDown(serverId, projectPath);
+                    await api.remoteComposeDown(serverId, projectPath);
                 } else {
-                    result = await api.composeDown(projectPath, false, true);
+                    await api.composeDown(projectPath, false, true);
                 }
                 toast.success('Project stopped');
             } else if (action === 'restart') {
                 if (isRemote) {
-                    result = await api.remoteComposeRestart(serverId, projectPath);
+                    await api.remoteComposeRestart(serverId, projectPath);
                 } else {
-                    result = await api.composeRestart(projectPath);
+                    await api.composeRestart(projectPath);
                 }
                 toast.success('Project restarted');
             } else if (action === 'pull') {
                 if (isRemote) {
-                    result = await api.remoteComposePull(serverId, projectPath);
+                    await api.remoteComposePull(serverId, projectPath);
                 } else {
-                    result = await api.composePull(projectPath);
+                    await api.composePull(projectPath);
                 }
                 toast.success('Images pulled');
             }
@@ -1192,9 +1735,9 @@ const ComposeTab = ({ onStatsChange }) => {
                 <div className="docker-table-info">
                     {projects.length} project{projects.length !== 1 ? 's' : ''} found
                 </div>
-                <button className="btn btn-secondary btn-sm" onClick={loadProjects}>
+                <Button variant="outline" size="sm" onClick={loadProjects}>
                     Refresh
-                </button>
+                </Button>
             </div>
 
             {projects.length === 0 ? (
@@ -1247,7 +1790,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                             onClick={() => setLogsProject(project)}
                                             disabled={isLoading}
                                         >
-                                            <LogsIcon />
+                                            <FileText size={14} />
                                         </IconAction>
                                         {isRunning ? (
                                             <>
@@ -1256,7 +1799,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                                     onClick={() => handleAction(project, 'restart')}
                                                     disabled={isLoading}
                                                 >
-                                                    <RestartIcon />
+                                                    <RotateCw size={14} />
                                                 </IconAction>
                                                 <IconAction
                                                     title="Stop"
@@ -1264,7 +1807,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                                     disabled={isLoading}
                                                     color="#EF4444"
                                                 >
-                                                    <StopIcon />
+                                                    <Square size={14} />
                                                 </IconAction>
                                             </>
                                         ) : (
@@ -1274,7 +1817,7 @@ const ComposeTab = ({ onStatsChange }) => {
                                                 disabled={isLoading}
                                                 color="#10B981"
                                             >
-                                                <PlayIcon />
+                                                <Play size={14} />
                                             </IconAction>
                                         )}
                                         <IconAction
@@ -1342,7 +1885,10 @@ const ComposeLogsModal = ({ project, onClose }) => {
         try {
             let containers;
             if (isRemote) {
-                containers = await api.getRemoteComposePs(serverId, projectPath);
+                containers = normalizeListResponse(
+                    await api.getRemoteComposePs(serverId, projectPath),
+                    'containers'
+                );
             } else {
                 const result = await api.composePs(projectPath);
                 containers = result.containers || result || [];
@@ -1365,7 +1911,7 @@ const ComposeLogsModal = ({ project, onClose }) => {
         try {
             let data;
             if (isRemote) {
-                data = await api.remoteComposeLogs(serverId, projectPath, selectedService || null, tail);
+                data = unwrapRemoteData(await api.remoteComposeLogs(serverId, projectPath, selectedService || null, tail));
             } else {
                 data = await api.composeLogs(projectPath, selectedService || null, tail);
             }
@@ -1409,10 +1955,10 @@ const ComposeLogsModal = ({ project, onClose }) => {
                     <pre className="log-viewer">{loading ? 'Loading...' : logs}</pre>
                 </div>
                 <div className="modal-actions">
-                    <button className="btn btn-secondary" onClick={loadLogs} disabled={loading}>
+                    <Button variant="outline" onClick={loadLogs} disabled={loading}>
                         {loading ? 'Loading...' : 'Refresh'}
-                    </button>
-                    <button className="btn btn-primary" onClick={onClose}>Close</button>
+                    </Button>
+                    <Button onClick={onClose}>Close</Button>
                 </div>
             </div>
         </div>
@@ -1477,7 +2023,7 @@ const RunContainerModal = ({ onClose, onCreated }) => {
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">
                         <label>Image *</label>
-                        <input
+                        <Input
                             type="text"
                             name="image"
                             value={formData.image}
@@ -1489,7 +2035,7 @@ const RunContainerModal = ({ onClose, onCreated }) => {
 
                     <div className="form-group">
                         <label>Container Name</label>
-                        <input
+                        <Input
                             type="text"
                             name="name"
                             value={formData.name}
@@ -1500,7 +2046,7 @@ const RunContainerModal = ({ onClose, onCreated }) => {
 
                     <div className="form-group">
                         <label>Ports (comma-separated)</label>
-                        <input
+                        <Input
                             type="text"
                             name="ports"
                             value={formData.ports}
@@ -1511,7 +2057,7 @@ const RunContainerModal = ({ onClose, onCreated }) => {
 
                     <div className="form-group">
                         <label>Volumes (comma-separated)</label>
-                        <input
+                        <Input
                             type="text"
                             name="volumes"
                             value={formData.volumes}
@@ -1522,7 +2068,7 @@ const RunContainerModal = ({ onClose, onCreated }) => {
 
                     <div className="form-group">
                         <label>Environment Variables (one per line, KEY=value)</label>
-                        <textarea
+                        <Textarea
                             name="env"
                             value={formData.env}
                             onChange={handleChange}
@@ -1532,12 +2078,12 @@ const RunContainerModal = ({ onClose, onCreated }) => {
                     </div>
 
                     <div className="modal-actions">
-                        <button type="button" className="btn btn-secondary" onClick={onClose}>
+                        <Button type="button" variant="outline" onClick={onClose}>
                             Cancel
-                        </button>
-                        <button type="submit" className="btn btn-primary" disabled={loading}>
+                        </Button>
+                        <Button type="submit" disabled={loading}>
                             {loading ? 'Running...' : 'Run Container'}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>
@@ -1547,25 +2093,43 @@ const RunContainerModal = ({ onClose, onCreated }) => {
 
 const ContainerLogsModal = ({ container, onClose }) => {
     const { serverId, isRemote } = useServer();
+    const containerId = getContainerId(container);
     const [logs, setLogs] = useState('');
     const [loading, setLoading] = useState(true);
     const [tail, setTail] = useState(200);
+    const [searchPattern, setSearchPattern] = useState('');
+    const [appliedSearch, setAppliedSearch] = useState('');
+    const [autoRefresh, setAutoRefresh] = useState(false);
+    const [showLineNumbers, setShowLineNumbers] = useState(true);
+    const [wrapLines, setWrapLines] = useState(true);
+    const contentRef = useRef(null);
+    const intervalRef = useRef(null);
 
     useEffect(() => {
         loadLogs();
-    }, [container, tail]);
+    }, [container, tail]); // eslint-disable-line
 
-    async function loadLogs() {
-        setLoading(true);
+    useEffect(() => {
+        if (autoRefresh) {
+            intervalRef.current = setInterval(() => loadLogs(false), 3000);
+        }
+        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    }, [autoRefresh, tail]); // eslint-disable-line
+
+    async function loadLogs(showSpinner = true) {
+        if (showSpinner) setLoading(true);
         try {
             let data;
             if (isRemote) {
-                const result = await api.getRemoteContainerLogs(serverId, container.id, tail);
-                data = result.success ? { logs: result.data?.logs || '' } : { logs: '' };
+                const result = await api.getRemoteContainerLogs(serverId, containerId, tail);
+                data = unwrapRemoteData(result);
             } else {
-                data = await api.getContainerLogs(container.id, tail);
+                data = await api.getContainerLogs(containerId, tail);
             }
-            setLogs(data.logs || 'No logs available');
+            setLogs(data.logs || '');
+            if (autoRefresh && contentRef.current) {
+                contentRef.current.scrollTop = contentRef.current.scrollHeight;
+            }
         } catch (err) {
             setLogs('Failed to load logs: ' + (err.message || 'Unknown error'));
         } finally {
@@ -1573,38 +2137,95 @@ const ContainerLogsModal = ({ container, onClose }) => {
         }
     }
 
+    function handleDownload() {
+        if (!logs) return;
+        const blob = new Blob([logs], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${container.name}-${Date.now()}.log`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Logs: {container.name}</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
-                </div>
-                <div className="modal-body">
-                    <div className="logs-controls flex items-center gap-2 mb-2">
-                        <label>Lines:</label>
-                        <select value={tail} onChange={(e) => setTail(Number(e.target.value))} className="py-2 px-2">
-                            <option value={50}>50</option>
-                            <option value={100}>100</option>
-                            <option value={200}>200</option>
-                            <option value={500}>500</option>
-                            <option value={1000}>1000</option>
-                        </select>
+        <>
+            <div className="preview-drawer-backdrop" onClick={onClose} />
+            <aside className="preview-drawer">
+                <header className="preview-drawer-header">
+                    <Box size={20} style={{ color: 'var(--accent-primary)' }} />
+                    <div className="preview-drawer-title">
+                        <h3>{getContainerName(container)}</h3>
+                        <p className="preview-drawer-path">{getContainerImage(container)} - {shortId(containerId)}</p>
                     </div>
-                    <pre className="log-viewer">{loading ? 'Loading...' : logs}</pre>
-                </div>
-                <div className="modal-actions">
-                    <button className="btn btn-secondary" onClick={loadLogs} disabled={loading}>
-                        {loading ? 'Loading...' : 'Refresh'}
+                    <button className="preview-drawer-close" onClick={onClose}>
+                        <X size={18} />
                     </button>
-                    <button className="btn btn-primary" onClick={onClose}>Close</button>
+                </header>
+
+                <div className="preview-drawer-meta">
+                    <div className="meta-item">
+                        <span className="meta-label">Status</span>
+                        <span className="meta-value">{getContainerStatus(container)}</span>
+                    </div>
+                    <div className="meta-item">
+                        <span className="meta-label">Image</span>
+                        <span className="meta-value mono">{getContainerImage(container)}</span>
+                    </div>
+                    <div className="meta-item meta-item-wide">
+                        <span className="meta-label">ID</span>
+                        <span className="meta-value mono">{containerId}</span>
+                    </div>
+                    {container.ports && container.ports.length > 0 && (
+                        <div className="meta-item meta-item-wide">
+                            <span className="meta-label">Ports</span>
+                            <span className="meta-value mono">{formatPorts(container.ports).join(', ')}</span>
+                        </div>
+                    )}
                 </div>
-            </div>
-        </div>
+
+                <LogToolbar
+                    searchPattern={searchPattern}
+                    onSearchChange={setSearchPattern}
+                    onSearchSubmit={() => setAppliedSearch(searchPattern)}
+                    onSearchClear={() => { setSearchPattern(''); setAppliedSearch(''); }}
+                    lineCount={tail}
+                    onLineCountChange={(n) => setTail(n)}
+                    autoRefresh={autoRefresh}
+                    onAutoRefreshToggle={() => setAutoRefresh(!autoRefresh)}
+                    showLineNumbers={showLineNumbers}
+                    onToggleLineNumbers={() => setShowLineNumbers(!showLineNumbers)}
+                    wrapLines={wrapLines}
+                    onToggleWrap={() => setWrapLines(!wrapLines)}
+                    isFullscreen={false}
+                    onToggleFullscreen={() => {}}
+                    onRefresh={() => loadLogs()}
+                    onDownload={handleDownload}
+                    onClear={() => {}}
+                    onScrollToBottom={() => {
+                        if (contentRef.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
+                    }}
+                    canAct={true}
+                />
+
+                <div className="preview-drawer-body">
+                    <LogContent
+                        ref={contentRef}
+                        content={logs}
+                        loading={loading}
+                        emptyMessage="No log output."
+                        showLineNumbers={showLineNumbers}
+                        wrapLines={wrapLines}
+                        searchPattern={appliedSearch}
+                    />
+                </div>
+            </aside>
+        </>
     );
 };
 
 const ContainerExecModal = ({ container, onClose }) => {
+    const containerId = getContainerId(container);
     const [command, setCommand] = useState('');
     const [output, setOutput] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -1637,15 +2258,18 @@ const ContainerExecModal = ({ container, onClose }) => {
         setLoading(true);
 
         try {
-            const result = await api.execContainer(container.id, cmd);
-            if (result.output) {
-                setOutput(prev => [...prev, { type: 'output', text: result.output }]);
+            const result = await api.execContainer(containerId, cmd);
+            const stdout = result.output ?? result.stdout;
+            const stderr = result.error ?? result.stderr;
+            const exitCode = result.exit_code ?? result.return_code;
+            if (stdout) {
+                setOutput(prev => [...prev, { type: 'output', text: stdout }]);
             }
-            if (result.error) {
-                setOutput(prev => [...prev, { type: 'error', text: result.error }]);
+            if (stderr) {
+                setOutput(prev => [...prev, { type: 'error', text: stderr }]);
             }
-            if (result.exit_code !== 0) {
-                setOutput(prev => [...prev, { type: 'info', text: `Exit code: ${result.exit_code}` }]);
+            if (exitCode !== undefined && exitCode !== 0) {
+                setOutput(prev => [...prev, { type: 'info', text: `Exit code: ${exitCode}` }]);
             }
         } catch (err) {
             setOutput(prev => [...prev, { type: 'error', text: err.message || 'Failed to execute command' }]);
@@ -1686,14 +2310,14 @@ const ContainerExecModal = ({ container, onClose }) => {
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>Exec: {container.name}</h2>
+                    <h2>Exec: {getContainerName(container)}</h2>
                     <button className="modal-close" onClick={onClose}>&times;</button>
                 </div>
                 <div className="modal-body exec-modal-body">
                     <div className="exec-output" ref={outputRef}>
                         {output.length === 0 ? (
                             <div className="exec-welcome">
-                                <p>Execute commands in container <code>{container.name}</code></p>
+                                <p>Execute commands in container <code>{getContainerName(container)}</code></p>
                                 <p className="text-muted">Type a command and press Enter</p>
                             </div>
                         ) : (
@@ -1723,14 +2347,14 @@ const ContainerExecModal = ({ container, onClose }) => {
                             autoComplete="off"
                             spellCheck="false"
                         />
-                        <button type="submit" className="btn btn-primary btn-sm" disabled={loading || !command.trim()}>
+                        <Button type="submit" size="sm" disabled={loading || !command.trim()}>
                             Run
-                        </button>
+                        </Button>
                     </form>
                 </div>
                 <div className="modal-actions">
-                    <button className="btn btn-secondary" onClick={clearOutput}>Clear</button>
-                    <button className="btn btn-primary" onClick={onClose}>Close</button>
+                    <Button variant="outline" onClick={clearOutput}>Clear</Button>
+                    <Button onClick={onClose}>Close</Button>
                 </div>
             </div>
         </div>
@@ -1738,6 +2362,7 @@ const ContainerExecModal = ({ container, onClose }) => {
 };
 
 const PullImageModal = ({ onClose, onPulled }) => {
+    const { serverId, isRemote } = useServer();
     const [image, setImage] = useState('');
     const [tag, setTag] = useState('latest');
     const [loading, setLoading] = useState(false);
@@ -1749,7 +2374,12 @@ const PullImageModal = ({ onClose, onPulled }) => {
         setLoading(true);
 
         try {
-            await api.pullImage(image, tag);
+            if (isRemote) {
+                const fullImage = tag ? `${image}:${tag}` : image;
+                await api.pullRemoteImage(serverId, fullImage);
+            } else {
+                await api.pullImage(image, tag);
+            }
             onPulled();
             onClose();
         } catch (err) {
@@ -1772,7 +2402,7 @@ const PullImageModal = ({ onClose, onPulled }) => {
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">
                         <label>Image Name *</label>
-                        <input
+                        <Input
                             type="text"
                             value={image}
                             onChange={(e) => setImage(e.target.value)}
@@ -1783,7 +2413,7 @@ const PullImageModal = ({ onClose, onPulled }) => {
 
                     <div className="form-group">
                         <label>Tag</label>
-                        <input
+                        <Input
                             type="text"
                             value={tag}
                             onChange={(e) => setTag(e.target.value)}
@@ -1792,12 +2422,12 @@ const PullImageModal = ({ onClose, onPulled }) => {
                     </div>
 
                     <div className="modal-actions">
-                        <button type="button" className="btn btn-secondary" onClick={onClose}>
+                        <Button type="button" variant="outline" onClick={onClose}>
                             Cancel
-                        </button>
-                        <button type="submit" className="btn btn-primary" disabled={loading}>
+                        </Button>
+                        <Button type="submit" disabled={loading}>
                             {loading ? 'Pulling...' : 'Pull Image'}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>
@@ -1840,7 +2470,7 @@ const CreateNetworkModal = ({ onClose, onCreated }) => {
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">
                         <label>Network Name *</label>
-                        <input
+                        <Input
                             type="text"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
@@ -1859,12 +2489,12 @@ const CreateNetworkModal = ({ onClose, onCreated }) => {
                     </div>
 
                     <div className="modal-actions">
-                        <button type="button" className="btn btn-secondary" onClick={onClose}>
+                        <Button type="button" variant="outline" onClick={onClose}>
                             Cancel
-                        </button>
-                        <button type="submit" className="btn btn-primary" disabled={loading}>
+                        </Button>
+                        <Button type="submit" disabled={loading}>
                             {loading ? 'Creating...' : 'Create Network'}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>
@@ -1906,7 +2536,7 @@ const CreateVolumeModal = ({ onClose, onCreated }) => {
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">
                         <label>Volume Name *</label>
-                        <input
+                        <Input
                             type="text"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
@@ -1916,12 +2546,12 @@ const CreateVolumeModal = ({ onClose, onCreated }) => {
                     </div>
 
                     <div className="modal-actions">
-                        <button type="button" className="btn btn-secondary" onClick={onClose}>
+                        <Button type="button" variant="outline" onClick={onClose}>
                             Cancel
-                        </button>
-                        <button type="submit" className="btn btn-primary" disabled={loading}>
+                        </Button>
+                        <Button type="submit" disabled={loading}>
                             {loading ? 'Creating...' : 'Create Volume'}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>

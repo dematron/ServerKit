@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { Info } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 const SetupStepAccount = ({ onComplete }) => {
     const [email, setEmail] = useState('');
@@ -63,10 +66,8 @@ const SetupStepAccount = ({ onComplete }) => {
                     An admin account already exists. Sign in to continue setup.
                 </p>
 
-                <div className="wizard-info-banner">
-                    <div className="wizard-info-icon">
-                        <Info size={20} />
-                    </div>
+                <div className="alert alert-info">
+                    <Info size={20} />
                     <p>
                         It looks like an admin account was created via the CLI.
                         Sign in with those credentials to finish setting up your server.
@@ -77,8 +78,8 @@ const SetupStepAccount = ({ onComplete }) => {
 
                 <form onSubmit={handleLogin}>
                     <div className="form-group">
-                        <label htmlFor="email">Email</label>
-                        <input
+                        <Label htmlFor="email">Email</Label>
+                        <Input
                             type="email"
                             id="email"
                             value={email}
@@ -90,8 +91,8 @@ const SetupStepAccount = ({ onComplete }) => {
                     </div>
 
                     <div className="form-group">
-                        <label htmlFor="password">Password</label>
-                        <input
+                        <Label htmlFor="password">Password</Label>
+                        <Input
                             type="password"
                             id="password"
                             value={password}
@@ -121,10 +122,8 @@ const SetupStepAccount = ({ onComplete }) => {
                 Set up the administrator account for your server.
             </p>
 
-            <div className="wizard-info-banner">
-                <div className="wizard-info-icon">
-                    <Info size={20} />
-                </div>
+            <div className="alert alert-info">
+                <Info size={20} />
                 <p>
                     This is your first time using ServerKit. Create an administrator
                     account to get started. This account will have full access to
@@ -136,8 +135,8 @@ const SetupStepAccount = ({ onComplete }) => {
 
             <form onSubmit={handleRegister}>
                 <div className="form-group">
-                    <label htmlFor="email">Admin Email</label>
-                    <input
+                    <Label htmlFor="email">Admin Email</Label>
+                    <Input
                         type="email"
                         id="email"
                         value={email}
@@ -149,8 +148,8 @@ const SetupStepAccount = ({ onComplete }) => {
                 </div>
 
                 <div className="form-group">
-                    <label htmlFor="username">Username</label>
-                    <input
+                    <Label htmlFor="username">Username</Label>
+                    <Input
                         type="text"
                         id="username"
                         value={username}
@@ -161,8 +160,8 @@ const SetupStepAccount = ({ onComplete }) => {
                 </div>
 
                 <div className="form-group">
-                    <label htmlFor="password">Password</label>
-                    <input
+                    <Label htmlFor="password">Password</Label>
+                    <Input
                         type="password"
                         id="password"
                         value={password}
@@ -173,8 +172,8 @@ const SetupStepAccount = ({ onComplete }) => {
                 </div>
 
                 <div className="form-group">
-                    <label htmlFor="confirmPassword">Confirm Password</label>
-                    <input
+                    <Label htmlFor="confirmPassword">Confirm Password</Label>
+                    <Input
                         type="password"
                         id="confirmPassword"
                         value={confirmPassword}

@@ -4,17 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ServerKit is a server control panel for managing web applications, databases, Docker containers, and security on VPS/dedicated servers. Flask backend (Python 3.11+), React frontend (Vite + LESS), SQLite/PostgreSQL database, real-time updates via Socket.IO.
+ServerKit is a server control panel for managing web applications, databases, Docker containers, and security on VPS/dedicated servers. Flask backend (Python 3.11+), React frontend (Vite + SCSS), SQLite/PostgreSQL database, real-time updates via Socket.IO.
 
 ## Development Commands
 
 ```bash
-# Backend (port 5000, hot-reload)
+# Backend (launcher default port 47927, hot-reload)
 cd backend && python -m venv venv && source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python run.py
 
-# Frontend (port 5173, Vite HMR)
+# Frontend (launcher default port 41921, Vite HMR)
 cd frontend && npm install && npm run dev
 
 # Both at once (Linux/WSL)
@@ -48,10 +48,15 @@ Flask app factory in `app/__init__.py` using `create_app()`. Three-layer archite
 
 Other backend components:
 - `app/sockets.py` — Socket.IO event handlers for real-time metrics, logs, terminal
-- `app/agent_gateway.py` — Multi-server agent communication
+- `app/agent_gateway.py` — Defines the Socket.IO `/agent` namespace for the multi-server agent fleet, backed by the in-memory singleton `app/services/agent_registry.py` (HMAC auth, heartbeat/metrics, command routing); `app/api/agent_poll.py` is the HTTP long-poll fallback. The native agent itself is a Go program under `agent/`.
 - `app/middleware/security.py` — Security headers middleware
 - `config.py` — Environment-based config (development/production/testing)
 - `run.py` — Entry point
+
+> **Agent gateway is single-worker.** All connected-agent state lives in-memory
+> in one process, so the panel must run a **single** gevent-websocket worker;
+> multi-worker deployments silently misroute agent commands. See
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [SECURITY.md](SECURITY.md).
 
 ### Frontend (`frontend/src/`)
 
@@ -62,7 +67,7 @@ React 18 SPA with client-side routing:
 - **`contexts/`** — React Context providers: `AuthContext` (JWT auth + token refresh), `ThemeContext`, `ToastContext`, `ResourceTierContext` (feature gating).
 - **`services/api.js`** — Centralized `ApiService` class handling all HTTP requests, token management, and auto-refresh.
 - **`hooks/`** — Custom React hooks for reusable logic.
-- **`styles/`** — LESS stylesheets with design system variables. Main entry is `main.less`. Page-specific styles in `styles/pages/`.
+- **`styles/`** — SCSS stylesheets with design system variables. Main entry is `main.scss`. Page-specific styles in `styles/pages/`.
 - **`layouts/`** — `DashboardLayout` wraps authenticated pages (sidebar + header).
 
 Route guards: `PrivateRoute` (auth check), `PublicRoute` (redirect if logged in), `SetupRoute` (redirect to `/setup` if not configured).
@@ -93,7 +98,7 @@ ServerKit deploys on Linux (bare metal, VPS, or Docker). Development may happen 
 ### React/JavaScript
 - Functional components with hooks only
 - PascalCase for components (`Sidebar.jsx`), camelCase for everything else
-- LESS for styling — use existing design system variables (`@card-bg`, `@primary-color`, `@spacing-md`, etc.) and BEM-like naming (`.block__element--modifier`)
+- SCSS for styling — use existing design system variables (`$bg-card`, `$primary-color`, `$spacing-md`, etc.) and BEM-like naming (`.block__element--modifier`)
 - Context API for global state; props drilling is fine for 2-3 levels
 - No inline styles; no Tailwind/CSS-in-JS
 
@@ -109,7 +114,7 @@ ServerKit deploys on Linux (bare metal, VPS, or Docker). Development may happen 
 3. **API**: Create Blueprint in `backend/app/api/`, register it in `app/__init__.py` with `url_prefix='/api/v1/<feature>'`
 4. **Frontend API**: Add methods to `ApiService` in `frontend/src/services/api.js`
 5. **Page**: Create page component in `frontend/src/pages/`, add route in `App.jsx`
-6. **Styles**: Add LESS file in `frontend/src/styles/pages/`, import in `main.less`
+6. **Styles**: Add SCSS file in `frontend/src/styles/pages/`, import in `main.scss`
 
 ## Key Environment Variables
 

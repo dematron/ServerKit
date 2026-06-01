@@ -3,6 +3,12 @@ import api from '../../services/api';
 import ConfirmDialog from '../ConfirmDialog';
 import { useToast } from '../../contexts/ToastContext';
 import Modal from '../Modal';
+import { InfoList, InfoItem } from '../InfoList';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 
 const Fail2banTab = () => {
     const [status, setStatus] = useState(null);
@@ -97,9 +103,9 @@ const Fail2banTab = () => {
                     </svg>
                     <h3>Fail2ban Not Installed</h3>
                     <p>Install Fail2ban to protect against brute force attacks.</p>
-                    <button className="btn btn-primary" onClick={handleInstall} disabled={actionLoading}>
+                    <Button variant="default" onClick={handleInstall} disabled={actionLoading}>
                         {actionLoading ? 'Installing...' : 'Install Fail2ban'}
-                    </button>
+                    </Button>
                 </div>
             ) : (
                 <>
@@ -107,35 +113,25 @@ const Fail2banTab = () => {
                         <div className="card-header">
                             <h3>Fail2ban Status</h3>
                             <div className="card-actions">
-                                <button className="btn btn-sm btn-primary" onClick={() => setShowBanModal(true)}>
+                                <Button variant="default" size="sm" onClick={() => setShowBanModal(true)}>
                                     Ban IP
-                                </button>
-                                <button className="btn btn-sm btn-secondary" onClick={loadData}>
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={loadData}>
                                     Refresh
-                                </button>
+                                </Button>
                             </div>
                         </div>
                         <div className="card-body">
-                            <div className="info-list">
-                                <div className="info-item">
-                                    <span className="info-label">Service</span>
-                                    <span className={`badge ${status.service_running ? 'badge-success' : 'badge-danger'}`}>
+                            <InfoList>
+                                <InfoItem label="Service">
+                                    <Badge variant={status.service_running ? 'success' : 'destructive'}>
                                         {status.service_running ? 'Running' : 'Stopped'}
-                                    </span>
-                                </div>
-                                <div className="info-item">
-                                    <span className="info-label">Version</span>
-                                    <span className="info-value">{status.version || 'Unknown'}</span>
-                                </div>
-                                <div className="info-item">
-                                    <span className="info-label">Active Jails</span>
-                                    <span className="info-value">{status.jails?.join(', ') || 'None'}</span>
-                                </div>
-                                <div className="info-item">
-                                    <span className="info-label">Total Banned IPs</span>
-                                    <span className="info-value">{bans.length}</span>
-                                </div>
-                            </div>
+                                    </Badge>
+                                </InfoItem>
+                                <InfoItem label="Version" value={status.version || 'Unknown'} />
+                                <InfoItem label="Active Jails" value={status.jails?.join(', ') || 'None'} />
+                                <InfoItem label="Total Banned IPs" value={bans.length} />
+                            </InfoList>
                         </div>
                     </div>
 
@@ -159,11 +155,11 @@ const Fail2banTab = () => {
                                         {bans.map((ban, index) => (
                                             <tr key={index}>
                                                 <td><code>{ban.ip}</code></td>
-                                                <td><span className="badge badge-info">{ban.jail}</span></td>
+                                                <td><Badge variant="info">{ban.jail}</Badge></td>
                                                 <td>
-                                                    <button className="btn btn-sm btn-warning" onClick={() => handleUnban(ban.ip, ban.jail)}>
+                                                    <Button variant="secondary" size="sm" onClick={() => handleUnban(ban.ip, ban.jail)}>
                                                         Unban
-                                                    </button>
+                                                    </Button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -176,29 +172,34 @@ const Fail2banTab = () => {
             )}
 
             <Modal open={showBanModal} onClose={() => setShowBanModal(false)} title="Ban IP Address">
-                            <div className="form-group">
-                                <label>IP Address</label>
-                                <input
-                                    type="text"
-                                    value={banIP}
-                                    onChange={(e) => setBanIP(e.target.value)}
-                                    placeholder="192.168.1.100"
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label>Jail</label>
-                                <select value={banJail} onChange={(e) => setBanJail(e.target.value)}>
-                                    {status?.jails?.map(jail => (
-                                        <option key={jail} value={jail}>{jail}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setShowBanModal(false)}>Cancel</button>
-                            <button className="btn btn-danger" onClick={handleBan} disabled={actionLoading || !banIP.trim()}>
-                                {actionLoading ? 'Banning...' : 'Ban IP'}
-                            </button>
-                        </div>
+                <div className="form-group">
+                    <Label>IP Address</Label>
+                    <Input
+                        type="text"
+                        value={banIP}
+                        onChange={(e) => setBanIP(e.target.value)}
+                        placeholder="192.168.1.100"
+                    />
+                </div>
+                <div className="form-group">
+                    <Label>Jail</Label>
+                    <Select value={banJail} onValueChange={setBanJail}>
+                        <SelectTrigger>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {status?.jails?.map(jail => (
+                                <SelectItem key={jail} value={jail}>{jail}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+                <div className="modal-footer">
+                    <Button variant="outline" onClick={() => setShowBanModal(false)}>Cancel</Button>
+                    <Button variant="destructive" onClick={handleBan} disabled={actionLoading || !banIP.trim()}>
+                        {actionLoading ? 'Banning...' : 'Ban IP'}
+                    </Button>
+                </div>
             </Modal>
 
             {confirmDialog && (

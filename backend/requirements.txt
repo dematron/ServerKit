@@ -15,7 +15,7 @@ PyJWT==2.12.1
 Flask-Cors==6.0.2
 
 # WebSocket support
-Flask-SocketIO==5.4.1
+Flask-SocketIO==5.6.1
 python-socketio==5.14.0
 python-engineio==4.11.2
 
@@ -28,7 +28,7 @@ gevent==25.4.2
 gevent-websocket==0.10.1
 
 # Environment variables
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 
 # YAML parsing (for Docker Compose)
 PyYAML==6.0.1
@@ -45,20 +45,20 @@ passlib==1.7.4
 bcrypt==4.2.1
 
 # Encryption for env vars
-cryptography==46.0.5
+cryptography==46.0.7
 
 # Two-Factor Authentication
 pyotp==2.9.0
 qrcode[pil]==7.4.2
 
 # HTTP Requests (for webhooks & notifications)
-requests==2.32.5
+requests==2.33.1
 
 # S3-compatible storage (AWS S3, Backblaze B2, MinIO, Wasabi)
 boto3==1.35.0
 
 # SSO / OAuth
-Authlib==1.6.9
+Authlib==1.6.12
 python3-saml==1.16.0
 
 # OpenAPI documentation

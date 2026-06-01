@@ -9,18 +9,28 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/serverkit/agent/internal/auth"
+	"github.com/serverkit/agent/internal/capabilities"
+	"github.com/serverkit/agent/internal/cloudflared"
 	"github.com/serverkit/agent/internal/config"
+	"github.com/serverkit/agent/internal/cron"
 	"github.com/serverkit/agent/internal/docker"
+	"github.com/serverkit/agent/internal/events"
+	"github.com/serverkit/agent/internal/gui"
 	"github.com/serverkit/agent/internal/ipc"
+	"github.com/serverkit/agent/internal/jobs"
 	"github.com/serverkit/agent/internal/logger"
 	"github.com/serverkit/agent/internal/metrics"
 	"github.com/serverkit/agent/internal/terminal"
+	"github.com/serverkit/agent/internal/transport"
+	"github.com/serverkit/agent/internal/transport/poll"
 	"github.com/serverkit/agent/internal/updater"
 	"github.com/serverkit/agent/internal/ws"
 	"github.com/serverkit/agent/pkg/protocol"
@@ -31,11 +41,26 @@ type Agent struct {
 	cfg      *config.Config
 	log      *logger.Logger
 	auth     *auth.Authenticator
-	ws       *ws.Client
-	docker   *docker.Client
-	metrics  *metrics.Collector
-	terminal *terminal.Manager
-	ipc      *ipc.Server
+	// ws is the active transport — either the WS client directly or the
+	// fallback Manager that wraps WS+poll. Named "ws" for compatibility
+	// with the dozens of existing call sites in this file.
+	ws       transport.Transport
+	docker      *docker.Client
+	metrics     *metrics.Collector
+	terminal    *terminal.Manager
+	cron        cron.Manager
+	cloudflared cloudflared.Manager
+	ipc         *ipc.Server
+	sampler  *metricSampler
+	events   *events.Store
+	gui      *gui.SDK
+	jobs     *jobs.Registry
+
+	// pkgLock serializes package-manager mutations (install / remove /
+	// upgrade / update_cache) inside a single agent so two concurrent
+	// requests don't race on dpkg/rpm locks. Reads (list_installed,
+	// search, info) don't take the lock.
+	pkgLock sync.Mutex
 
 	// Active subscriptions
 	subscriptions map[string]context.CancelFunc
@@ -43,6 +68,25 @@ type Agent struct {
 
 	// Command handlers
 	handlers map[string]CommandHandler
+
+	// Capabilities probed at startup, refreshable via
+	// agent:recapabilities. Sent to the panel each time the transport
+	// reconnects (so a panel restart picks them up without waiting for
+	// the agent to also restart). capMu guards reads/writes during a
+	// re-probe so we don't ship a half-mutated payload.
+	capabilities protocol.CapabilitiesMessage
+	capMu        sync.Mutex
+	reprobing    bool
+
+	// sudoMode is the agent's privilege-escalation mode (root /
+	// passwordless / unavailable). Probed once at startup; if the user
+	// adds sudoers config later, agent:recapabilities re-probes.
+	sudoMode SudoMode
+
+	// systemdJSON tracks whether `systemctl --output=json` is supported
+	// on this host (systemd >= 244). Probed lazily on first use.
+	systemdJSON     bool
+	systemdJSONOnce sync.Once
 
 	// Lifecycle tracking
 	startTime      time.Time
@@ -59,8 +103,13 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 	// Create authenticator
 	authenticator := auth.New(cfg.Agent.ID, cfg.Auth.APIKey, cfg.Auth.APISecret)
 
-	// Create WebSocket client
+	// Build the transport: a Manager wrapping the WS client (primary) and
+	// a polling client (fallback for tunnels that mangle WS frames). The
+	// Manager presents the same Transport surface as the bare WS client
+	// did, so the rest of the agent doesn't care which is active.
 	wsClient := ws.NewClient(cfg.Server, authenticator, log)
+	pollClient := poll.NewClient(cfg.Server, authenticator, log)
+	transportClient := transport.NewManager(wsClient, pollClient, log)
 
 	// Create Docker client if enabled
 	var dockerClient *docker.Client
@@ -86,25 +135,68 @@ func New(cfg *config.Config, log *logger.Logger) (*Agent, error) {
 		log.Info("Terminal/PTY support enabled")
 	}
 
+	// Persist the event store next to the existing config so it survives
+	// service restarts. Falls back to in-memory only if we can't infer a
+	// data directory (shouldn't happen on a normal install).
+	dataDir := ""
+	if cfg.Logging.File != "" {
+		dataDir = filepath.Dir(cfg.Logging.File)
+	}
+	eventStore := events.NewStore(200, events.DefaultPath(dataDir))
+
 	agent := &Agent{
 		cfg:           cfg,
 		log:           log,
 		auth:          authenticator,
-		ws:            wsClient,
+		ws:            transportClient,
 		docker:        dockerClient,
 		metrics:       metricsCollector,
 		terminal:      termManager,
+		cron:          cron.New(),
+		cloudflared:   cloudflared.New(),
+		sampler:       newMetricSampler(300), // 5 min @ 1 Hz
+		events:        eventStore,
+		gui:           gui.New(log),
+		jobs:          jobs.NewRegistry(64),
 		subscriptions: make(map[string]context.CancelFunc),
 		handlers:      make(map[string]CommandHandler),
 		startTime:     time.Now(),
-		restartCh:     make(chan struct{}),
+		// Buffered so an IPC restart fired before the agent's main
+		// select{} reaches the receive doesn't hang the IPC handler.
+		// At most one restart can be in-flight at a time anyway —
+		// Restart() uses a non-blocking send and returns "already in
+		// progress" if the slot is full.
+		restartCh:     make(chan struct{}, 1),
 	}
+
+	// Probe capabilities up-front so connectionWatcher can ship them on
+	// every reconnect without re-probing. Docker availability is taken
+	// from whether NewClient succeeded above; the capability layer
+	// doesn't redo that work.
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	agent.capabilities = capabilities.Probe(
+		probeCtx,
+		log,
+		dockerClient != nil,
+		cfg.Features.FileAccess,
+		cfg.Security.AllowedPaths,
+	)
+	agent.sudoMode = probeSudoMode(probeCtx)
+	agent.capabilities.Sudo = string(agent.sudoMode)
+	agent.capabilities.RuntimeManagers = map[string]string{
+		"python": pyenvManagerKind(),
+	}
+	agent.capabilities.ProbedAt = time.Now().UnixMilli()
+	probeCancel()
+	log.Info("Sudo probe complete", "mode", agent.sudoMode)
 
 	// Register command handlers
 	agent.registerHandlers()
 
-	// Set WebSocket message handler
-	wsClient.SetHandler(agent.handleMessage)
+	// Install the message handler on the transport (manager fans this
+	// out to both backends so a fallback switch doesn't drop the
+	// binding).
+	transportClient.SetHandler(agent.handleMessage)
 
 	// Create IPC server if enabled
 	if cfg.IPC.Enabled {
@@ -120,24 +212,30 @@ func (a *Agent) registerHandlers() {
 	if a.docker != nil {
 		a.handlers[protocol.ActionDockerContainerList] = a.handleDockerContainerList
 		a.handlers[protocol.ActionDockerContainerInspect] = a.handleDockerContainerInspect
+		a.handlers[protocol.ActionDockerContainerCreate] = a.handleDockerContainerCreate
 		a.handlers[protocol.ActionDockerContainerStart] = a.handleDockerContainerStart
 		a.handlers[protocol.ActionDockerContainerStop] = a.handleDockerContainerStop
 		a.handlers[protocol.ActionDockerContainerRestart] = a.handleDockerContainerRestart
 		a.handlers[protocol.ActionDockerContainerRemove] = a.handleDockerContainerRemove
 		a.handlers[protocol.ActionDockerContainerStats] = a.handleDockerContainerStats
 		a.handlers[protocol.ActionDockerContainerLogs] = a.handleDockerContainerLogs
+		a.handlers[protocol.ActionDockerContainerExec] = a.handleDockerContainerExec
 
 		// Docker image commands
 		a.handlers[protocol.ActionDockerImageList] = a.handleDockerImageList
 		a.handlers[protocol.ActionDockerImagePull] = a.handleDockerImagePull
 		a.handlers[protocol.ActionDockerImageRemove] = a.handleDockerImageRemove
+		a.handlers[protocol.ActionDockerImageBuild] = a.handleDockerImageBuild
 
 		// Docker volume commands
 		a.handlers[protocol.ActionDockerVolumeList] = a.handleDockerVolumeList
+		a.handlers[protocol.ActionDockerVolumeCreate] = a.handleDockerVolumeCreate
 		a.handlers[protocol.ActionDockerVolumeRemove] = a.handleDockerVolumeRemove
 
 		// Docker network commands
 		a.handlers[protocol.ActionDockerNetworkList] = a.handleDockerNetworkList
+		a.handlers[protocol.ActionDockerNetworkCreate] = a.handleDockerNetworkCreate
+		a.handlers[protocol.ActionDockerNetworkRemove] = a.handleDockerNetworkRemove
 
 		// Docker compose commands
 		a.handlers[protocol.ActionDockerComposeList] = a.handleDockerComposeList
@@ -171,8 +269,84 @@ func (a *Agent) registerHandlers() {
 		a.handlers[protocol.ActionTerminalClose] = a.handleTerminalClose
 	}
 
+	// Cron commands — Linux-only, but registered unconditionally so a
+	// stub returns a clear error on Windows/macOS instead of "unknown
+	// action".
+	a.handlers[protocol.ActionCronStatus] = a.handleCronStatus
+	a.handlers[protocol.ActionCronList] = a.handleCronList
+	a.handlers[protocol.ActionCronAdd] = a.handleCronAdd
+	a.handlers[protocol.ActionCronRemove] = a.handleCronRemove
+	a.handlers[protocol.ActionCronToggle] = a.handleCronToggle
+
+	// Cloudflared commands — same Linux-only/stub pattern. Auth state
+	// (cert.pem present) is exposed via :status, not via the
+	// capabilities probe, so the panel can distinguish "binary
+	// installed but not logged in" from "not installed at all."
+	a.handlers[protocol.ActionCloudflaredStatus] = a.handleCloudflaredStatus
+	a.handlers[protocol.ActionCloudflaredLogin] = a.handleCloudflaredLogin
+	a.handlers[protocol.ActionCloudflaredTunnelList] = a.handleCloudflaredTunnelList
+	a.handlers[protocol.ActionCloudflaredTunnelCreate] = a.handleCloudflaredTunnelCreate
+	a.handlers[protocol.ActionCloudflaredTunnelRoute] = a.handleCloudflaredTunnelRoute
+	a.handlers[protocol.ActionCloudflaredTunnelDelete] = a.handleCloudflaredTunnelDelete
+
+	// Phase 4 primitives — packages, systemd, exec. Registered
+	// unconditionally so non-Linux agents return a clear error rather
+	// than "unknown action"; the capability probe gates the panel's
+	// target picker so users don't normally hit this on Windows.
+	a.handlers[protocol.ActionPackagesInstall] = a.handlePackagesInstall
+	a.handlers[protocol.ActionPackagesRemove] = a.handlePackagesRemove
+	a.handlers[protocol.ActionPackagesListInstalled] = a.handlePackagesListInstalled
+	a.handlers[protocol.ActionPackagesUpdateCache] = a.handlePackagesUpdateCache
+	a.handlers[protocol.ActionPackagesInstallAsync] = a.handlePackagesInstallAsync
+	a.handlers[protocol.ActionPackagesUpgrade] = a.handlePackagesUpgrade
+	a.handlers[protocol.ActionPackagesSearch] = a.handlePackagesSearch
+	a.handlers[protocol.ActionPackagesInfo] = a.handlePackagesInfo
+	a.handlers[protocol.ActionSystemdStatus] = a.handleSystemdStatus
+	a.handlers[protocol.ActionSystemdStart] = a.handleSystemdStart
+	a.handlers[protocol.ActionSystemdStop] = a.handleSystemdStop
+	a.handlers[protocol.ActionSystemdRestart] = a.handleSystemdRestart
+	a.handlers[protocol.ActionSystemdEnable] = a.handleSystemdEnable
+	a.handlers[protocol.ActionSystemdDisable] = a.handleSystemdDisable
+	a.handlers[protocol.ActionSystemdDaemonReload] = a.handleSystemdDaemonReload
+	a.handlers[protocol.ActionSystemdListUnits] = a.handleSystemdListUnits
+	a.handlers[protocol.ActionSystemdLogs] = a.handleSystemdLogs
+	a.handlers[protocol.ActionSystemdLogsFollow] = a.handleSystemdLogsFollow
+
+	// system:exec is gated on Features.Exec rather than registered
+	// unconditionally — the previous version installed the handler
+	// regardless of the feature flag, which made the flag misleading
+	// (Exec=false still let the panel run any command). The handler
+	// itself enforces this too, but failing fast at registration means
+	// the panel sees a clean "unknown action" instead of a runtime
+	// error and can disable the feature in its UI.
+	if a.cfg.Features.Exec {
+		a.handlers[protocol.ActionSystemExec] = a.handleSystemExec
+	}
+
 	// Agent commands
 	a.handlers[protocol.ActionAgentUpdate] = a.handleAgentUpdate
+	a.handlers[protocol.ActionAgentRecapabilities] = a.handleAgentRecapabilities
+
+	// Runtime version managers (Phase 5). pyenv on Linux,
+	// pyenv-win on Windows. Always registered so pages that probe
+	// runtimes:list can tell "manager not installed" from "unknown
+	// action" — bootstrap then becomes a one-click action.
+	a.handlers[protocol.ActionRuntimesList] = a.handleRuntimesList
+	a.handlers[protocol.ActionRuntimesPyenvBootstrap] = a.handleRuntimesPyenvBootstrap
+	a.handlers[protocol.ActionRuntimesPythonInstalled] = a.handleRuntimesPythonInstalled
+	a.handlers[protocol.ActionRuntimesPythonAvailable] = a.handleRuntimesPythonAvailable
+	a.handlers[protocol.ActionRuntimesPythonInstall] = a.handleRuntimesPythonInstall
+	a.handlers[protocol.ActionRuntimesPythonUninstall] = a.handleRuntimesPythonUninstall
+	a.handlers[protocol.ActionRuntimesPythonSetGlobal] = a.handleRuntimesPythonSetGlobal
+	a.handlers[protocol.ActionRuntimesPythonSetLocal] = a.handleRuntimesPythonSetLocal
+	a.handlers[protocol.ActionRuntimesPythonCurrent] = a.handleRuntimesPythonCurrent
+
+	// GUI SDK — primitives that panel extensions (serverkit-gui, etc.)
+	// compose into desktop-streaming or synthetic-UI features. Always
+	// registered; the SDK reports "none" capability on hosts that can't
+	// capture, so plugins can probe instead of failing.
+	a.handlers[protocol.ActionGUICapabilities] = a.gui.HandleCapabilities
+	a.handlers[protocol.ActionGUIScreenshot] = a.gui.HandleScreenshot
 }
 
 // Run starts the agent
@@ -180,8 +354,21 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("Starting agent",
 		"agent_id", a.cfg.Agent.ID,
 		"version", Version,
-		"features", fmt.Sprintf("docker=%v metrics=%v ipc=%v", a.cfg.Features.Docker, a.cfg.Features.Metrics, a.cfg.IPC.Enabled),
+		"features", fmt.Sprintf("docker=%v metrics=%v ipc=%v exec=%v file_access=%v", a.cfg.Features.Docker, a.cfg.Features.Metrics, a.cfg.IPC.Enabled, a.cfg.Features.Exec, a.cfg.Features.FileAccess),
 	)
+	// Surface insecure-TLS at WARN every startup so a misconfigured
+	// deployment script can't silently disable certificate verification
+	// across every TLS dial in the agent (we have four independent
+	// tls.Configs respecting this env var). The user explicitly opted
+	// in via env var, so don't refuse to start — just make it loud.
+	if os.Getenv("SERVERKIT_INSECURE_TLS") == "true" {
+		a.log.Warn("SERVERKIT_INSECURE_TLS=true: TLS certificate verification is DISABLED for all panel connections; only use this for local development")
+		a.events.Append(events.KindInfo, events.SeverityWarn,
+			"Insecure TLS mode enabled (SERVERKIT_INSECURE_TLS)", nil)
+	}
+	a.events.Append(events.KindServiceStart, events.SeverityInfo,
+		"Agent service started",
+		map[string]interface{}{"version": Version})
 
 	// Verify Docker connection if enabled
 	if a.docker != nil {
@@ -213,11 +400,25 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Start discovery responder
 	go a.discoveryLoop(ctx)
 
+	// Start the desktop-console metrics sampler (1 Hz ring buffer, 5 min)
+	if a.sampler != nil {
+		go a.samplerLoop(ctx)
+	}
+
+	// Watch WS connection state and emit Activity events on transitions.
+	// Polling at 1 Hz is fine — the activity tab is a human-readable
+	// timeline, not a real-time monitor.
+	go a.connectionWatcher(ctx)
+
 	// Wait for context cancellation or restart request
 	select {
 	case <-ctx.Done():
+		a.events.Append(events.KindServiceStop, events.SeverityInfo,
+			"Agent stopping (signal)", nil)
 	case <-a.restartCh:
 		a.log.Info("Restart requested")
+		a.events.Append(events.KindRestartRequested, events.SeverityInfo,
+			"Restart requested via IPC", nil)
 	}
 
 	// Cleanup
@@ -255,6 +456,21 @@ func (a *Agent) discoveryLoop(ctx context.Context) {
 			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 			n, remoteAddr, err := conn.ReadFromUDP(buf)
 			if err != nil {
+				// A read deadline timeout is the normal case (no
+				// inbound discovery this second) — fall through and
+				// wait again. A real socket error (closed FD, ICMP
+				// unreachable storms) used to busy-loop here at
+				// 100% CPU; sleep briefly so the loop doesn't spin
+				// while still being responsive to ctx cancellation.
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue
+				}
+				a.log.Debug("UDP discovery read error", "error", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(250 * time.Millisecond):
+				}
 				continue
 			}
 
@@ -326,6 +542,183 @@ func abs(x int64) int64 {
 		return -x
 	}
 	return x
+}
+
+// connectionWatcher polls the WS connection flag and emits Activity events
+// on each transition. Avoids dragging events.Store into the ws package or
+// adding a new callback API for one consumer.
+//
+// Also doubles as the "send capabilities on connect" hook: each time the
+// transport flips from down→up, we re-ship the capability map so the
+// panel's record stays current after a panel restart.
+//
+// On top of the transition trigger, we also re-send capabilities on a
+// 60-second cadence whenever the transport is up. The transition path
+// is fragile when the WS-then-poll fallback dance briefly raises
+// IsConnected() against a backend that's about to be replaced — the
+// message can land on a transport whose Send() silently drops it
+// (or buffers it forever). Periodic re-sends mean a single missed
+// transition doesn't leave the panel with an empty capability map for
+// the lifetime of the agent process; the worst case is a 60-second
+// gap before the next refresh.
+func (a *Agent) connectionWatcher(ctx context.Context) {
+	transitionTicker := time.NewTicker(1 * time.Second)
+	defer transitionTicker.Stop()
+	// Aggressive cadence for the first minute so a cold-boot agent
+	// populates the panel within ~5s of the first successful transport
+	// connect. Aaron's law: the WS-then-poll fallback dance can land
+	// the transition's send on a backend that's about to be replaced,
+	// and the panel ends up with an empty capability map until the
+	// next steady-state tick fires.
+	resendTicker := time.NewTicker(5 * time.Second)
+	defer resendTicker.Stop()
+	resendTicks := 0
+
+	prev := false
+	first := true
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-resendTicker.C:
+			// Idempotent re-send. The panel's update_capabilities is a
+			// pure overwrite, so re-shipping the same payload costs us
+			// nothing; the panel just rewrites the same row.
+			if a.ws.IsConnected() {
+				a.sendCapabilities()
+				a.sendSystemInfo(ctx)
+			}
+			resendTicks++
+			// After ~60 seconds (12 ticks at 5s), back the cadence off
+			// to once a minute. The first minute is the only window
+			// where transport churn is likely; long-lived connections
+			// don't need the heavier pulse.
+			if resendTicks == 12 {
+				resendTicker.Reset(60 * time.Second)
+			}
+		case <-transitionTicker.C:
+			now := a.ws.IsConnected()
+			if now == prev && !first {
+				continue
+			}
+			first = false
+			if now {
+				a.events.Append(events.KindWSConnected, events.SeverityInfo,
+					"Connected to panel",
+					map[string]interface{}{"url": a.cfg.Server.URL})
+				a.sendCapabilities()
+				a.sendSystemInfo(ctx)
+			} else if prev {
+				// Only log disconnect after we'd previously been up — avoids
+				// a spurious "lost connection" on cold-start before the
+				// first connect ever succeeds.
+				a.events.Append(events.KindWSDisconnected, events.SeverityWarn,
+					"Connection lost", nil)
+			}
+			prev = now
+		}
+	}
+}
+
+// sendSystemInfo collects the host's system info (CPU, memory, disk,
+// hostname, OS, kernel) and pushes it to the panel as a typed
+// SystemInfoMessage so it lands in update_system_info → DB. The agent
+// previously only answered system:info synchronously, which meant the
+// panel never persisted the values — Overview would show "N/A" for
+// CPU/memory/disk whenever the page was loaded against a server whose
+// info hadn't been queried yet (or if the query timed out).
+//
+// Also surfaces the agent's local IPv4 (first non-loopback) so the
+// panel can show *which* host is reporting in, separate from the
+// public IP it sees on the inbound connection.
+func (a *Agent) sendSystemInfo(ctx context.Context) {
+	if a.metrics == nil {
+		return
+	}
+	infoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	info, err := a.metrics.GetSystemInfo(infoCtx)
+	if err != nil || info == nil {
+		a.log.Debug("system info collect failed", "error", err)
+		return
+	}
+	// Build the protocol shape — different field names than the metrics
+	// package's SystemInfo (CPUCores vs CPUThreads, etc.). Send the
+	// most useful subset and let the panel's update_system_info pick
+	// the keys it cares about.
+	payload := protocol.SystemInfoMessage{
+		Message: protocol.NewMessage(protocol.TypeSystemInfo, auth.GenerateNonce()),
+		Info: protocol.SystemInfo{
+			Hostname:      info.Hostname,
+			OS:            info.OS,
+			OSVersion:     info.PlatformVersion,
+			Platform:      info.Platform,
+			Architecture:  info.Architecture,
+			CPUModel:      info.CPUModel,
+			CPUCores:      info.CPUThreads, // surface threads as "cores" — matches the panel's existing column
+			TotalMemory:   info.TotalMemory,
+			TotalDisk:     info.TotalDisk,
+			DockerVersion: a.dockerVersion(),
+			AgentVersion:  Version,
+		},
+	}
+	if err := a.ws.Send(payload); err != nil {
+		a.log.Debug("system info send failed", "error", err)
+	}
+}
+
+// dockerVersion returns the running Docker daemon version, or "" if
+// docker isn't reachable (which the capability probe already
+// surfaces). Best-effort — we don't want a dockerd hiccup to block
+// system_info delivery.
+func (a *Agent) dockerVersion() string {
+	if a.docker == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	v, err := a.docker.Version(ctx)
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+// sendCapabilities ships the cached capability probe to the panel.
+// Failures are logged and ignored — capabilities are best-effort
+// metadata; missing ones just mean an agent doesn't show up in feature
+// pickers until the next reconnect.
+func (a *Agent) sendCapabilities() {
+	a.capMu.Lock()
+	caps := a.capabilities
+	a.capMu.Unlock()
+	msg := protocol.CapabilitiesMessage{
+		Message:         protocol.NewMessage(protocol.TypeCapabilities, auth.GenerateNonce()),
+		Capabilities:    caps.Capabilities,
+		Platform:        caps.Platform,
+		Distro:          caps.Distro,
+		DistroVersion:   caps.DistroVersion,
+		Runtimes:        caps.Runtimes,
+		AllowedPaths:    caps.AllowedPaths,
+		Sudo:            caps.Sudo,
+		RuntimeManagers: caps.RuntimeManagers,
+		SystemdJSON:     caps.SystemdJSON,
+		ProbedAt:        caps.ProbedAt,
+	}
+	a.log.Info("Sending capabilities to panel",
+		"sudo", caps.Sudo,
+		"cap_count", len(caps.Capabilities),
+		"runtime_count", len(caps.Runtimes),
+	)
+	if err := a.ws.Send(msg); err != nil {
+		a.log.Warn("Failed to send capabilities", "error", err)
+		return
+	}
+	a.log.Debug("Sent capabilities to panel",
+		"platform", caps.Platform,
+		"distro", caps.Distro,
+		"sudo", caps.Sudo,
+	)
 }
 
 // heartbeatLoop sends periodic heartbeats
@@ -414,9 +807,11 @@ func (a *Agent) handleCommand(data []byte) {
 		return
 	}
 
-	// Execute command with enforced maximum timeout
+	// Execute command with enforced maximum timeout. The ceiling is
+	// configurable via Security.MaxExecTimeout; resolveMaxExecTimeout
+	// returns the operator's value or the default safety net.
 	start := time.Now()
-	maxTimeout := 5 * time.Minute
+	maxTimeout := a.resolveMaxExecTimeout()
 	cmdTimeout := time.Duration(cmd.Timeout) * time.Millisecond
 
 	if cmdTimeout <= 0 || cmdTimeout > maxTimeout {
@@ -457,6 +852,20 @@ func (a *Agent) handleSubscribe(data []byte) {
 	}
 
 	a.log.Info("Subscribing to channel", "channel", sub.Channel)
+
+	// Replay any buffered events for job channels so a panel that
+	// subscribed mid-flight (or just after the job finished) still sees
+	// the full progress history. Replay before installing the
+	// subscription record so a brand-new "live" event can't get
+	// interleaved before the replay.
+	if job := a.jobs.LookupByChannel(sub.Channel); job != nil {
+		for _, ev := range job.Replay() {
+			if err := a.ws.SendStream(sub.Channel, ev); err != nil {
+				a.log.Warn("Failed to replay job event", "channel", sub.Channel, "error", err)
+				break
+			}
+		}
+	}
 
 	// Create cancellable context for this subscription
 	ctx, cancel := context.WithCancel(context.Background())
@@ -529,8 +938,16 @@ func (a *Agent) streamMetrics(ctx context.Context, channel string) {
 	}
 }
 
-// cleanup performs cleanup on shutdown
-// handleCredentialUpdate handles credential rotation from server
+// handleCredentialUpdate handles credential rotation from server.
+//
+// Before applying the rotation we verify an HMAC over the new
+// credentials computed with the agent's current secret. The session-
+// level WS auth alone is not sufficient: the panel is a large surface
+// and a session token leak (or a panel-side bug that lets an
+// authenticated user cross server boundaries) would otherwise let an
+// attacker rotate any agent's credentials to ones they control. The
+// extra check means an attacker has to also know the agent's current
+// secret — which is exactly what we're trying to protect.
 func (a *Agent) handleCredentialUpdate(data []byte) {
 	var msg protocol.CredentialUpdateMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -539,6 +956,21 @@ func (a *Agent) handleCredentialUpdate(data []byte) {
 	}
 
 	a.log.Info("Received credential update request", "rotation_id", msg.RotationID)
+
+	if err := a.verifyCredentialRotation(msg); err != nil {
+		a.log.Warn("Rejecting credential rotation", "rotation_id", msg.RotationID, "error", err)
+		a.events.Append(events.KindAuthFailed, events.SeverityWarn,
+			"Credential rotation rejected: "+err.Error(),
+			map[string]interface{}{"rotation_id": msg.RotationID})
+		ack := protocol.CredentialUpdateAck{
+			Message:    protocol.NewMessage(protocol.TypeCredentialUpdateAck, auth.GenerateNonce()),
+			RotationID: msg.RotationID,
+			Success:    false,
+			Error:      err.Error(),
+		}
+		a.ws.Send(ack)
+		return
+	}
 
 	// Update authenticator with new credentials
 	a.auth.UpdateCredentials(msg.APIKey, msg.APISecret)
@@ -560,6 +992,35 @@ func (a *Agent) handleCredentialUpdate(data []byte) {
 	}
 
 	a.ws.Send(ack)
+}
+
+// verifyCredentialRotation checks the HMAC the panel attaches to a
+// rotation message against the agent's current secret. Returns nil
+// only when the signature is present, well-formed, and matches.
+//
+// The panel must compute hex(HMAC-SHA256(
+//     "rotation_id:agent_id:new_api_key:new_api_secret",
+//     current_api_secret)).
+func (a *Agent) verifyCredentialRotation(msg protocol.CredentialUpdateMessage) error {
+	if msg.RotationID == "" || msg.APIKey == "" || msg.APISecret == "" {
+		return fmt.Errorf("rotation message missing required fields")
+	}
+	if msg.HMACSig == "" {
+		return fmt.Errorf("rotation message missing hmac signature")
+	}
+	currentSecret := a.auth.GetAPISecret()
+	if currentSecret == "" {
+		return fmt.Errorf("agent has no current secret; refusing to rotate")
+	}
+	payload := fmt.Sprintf("%s:%s:%s:%s",
+		msg.RotationID, a.cfg.Agent.ID, msg.APIKey, msg.APISecret)
+	mac := hmac.New(sha256.New, []byte(currentSecret))
+	mac.Write([]byte(payload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(msg.HMACSig), []byte(expected)) {
+		return fmt.Errorf("hmac signature mismatch")
+	}
+	return nil
 }
 
 // saveCredentials saves new credentials to the key file
@@ -700,13 +1161,20 @@ func (a *Agent) handleDockerContainerLogs(ctx context.Context, params json.RawMe
 	}
 	defer reader.Close()
 
-	// Read logs into buffer
-	buf := make([]byte, 1024*1024) // 1MB max
-	n, _ := reader.Read(buf)
-	logs := string(buf[:n])
+	// Drain the stream up to a 1 MB cap. The previous implementation
+	// did a single Read() and dropped the error — Docker's stream
+	// framing means one Read returns whatever happens to be in the
+	// first chunk (often a few KB), so the panel's "logs" command
+	// got a tiny prefix of the requested tail. io.ReadAll over a
+	// LimitReader gives the panel the full payload it asked for.
+	const maxLogBytes = 1024 * 1024
+	data, err := io.ReadAll(io.LimitReader(reader, maxLogBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read docker logs: %w", err)
+	}
 
 	return map[string]interface{}{
-		"logs": logs,
+		"logs": string(data),
 	}, nil
 }
 
@@ -775,6 +1243,16 @@ func (a *Agent) handleDockerNetworkList(ctx context.Context, params json.RawMess
 	return a.docker.ListNetworks(ctx)
 }
 
+func (a *Agent) handleDockerNetworkRemove(ctx context.Context, params json.RawMessage) (interface{}, error) {
+	var p struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	return map[string]bool{"success": true}, a.docker.RemoveNetwork(ctx, p.ID)
+}
+
 // System command handlers
 
 func (a *Agent) handleSystemMetrics(ctx context.Context, params json.RawMessage) (interface{}, error) {
@@ -789,100 +1267,7 @@ func (a *Agent) handleSystemProcesses(ctx context.Context, params json.RawMessag
 	return a.metrics.ListProcesses(ctx)
 }
 
-// File command handlers
-
-func (a *Agent) handleFileRead(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-	if p.Path == "" {
-		return nil, fmt.Errorf("path is required")
-	}
-
-	data, err := os.ReadFile(p.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	return map[string]interface{}{
-		"path":    p.Path,
-		"content": base64.StdEncoding.EncodeToString(data),
-		"size":    len(data),
-	}, nil
-}
-
-func (a *Agent) handleFileWrite(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p struct {
-		Path    string `json:"path"`
-		Content string `json:"content"` // base64 encoded
-		Mode    uint32 `json:"mode"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-	if p.Path == "" {
-		return nil, fmt.Errorf("path is required")
-	}
-
-	data, err := base64.StdEncoding.DecodeString(p.Content)
-	if err != nil {
-		return nil, fmt.Errorf("invalid base64 content: %w", err)
-	}
-
-	mode := os.FileMode(0644)
-	if p.Mode != 0 {
-		mode = os.FileMode(p.Mode)
-	}
-
-	if err := os.WriteFile(p.Path, data, mode); err != nil {
-		return nil, fmt.Errorf("failed to write file: %w", err)
-	}
-
-	return map[string]interface{}{
-		"success": true,
-		"path":    p.Path,
-		"size":    len(data),
-	}, nil
-}
-
-func (a *Agent) handleFileList(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-	if p.Path == "" {
-		p.Path = "/"
-	}
-
-	entries, err := os.ReadDir(p.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list directory: %w", err)
-	}
-
-	var files []map[string]interface{}
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		files = append(files, map[string]interface{}{
-			"name":     entry.Name(),
-			"is_dir":   entry.IsDir(),
-			"size":     info.Size(),
-			"modified": info.ModTime().UnixMilli(),
-		})
-	}
-
-	return map[string]interface{}{
-		"path":  p.Path,
-		"files": files,
-	}, nil
-}
+// File command handlers live in file_handlers.go.
 
 // Docker Compose command handlers
 
@@ -897,6 +1282,9 @@ func (a *Agent) handleDockerComposePs(ctx context.Context, params json.RawMessag
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if err := a.validateFileAccess(p.ProjectPath); err != nil {
+		return nil, err
+	}
 	return a.docker.ComposePsProject(ctx, p.ProjectPath)
 }
 
@@ -908,6 +1296,9 @@ func (a *Agent) handleDockerComposeUp(ctx context.Context, params json.RawMessag
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if err := a.validateFileAccess(p.ProjectPath); err != nil {
+		return nil, err
 	}
 
 	// Default to detached mode
@@ -939,6 +1330,9 @@ func (a *Agent) handleDockerComposeDown(ctx context.Context, params json.RawMess
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if err := a.validateFileAccess(p.ProjectPath); err != nil {
+		return nil, err
+	}
 
 	output, err := a.docker.ComposeDown(ctx, p.ProjectPath, p.Volumes, p.RemoveOrphans)
 	if err != nil {
@@ -964,6 +1358,9 @@ func (a *Agent) handleDockerComposeLogs(ctx context.Context, params json.RawMess
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if err := a.validateFileAccess(p.ProjectPath); err != nil {
+		return nil, err
+	}
 
 	// Default tail to 100
 	if p.Tail == 0 {
@@ -988,6 +1385,9 @@ func (a *Agent) handleDockerComposeRestart(ctx context.Context, params json.RawM
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if err := a.validateFileAccess(p.ProjectPath); err != nil {
+		return nil, err
+	}
 
 	output, err := a.docker.ComposeRestart(ctx, p.ProjectPath, p.Service)
 	if err != nil {
@@ -1011,6 +1411,9 @@ func (a *Agent) handleDockerComposePull(ctx context.Context, params json.RawMess
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if err := a.validateFileAccess(p.ProjectPath); err != nil {
+		return nil, err
 	}
 
 	output, err := a.docker.ComposePull(ctx, p.ProjectPath, p.Service)
@@ -1193,6 +1596,7 @@ func (a *Agent) GetStatus() ipc.AgentStatus {
 		ServerURL:  a.cfg.Server.URL,
 		Uptime:     int64(time.Since(a.startTime).Seconds()),
 		Version:    Version,
+		Transport:  string(a.ws.Mode()),
 	}
 
 	// Collect current metrics if available
@@ -1254,6 +1658,40 @@ func (a *Agent) GetDetailedMetrics() *ipc.DetailedMetrics {
 		},
 		Timestamp: time.Now().UnixMilli(),
 	}
+}
+
+// GetMetricsHistory returns the recent CPU/memory ring buffer for the
+// desktop console's sparkline charts. Returns an empty slice (not nil) when
+// metrics are disabled or the sampler hasn't run yet, so the JSON shape
+// stays stable.
+func (a *Agent) GetMetricsHistory() []ipc.MetricSample {
+	if a.sampler == nil {
+		return []ipc.MetricSample{}
+	}
+	return a.sampler.snapshot()
+}
+
+// GetEvents returns recent activity events newer than `since` (unix ms).
+// Pass 0 to get all events currently held in the ring buffer.
+func (a *Agent) GetEvents(since int64) []events.Event {
+	if a.events == nil {
+		return []events.Event{}
+	}
+	return a.events.Snapshot(since)
+}
+
+// ClearLogs rotates agent.log so the desktop console can start with a
+// clean tail. Existing content moves to an automatic backup file. Records
+// the action in the activity log so the user has an audit trail.
+func (a *Agent) ClearLogs() error {
+	if err := a.log.Rotate(); err != nil {
+		return err
+	}
+	if a.events != nil {
+		a.events.Append(events.KindInfo, events.SeverityInfo,
+			"Logs cleared from console", nil)
+	}
+	return nil
 }
 
 // GetConnectionInfo returns WebSocket connection information for the IPC API

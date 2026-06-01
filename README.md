@@ -98,9 +98,13 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 ### 🖥️ Multi-Server Management
 
-**Agent-Based Architecture** — Go agent with HMAC-SHA256 authentication and real-time WebSocket gateway
+**Agent-Based Architecture** — Cross-platform Go agent (Linux, Windows, macOS) with HMAC-SHA256 authentication and a real-time WebSocket gateway (with HTTP-poll fallback). Native Windows service + MSI installer, plus `.deb`/`.rpm` and ARM64 builds. See [agent/README.md](agent/README.md).
 
-**Fleet Management** — Agent lifecycle control with version rollouts, approval queue, network discovery, and command queue
+**Fleet Management** — Agent inventory, connection status, approval queue, rollouts, LAN auto-discovery (UDP), and command queue
+
+**Windows Desktop Agent** — Native Windows service plus an optional desktop app: WebView2 console, system-tray controls, and a guided pairing wizard for one-click enrollment
+
+**Agent Enrollment** — Two ways to adopt a server: a secure short-code pairing flow (type a rotating code + passphrase into the panel and verify the key fingerprint) or a pre-shared registration token; host credentials are stored AES-GCM-encrypted. See [docs/pairing.md](docs/pairing.md)
 
 **Fleet Monitor** — Cross-server heatmaps, metric comparison charts, alert thresholds, anomaly detection, and capacity forecasting
 
@@ -108,7 +112,7 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 **Server Templates** — Configuration templates with compliance tracking, drift detection, and auto-remediation
 
-**Remote Docker** — Manage containers, images, volumes, networks, and Compose projects across all servers
+**Remote Docker** — Agent-backed Docker operations for connected servers; remote app/site deployment is still evolving
 
 **API Key Rotation** — Secure credential rotation with acknowledgment handshake
 
@@ -166,7 +170,7 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 curl -fsSL https://serverkit.ai/install.sh | bash
 ```
 
-> Works on Ubuntu 22.04+ and Debian 12+. Sets up everything automatically.
+> Works on Ubuntu 22.04+, Debian 12+, Fedora, and RHEL/Rocky/AlmaLinux 9+. Sets up everything automatically.
 
 ### Option 2: Docker
 
@@ -280,7 +284,7 @@ See the [Installation Guide](docs/INSTALLATION.md) for step-by-step instructions
 - [x] Monitoring & alerts — Metrics, webhooks, uptime tracking
 - [x] Security — 2FA, ClamAV, file integrity, Fail2ban, Lynis
 - [x] Firewall — UFW/firewalld integration
-- [x] Multi-server management — Go agent, centralized dashboard
+- [x] Multi-server monitoring — Go agent, centralized dashboard
 - [x] Git deployment — Webhooks, auto-deploy, rollback, zero-downtime
 - [x] Backup & restore — S3, Backblaze B2, scheduled backups
 - [x] Email server — Postfix, Dovecot, DKIM/SPF/DMARC, Roundcube
@@ -290,6 +294,7 @@ See the [Installation Guide](docs/INSTALLATION.md) for step-by-step instructions
 - [x] Database migrations — Flask-Migrate/Alembic, versioned schema
 - [x] Agent fleet management — Version rollouts, approval queue, discovery, command queue
 - [x] Cross-server monitoring — Fleet heatmaps, comparison charts, anomaly detection, capacity forecasting
+- [ ] Remote app/site deployment through connected agents
 - [x] Agent plugin system — Extensible agent with capabilities, permissions, per-server install
 - [x] Server templates & config sync — Drift detection, compliance dashboards, auto-remediation
 - [x] Multi-tenancy — Workspaces with quotas, member management, isolation
@@ -309,7 +314,10 @@ Full details: [ROADMAP.md](ROADMAP.md)
 | [Architecture](docs/ARCHITECTURE.md) | System design, request flow, diagrams |
 | [Installation Guide](docs/INSTALLATION.md) | Complete setup instructions |
 | [Deployment Guide](docs/DEPLOYMENT.md) | CLI commands and production deployment |
+| [Agent](agent/README.md) | Install & run the multi-server agent (Linux/Windows/macOS) |
+| [Agent Pairing](docs/pairing.md) | Secure short-code agent enrollment |
 | [API Reference](docs/API.md) | REST API endpoints |
+| [Changelog](CHANGELOG.md) | Release history and notable changes |
 | [Roadmap](ROADMAP.md) | Development roadmap and planned features |
 | [Contributing](CONTRIBUTING.md) | How to contribute |
 

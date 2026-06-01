@@ -471,6 +471,247 @@ class TemplateService:
         return {'success': False, 'error': 'Template not found'}
 
     @classmethod
+    def build_install_plan(cls, template_id: str, app_name: str,
+                           user_variables: Dict = None, user_id: int = None,
+                           server_id: str = None) -> Dict:
+        """Build a reusable deployment plan for installing a template.
+
+        The returned plan can be executed locally or by a connected agent.
+        """
+        result = cls.get_template(template_id)
+        if not result.get('success'):
+            return result
+
+        template = result['template']
+        variables_result = cls._prepare_install_variables(
+            template_id,
+            template,
+            app_name,
+            user_variables or {},
+        )
+        if not variables_result.get('success'):
+            return variables_result
+
+        variables = variables_result['variables']
+        app_path = os.path.join(cls.INSTALLED_DIR, app_name)
+        compose_file = os.path.join(app_path, 'docker-compose.yml')
+
+        compose_result = cls._render_compose_and_files(template, variables, app_path)
+        if not compose_result.get('success'):
+            return compose_result
+
+        install_info = {
+            'template_id': template_id,
+            'template_version': template.get('version'),
+            'template_name': template.get('name'),
+            'installed_at': datetime.now().isoformat(),
+            'variables': variables,
+            'user_id': user_id,
+            'server_id': server_id,
+        }
+
+        env_content = ''.join(f"{key}={value}\n" for key, value in variables.items())
+
+        app_port = None
+        for port_var in ['PORT', 'HTTP_PORT', 'WEB_PORT']:
+            if port_var in variables:
+                try:
+                    app_port = int(variables[port_var])
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+        files = [
+            {
+                'path': compose_file,
+                'content': compose_result['compose_content'],
+                'mode': 0o644,
+            },
+            {
+                'path': os.path.join(app_path, '.serverkit-template.json'),
+                'content': json.dumps(install_info, indent=2),
+                'mode': 0o600,
+            },
+            {
+                'path': os.path.join(app_path, '.env'),
+                'content': env_content,
+                'mode': 0o600,
+            },
+        ]
+        files.extend(compose_result.get('files', []))
+
+        steps = []
+        for file_def in files:
+            steps.append({
+                'type': 'file.write',
+                'name': f"Write {os.path.basename(file_def['path'])}",
+                'path': file_def['path'],
+                'content': file_def['content'],
+                'mode': file_def.get('mode', 0o644),
+                'create_dirs': True,
+            })
+
+        steps.append({
+            'type': 'docker.compose.up',
+            'name': 'Start Docker Compose stack',
+            'project_dir': app_path,
+            'compose_file': compose_file,
+            'detach': True,
+            'build': True,
+            'timeout': 300,
+        })
+        steps.append({
+            'type': 'sleep',
+            'name': 'Wait for containers to initialize',
+            'seconds': 3,
+        })
+        steps.append({
+            'type': 'docker.compose.ps',
+            'name': 'Capture container status',
+            'project_dir': app_path,
+            'compose_file': compose_file,
+            'timeout': 30,
+        })
+
+        return {
+            'success': True,
+            'plan': {
+                'kind': 'template_install',
+                'template_id': template_id,
+                'template_name': template.get('name'),
+                'template_version': template.get('version'),
+                'app_name': app_name,
+                'app_path': app_path,
+                'compose_file': compose_file,
+                'variables': variables,
+                'port': app_port,
+                'server_id': server_id,
+                'steps': steps,
+            },
+            'template': template,
+            'variables': variables,
+            'app_path': app_path,
+            'port': app_port,
+        }
+
+    @classmethod
+    def _prepare_install_variables(cls, template_id: str, template: Dict,
+                                    app_name: str, user_variables: Dict) -> Dict:
+        """Prepare template variables for installation."""
+        variables = {
+            'APP_NAME': app_name,
+        }
+        template_vars = template.get('variables', {})
+
+        if isinstance(template_vars, list):
+            template_vars = {v['name']: v for v in template_vars if isinstance(v, dict) and 'name' in v}
+
+        for var_name, var_config in template_vars.items():
+            var_type = var_config.get('type', 'string')
+
+            if var_type == 'port':
+                variables[var_name] = cls.generate_value(var_config)
+            elif user_variables and var_name in user_variables and user_variables[var_name]:
+                variables[var_name] = user_variables[var_name]
+            elif var_config.get('required', False) and var_name not in user_variables:
+                return {'success': False, 'error': f"Required variable not provided: {var_name}"}
+            else:
+                variables[var_name] = cls.generate_value(var_config)
+
+        if template_id == 'wordpress-external-db':
+            db_check = cls.validate_mysql_connection(
+                host=variables.get('DB_HOST'),
+                port=variables.get('DB_PORT', '3306'),
+                user=variables.get('DB_USER'),
+                password=variables.get('DB_PASSWORD'),
+                database=variables.get('DB_NAME')
+            )
+            if not db_check.get('success'):
+                return {
+                    'success': False,
+                    'error': f"Database connection failed: {db_check.get('error')}"
+                }
+
+        return {'success': True, 'variables': variables}
+
+    @classmethod
+    def _render_compose_and_files(cls, template: Dict, variables: Dict, app_path: str) -> Dict:
+        """Render compose YAML and any template-defined files in memory."""
+        try:
+            compose = cls.substitute_in_dict(template.get('compose', {}), variables)
+            if 'version' in compose:
+                del compose['version']
+
+            rendered_files = []
+            bind_mounts = []
+
+            for file_def in template.get('files', []) or []:
+                container_path = file_def.get('path')
+                content = file_def.get('content', '')
+                if not container_path:
+                    continue
+
+                content = cls.substitute_variables(content, variables)
+                filename = os.path.basename(container_path)
+                rendered_files.append({
+                    'path': os.path.join(app_path, filename),
+                    'content': content,
+                    'mode': int(file_def.get('mode', 0o644)),
+                })
+                bind_mounts.append({
+                    'local': f'./{filename}',
+                    'container': container_path,
+                    'container_dir': os.path.dirname(container_path),
+                })
+
+            if bind_mounts:
+                cls._apply_bind_mounts_to_compose(compose, bind_mounts)
+
+            return {
+                'success': True,
+                'compose_content': yaml.dump(compose, default_flow_style=False, sort_keys=False),
+                'files': rendered_files,
+            }
+        except Exception as e:
+            return {'success': False, 'error': f'Failed to render template: {str(e)}'}
+
+    @classmethod
+    def _apply_bind_mounts_to_compose(cls, compose: Dict, bind_mounts: List[Dict]) -> None:
+        """Apply file bind mounts to a compose dictionary."""
+        volumes_to_remove = set()
+
+        for service in compose.get('services', {}).values():
+            volumes = service.get('volumes', [])
+            new_volumes = []
+
+            for vol in volumes:
+                if isinstance(vol, str):
+                    parts = vol.split(':')
+                    if len(parts) >= 2:
+                        mount_target = parts[1].rstrip('/')
+                        should_replace = any(
+                            mount_target == mount['container_dir'].rstrip('/')
+                            for mount in bind_mounts
+                        )
+                        if should_replace:
+                            volumes_to_remove.add(parts[0])
+                            continue
+                new_volumes.append(vol)
+
+            for mount in bind_mounts:
+                bind_mount = f"{mount['local']}:{mount['container']}"
+                if bind_mount not in new_volumes:
+                    new_volumes.append(bind_mount)
+
+            service['volumes'] = new_volumes
+
+        if 'volumes' in compose:
+            for volume_name in volumes_to_remove:
+                compose['volumes'].pop(volume_name, None)
+            if not compose['volumes']:
+                del compose['volumes']
+
+    @classmethod
     def install_template(cls, template_id: str, app_name: str,
                         user_variables: Dict = None, user_id: int = None) -> Dict:
         """Install a template as a new application."""

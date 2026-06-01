@@ -16,11 +16,21 @@ import (
 	"github.com/serverkit/agent/internal/auth"
 	"github.com/serverkit/agent/internal/config"
 	"github.com/serverkit/agent/internal/logger"
+	"github.com/serverkit/agent/internal/transport"
 	"github.com/serverkit/agent/pkg/protocol"
 )
 
-// MessageHandler is called when a message is received
-type MessageHandler func(msgType protocol.MessageType, data []byte)
+// Version is the agent version string surfaced in the User-Agent
+// header. Defaults to "dev"; main.go's init() mirrors the ldflags-set
+// main.Version into this when a release build runs.
+var Version = "dev"
+
+func agentVersion() string { return Version }
+
+// MessageHandler is the callback fired on inbound packets. Aliased to the
+// transport package so ws.Client implements transport.Transport without
+// adapter glue.
+type MessageHandler = transport.MessageHandler
 
 // Client is a Socket.IO client with auto-reconnect
 type Client struct {
@@ -34,6 +44,8 @@ type Client struct {
 	mu            sync.RWMutex
 	connected     bool
 	reconnecting  bool
+	lastErr       error
+	everConnected bool
 
 	sendCh        chan []byte
 	doneCh        chan struct{}
@@ -105,8 +117,18 @@ func (c *Client) Connect(ctx context.Context) error {
 		return err
 	}
 
+	// Compression default: off. Some tunnel intermediaries (free-tier ngrok,
+	// trycloudflare.com quick tunnels) corrupt compressed WebSocket frames —
+	// gorilla then rejects them with "RSV1 set, FIN not set on control". The
+	// env var override exists for users behind a *permanent* cf tunnel or a
+	// reverse proxy that handles WS compression cleanly: setting
+	// SERVERKIT_WS_COMPRESSION=true makes the agent negotiate permessage-
+	// deflate, which is necessary if the panel/proxy unconditionally sends
+	// compressed frames regardless of negotiation.
+	enableCompression := os.Getenv("SERVERKIT_WS_COMPRESSION") == "true"
 	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
+		HandshakeTimeout:  10 * time.Second,
+		EnableCompression: enableCompression,
 	}
 
 	// Only allow insecure TLS when explicitly set via environment variable
@@ -118,7 +140,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	headers := http.Header{}
 	headers.Set("X-Agent-ID", c.auth.AgentID())
 	headers.Set("X-API-Key-Prefix", c.auth.GetAPIKeyPrefix())
-	headers.Set("User-Agent", fmt.Sprintf("ServerKit-Agent/%s", "dev"))
+	headers.Set("User-Agent", fmt.Sprintf("ServerKit-Agent/%s", agentVersion()))
+	// Bypass ngrok's interstitial / browser-warning behaviour for free-tier
+	// tunnels. Harmless when the panel isn't behind ngrok.
+	headers.Set("ngrok-skip-browser-warning", "true")
 
 	c.log.Debug("Connecting to Socket.IO", "url", sioURL)
 
@@ -140,6 +165,17 @@ func (c *Client) Connect(ctx context.Context) error {
 	// Step 1: Read Engine.IO OPEN packet
 	if err := c.handleEngineIOOpen(); err != nil {
 		conn.Close()
+		// "RSV1 set, FIN not set on control" is the classic signature of a
+		// tunnel intermediary (cf quick tunnels, free-tier ngrok) injecting
+		// or corrupting WebSocket compression. The user can't fix the panel
+		// from the agent side — the only useful action is "try a different
+		// transport." Surface that explicitly so the error stops being
+		// cryptic.
+		if strings.Contains(err.Error(), "RSV1 set") {
+			c.log.Error("WebSocket frame compression conflict — likely caused by the tunnel between agent and panel",
+				"hint", "try SERVERKIT_WS_COMPRESSION=true, or switch from a Cloudflare quick tunnel (*.trycloudflare.com) to a permanent named tunnel, or front the panel with a direct HTTPS reverse proxy",
+			)
+		}
 		return fmt.Errorf("engine.io handshake failed: %w", err)
 	}
 
@@ -393,39 +429,79 @@ func (c *Client) Run(ctx context.Context) error {
 		if !connected {
 			if err := c.Connect(ctx); err != nil {
 				c.log.Warn("Connection failed", "error", err)
+				c.mu.Lock()
+				c.lastErr = err
+				c.mu.Unlock()
 				c.handleReconnect(ctx)
 				continue
 			}
+			c.mu.Lock()
+			c.everConnected = true
+			c.lastErr = nil
+			c.mu.Unlock()
 		}
 
-		// Start read/write/ping loops
+		// Per-iteration ctx so we can cancel readLoop/writeLoop/pingLoop
+		// together when any one of them errors. The previous code only
+		// read the first error off errCh and let the other two
+		// goroutines leak until the next reconnect's conn.Close
+		// happened to cause a read error in them — every flap leaked
+		// goroutines that, in tunnel-flap scenarios, accumulated
+		// quickly. With per-iteration cancellation each connection
+		// owns exactly three goroutines for its lifetime.
+		loopCtx, cancelLoop := context.WithCancel(ctx)
 		errCh := make(chan error, 3)
 
+		var wg sync.WaitGroup
+		wg.Add(3)
 		go func() {
-			errCh <- c.readLoop(ctx)
+			defer wg.Done()
+			errCh <- c.readLoop(loopCtx)
 		}()
-
 		go func() {
-			errCh <- c.writeLoop(ctx)
+			defer wg.Done()
+			errCh <- c.writeLoop(loopCtx)
 		}()
-
 		go func() {
-			errCh <- c.pingLoop(ctx)
+			defer wg.Done()
+			errCh <- c.pingLoop(loopCtx)
 		}()
 
 		// Wait for error
 		err := <-errCh
 		c.log.Warn("Connection loop ended", "error", err)
 
-		// Mark as disconnected
+		// Mark as disconnected before draining sendCh so any
+		// concurrent Send() callers see the disconnected state and
+		// fail fast rather than queueing onto a buffer about to
+		// be flushed.
 		c.mu.Lock()
 		c.connected = false
 		c.mu.Unlock()
 
-		// Close connection
+		// Cancel siblings and close the conn so readLoop unblocks
+		// from its read deadline. Then wait for both siblings to
+		// drain their error onto errCh — leaving them running was
+		// the goroutine leak.
+		cancelLoop()
 		if c.conn != nil {
 			c.conn.Close()
 		}
+		wg.Wait()
+		// Drain the remaining errCh entries so the channel doesn't
+		// retain references to err values.
+		for len(errCh) > 0 {
+			<-errCh
+		}
+
+		// Drain stale messages buffered while the previous connection
+		// was already failing. Replaying these on a fresh session
+		// would ship heartbeats/results from a dead WS to a new auth
+		// context — and worse, if the buffer ever filled mid-flap,
+		// every subsequent Send() would return "send channel full"
+		// permanently. Replace the channel with a fresh one so we
+		// also drop any blocked senders cleanly.
+		c.drainSendCh()
 
 		// Check if context is cancelled
 		select {
@@ -437,8 +513,44 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 }
 
+// drainSendCh empties any pending outbound messages from the previous
+// connection. Called after a disconnect so we don't ship stale frames
+// (heartbeats, command results) on the next session — they were
+// computed against the old auth context and the panel will either
+// reject them or attribute them to the wrong session window.
+func (c *Client) drainSendCh() {
+	for {
+		select {
+		case <-c.sendCh:
+		default:
+			return
+		}
+	}
+}
+
 // readLoop reads Socket.IO messages from the WebSocket
 func (c *Client) readLoop(ctx context.Context) error {
+	// Read deadline = pingInterval * 2.5 + 5s grace. Any inbound message
+	// (server ping, app frame, WS-level pong) resets the deadline. If
+	// nothing arrives within this window, the connection is presumed
+	// dead at the network layer and the read errors out, which is what
+	// the Manager's flap detector relies on. Without this, CF/ngrok
+	// killing the connection at the network layer (without sending a
+	// WS close frame) makes ReadMessage hang for minutes — exactly the
+	// "ws_disconnected every 2-3 min" pattern in the user's events.json.
+	readWait := c.pingInterval*5/2 + 5*time.Second
+	if readWait < 30*time.Second {
+		readWait = 30 * time.Second
+	}
+	resetDeadline := func() {
+		_ = c.conn.SetReadDeadline(time.Now().Add(readWait))
+	}
+	resetDeadline()
+	c.conn.SetPongHandler(func(string) error {
+		resetDeadline()
+		return nil
+	})
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -450,6 +562,8 @@ func (c *Client) readLoop(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read error: %w", err)
 		}
+		// Any successful read = liveness signal. Reset the window.
+		resetDeadline()
 
 		msgStr := string(msg)
 
@@ -595,6 +709,16 @@ func (c *Client) handleReconnect(ctx context.Context) {
 
 // Send queues a message for sending
 func (c *Client) Send(msg interface{}) error {
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		// Refuse to queue when there's nothing draining the channel.
+		// Otherwise a backlog accumulates while the agent is offline
+		// and floods the panel on reconnect with stale heartbeats.
+		return fmt.Errorf("not connected")
+	}
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
@@ -691,6 +815,30 @@ func (c *Client) Close() error {
 }
 
 // Session returns the current session token
+// Mode reports this transport as WS so consumers (UI, log lines) can
+// distinguish from the polling fallback.
+func (c *Client) Mode() transport.Mode { return transport.ModeWS }
+
+// LastError returns the most recent connect or runloop error, or nil
+// when healthy. Used by the transport manager to decide whether to fall
+// back to polling — specifically, RSV1/handshake errors indicate a
+// tunnel intermediary that won't ever let WS through and we shouldn't
+// keep retrying the same dial.
+func (c *Client) LastError() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.lastErr
+}
+
+// EverConnected reports whether the client has successfully completed a
+// handshake at least once during this Run. False after several seconds
+// is the strongest signal that WS won't ever work for this network.
+func (c *Client) EverConnected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.everConnected
+}
+
 func (c *Client) Session() *auth.SessionToken {
 	return c.session
 }

@@ -44,9 +44,14 @@ export async function pingServer(id) {
 }
 
 // Server Registration
-export async function generateRegistrationToken(serverId) {
+//
+// Optionally pass { expires_in } to control token lifetime in seconds.
+// -1 means "never expires"; missing means the panel default (7 days).
+// Response includes connection_string + registration_token + registration_expires.
+export async function generateRegistrationToken(serverId, body = {}) {
     return this.request(`/servers/${serverId}/regenerate-token`, {
-        method: 'POST'
+        method: 'POST',
+        body
     });
 }
 
@@ -146,8 +151,20 @@ export async function getRemoteVolumes(serverId) {
     return this.request(`/servers/${serverId}/docker/volumes`);
 }
 
+export async function removeRemoteVolume(serverId, volumeName, force = false) {
+    return this.request(`/servers/${serverId}/docker/volumes/${encodeURIComponent(volumeName)}?force=${force}`, {
+        method: 'DELETE'
+    });
+}
+
 export async function getRemoteNetworks(serverId) {
     return this.request(`/servers/${serverId}/docker/networks`);
+}
+
+export async function removeRemoteNetwork(serverId, networkId) {
+    return this.request(`/servers/${serverId}/docker/networks/${encodeURIComponent(networkId)}`, {
+        method: 'DELETE'
+    });
 }
 
 export async function getRemoteSystemMetrics(serverId) {
@@ -156,6 +173,239 @@ export async function getRemoteSystemMetrics(serverId) {
 
 export async function getRemoteSystemInfo(serverId) {
     return this.request(`/servers/${serverId}/system/info`);
+}
+
+// Remote Cron Operations (via agent)
+export async function getRemoteCronStatus(serverId) {
+    return this.request(`/servers/${serverId}/cron/status`);
+}
+
+export async function getRemoteCronJobs(serverId) {
+    return this.request(`/servers/${serverId}/cron/jobs`);
+}
+
+export async function addRemoteCronJob(serverId, body) {
+    return this.request(`/servers/${serverId}/cron/jobs`, {
+        method: 'POST',
+        body
+    });
+}
+
+export async function removeRemoteCronJob(serverId, jobId) {
+    return this.request(`/servers/${serverId}/cron/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'DELETE'
+    });
+}
+
+export async function toggleRemoteCronJob(serverId, jobId, enabled) {
+    return this.request(`/servers/${serverId}/cron/jobs/${encodeURIComponent(jobId)}/toggle`, {
+        method: 'POST',
+        body: { enabled }
+    });
+}
+
+// Remote Capabilities
+
+// Asks the agent to re-run its capability probe and pushes the
+// refreshed payload back. Used after the user installs a runtime,
+// configures sudoers, or adds a new package manager so feature tabs
+// light up without restarting the agent service.
+export async function refreshRemoteCapabilities(serverId) {
+    return this.request(`/servers/${serverId}/refresh-capabilities`, {
+        method: 'POST'
+    });
+}
+
+// Remote Packages (via agent)
+//
+// install / upgrade are streaming: the panel returns
+// { jobId, channel } and the frontend subscribes to the matching
+// Socket.IO room (server_<id>_<channel>) for live install output.
+
+export async function getRemotePackages(serverId) {
+    return this.request(`/servers/${serverId}/packages`);
+}
+
+export async function searchRemotePackages(serverId, query, limit = 100) {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    return this.request(`/servers/${serverId}/packages/search?${params.toString()}`);
+}
+
+export async function getRemotePackageInfo(serverId, name) {
+    return this.request(`/servers/${serverId}/packages/info/${encodeURIComponent(name)}`);
+}
+
+export async function updateRemotePackageCache(serverId) {
+    return this.request(`/servers/${serverId}/packages/update-cache`, {
+        method: 'POST'
+    });
+}
+
+export async function installRemotePackages(serverId, names) {
+    return this.request(`/servers/${serverId}/packages/install`, {
+        method: 'POST',
+        body: { names: Array.isArray(names) ? names : [names] }
+    });
+}
+
+export async function removeRemotePackage(serverId, name) {
+    return this.request(`/servers/${serverId}/packages/remove`, {
+        method: 'POST',
+        body: { name }
+    });
+}
+
+export async function upgradeRemotePackages(serverId, { names = null, all = false } = {}) {
+    const body = {};
+    if (all) body.all = true;
+    if (names && names.length) body.names = names;
+    return this.request(`/servers/${serverId}/packages/upgrade`, {
+        method: 'POST',
+        body
+    });
+}
+
+// Remote Services (systemd)
+
+export async function getRemoteServices(serverId, { state = null, type = 'service' } = {}) {
+    const params = new URLSearchParams({ type });
+    if (state) params.set('state', state);
+    return this.request(`/servers/${serverId}/services?${params.toString()}`);
+}
+
+export async function getRemoteServiceStatus(serverId, unit) {
+    return this.request(`/servers/${serverId}/services/${encodeURIComponent(unit)}`);
+}
+
+export async function controlRemoteService(serverId, unit, action) {
+    return this.request(`/servers/${serverId}/services/${encodeURIComponent(unit)}/${action}`, {
+        method: 'POST'
+    });
+}
+
+export async function getRemoteServiceLogs(serverId, unit, lines = 200) {
+    const params = new URLSearchParams({ lines: String(lines) });
+    return this.request(`/servers/${serverId}/services/${encodeURIComponent(unit)}/logs?${params.toString()}`);
+}
+
+export async function reloadRemoteSystemdDaemon(serverId) {
+    return this.request(`/servers/${serverId}/services/daemon-reload`, {
+        method: 'POST'
+    });
+}
+
+// Remote Runtimes (pyenv / pyenv-win)
+//
+// pyenvBootstrap and installPythonVersion are streaming: returned
+// payload contains { jobId, channel } and the frontend subscribes via
+// the same Socket.IO room pattern as installRemotePackages.
+
+export async function getRemoteRuntimes(serverId) {
+    return this.request(`/servers/${serverId}/runtimes`);
+}
+
+export async function bootstrapRemotePyenv(serverId) {
+    return this.request(`/servers/${serverId}/runtimes/pyenv/bootstrap`, {
+        method: 'POST'
+    });
+}
+
+export async function getRemotePythonVersions(serverId) {
+    return this.request(`/servers/${serverId}/runtimes/python`);
+}
+
+export async function getRemotePythonAvailable(serverId) {
+    return this.request(`/servers/${serverId}/runtimes/python/available`);
+}
+
+export async function getRemotePythonCurrent(serverId) {
+    return this.request(`/servers/${serverId}/runtimes/python/current`);
+}
+
+export async function installRemotePythonVersion(serverId, version) {
+    return this.request(`/servers/${serverId}/runtimes/python/install`, {
+        method: 'POST',
+        body: { version }
+    });
+}
+
+export async function uninstallRemotePythonVersion(serverId, version) {
+    return this.request(`/servers/${serverId}/runtimes/python/uninstall`, {
+        method: 'POST',
+        body: { version }
+    });
+}
+
+export async function setRemotePythonGlobal(serverId, version) {
+    return this.request(`/servers/${serverId}/runtimes/python/global`, {
+        method: 'POST',
+        body: { version }
+    });
+}
+
+export async function setRemotePythonLocal(serverId, version, dir) {
+    return this.request(`/servers/${serverId}/runtimes/python/local`, {
+        method: 'POST',
+        body: { version, dir }
+    });
+}
+
+// Remote Files (via agent)
+export async function getRemoteAllowedPaths(serverId) {
+    return this.request(`/servers/${serverId}/files/allowed-paths`);
+}
+
+export async function browseRemoteFiles(serverId, path) {
+    return this.request(`/servers/${serverId}/files/browse?path=${encodeURIComponent(path)}`);
+}
+
+export async function readRemoteFile(serverId, path) {
+    return this.request(`/servers/${serverId}/files/read?path=${encodeURIComponent(path)}`);
+}
+
+export async function writeRemoteFile(serverId, path, content) {
+    return this.request(`/servers/${serverId}/files/write`, {
+        method: 'POST',
+        body: { path, content }
+    });
+}
+
+// Remote Cloudflared (Tunnels)
+export async function getRemoteCloudflaredStatus(serverId) {
+    return this.request(`/servers/${serverId}/cloudflared/status`);
+}
+
+// Triggers `cloudflared tunnel login` on the agent. Returns
+// {job_id, channel}; subscribe via JobProgressModal to receive the
+// auth URL, then watch for the done event when cert.pem lands.
+export async function startRemoteCloudflaredLogin(serverId) {
+    return this.request(`/servers/${serverId}/cloudflared/login`, {
+        method: 'POST'
+    });
+}
+
+export async function getRemoteCloudflaredTunnels(serverId) {
+    return this.request(`/servers/${serverId}/cloudflared/tunnels`);
+}
+
+export async function createRemoteCloudflaredTunnel(serverId, name) {
+    return this.request(`/servers/${serverId}/cloudflared/tunnels`, {
+        method: 'POST',
+        body: { name }
+    });
+}
+
+export async function routeRemoteCloudflaredTunnel(serverId, tunnelRef, hostname) {
+    return this.request(`/servers/${serverId}/cloudflared/tunnels/${encodeURIComponent(tunnelRef)}/route`, {
+        method: 'POST',
+        body: { hostname }
+    });
+}
+
+export async function deleteRemoteCloudflaredTunnel(serverId, tunnelRef) {
+    return this.request(`/servers/${serverId}/cloudflared/tunnels/${encodeURIComponent(tunnelRef)}`, {
+        method: 'DELETE'
+    });
 }
 
 // Get available servers for Docker operations
@@ -347,7 +597,7 @@ export async function getAgentVersion() {
 
 export async function getAgentDownloadUrl(os, arch) {
     const baseUrl = this.baseUrl.replace('/api/v1', '');
-    return `${baseUrl}/api/servers/agent/download/${os}/${arch}`;
+    return `${baseUrl}/api/v1/servers/agent/download/${os}/${arch}`;
 }
 
 // Agent Fleet Management endpoints

@@ -1,14 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Search, X, Star, ExternalLink, BookOpen, Container, Globe, BarChart3,
     Database, Shield, Cloud, MessageSquare, Video, Music, Image, Home,
     Code, Server, GitBranch, Workflow, HardDrive, Lock, Users, FileText,
-    Settings, Layers, ChevronDown, Copy, Check, Tag, Cpu, HardDriveIcon,
+    Settings, Layers, ChevronDown, Copy, Check, Tag, Cpu,
     Newspaper, TrendingUp
 } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 // Featured templates (curated list)
 const FEATURED_TEMPLATES = [
@@ -106,11 +108,12 @@ const Templates = () => {
     const [selectedTemplate, setSelectedTemplate] = useState(null);
     const [showInstallModal, setShowInstallModal] = useState(false);
     const [copiedCompose, setCopiedCompose] = useState(false);
+    const [showAllCategories, setShowAllCategories] = useState(false);
 
     // Initialize from URL params
     const selectedCategory = searchParams.get('category') || null;
     const searchQuery = searchParams.get('search') || '';
-    const sortBy = searchParams.get('sort') || 'name-asc';
+    const sortBy = searchParams.get('sort') || 'featured';
     const installTemplateId = searchParams.get('install');
 
     useEffect(() => {
@@ -289,46 +292,50 @@ const Templates = () => {
 
     const sortedTemplates = sortTemplates(templates);
     const hasActiveFilters = selectedCategory || searchQuery;
+    const visibleCategories = showAllCategories ? categories : categories.slice(0, 10);
+    const hiddenCategoryCount = Math.max(categories.length - visibleCategories.length, 0);
 
     if (loading) {
         return (
-            <div className="page">
+            <div className="page-container">
                 <div className="loading">Loading templates...</div>
             </div>
         );
     }
 
     return (
-        <div className="page templates-page">
-            <div className="page-header">
+        <div className="page-container templates-page">
+            <div className="page-header templates-page-header">
                 <h1>App Templates</h1>
-                <p className="page-description">One-click deployment for popular self-hosted applications</p>
-            </div>
-
-            {/* Search and Filters */}
-            <div className="templates-filters">
                 <div className="search-box">
                     <Search size={18} className="search-icon" />
-                    <input
+                    <Input
                         type="text"
                         placeholder="Search templates..."
                         value={searchQuery}
                         onChange={(e) => setSearchQueryFilter(e.target.value)}
                     />
                     {searchQuery && (
-                        <button className="search-clear" onClick={() => setSearchQueryFilter('')}>
+                        <Button variant="ghost" size="icon" className="search-clear" onClick={() => setSearchQueryFilter('')}>
                             <X size={16} />
-                        </button>
+                        </Button>
                     )}
                 </div>
-                <div className="category-filters">
+            </div>
+
+            {/* Results and Filters */}
+            <div className="templates-results-header">
+                <span className="results-count">
+                    {sortedTemplates.length} template{sortedTemplates.length !== 1 ? 's' : ''}
+                </span>
+                <div className="category-filters" aria-label="Template categories">
                     <button
                         className={`category-btn ${!selectedCategory ? 'active' : ''}`}
                         onClick={() => setSelectedCategoryFilter(null)}
                     >
                         All
                     </button>
-                    {categories.slice(0, 12).map(category => (
+                    {visibleCategories.map(category => (
                         <button
                             key={category}
                             className={`category-btn ${selectedCategory === category ? 'active' : ''}`}
@@ -337,6 +344,23 @@ const Templates = () => {
                             {getCategoryIcon(category)} {category}
                         </button>
                     ))}
+                    {categories.length > 10 && (
+                        <button
+                            className="category-btn category-btn--more"
+                            onClick={() => setShowAllCategories(prev => !prev)}
+                        >
+                            {showAllCategories ? 'Less' : `More +${hiddenCategoryCount}`}
+                        </button>
+                    )}
+                </div>
+                <div className="sort-dropdown">
+                    <label>Sort by:</label>
+                    <select value={sortBy} onChange={(e) => setSortByFilter(e.target.value)}>
+                        <option value="name-asc">Name (A-Z)</option>
+                        <option value="name-desc">Name (Z-A)</option>
+                        <option value="featured">Featured First</option>
+                    </select>
+                    <ChevronDown size={16} className="dropdown-icon" />
                 </div>
             </div>
 
@@ -355,33 +379,17 @@ const Templates = () => {
                     {searchQuery && (
                         <span className="filter-chip">
                             <Search size={14} />
-                            "{searchQuery}"
+                            &ldquo;{searchQuery}&rdquo;
                             <button onClick={() => setSearchQueryFilter('')}>
                                 <X size={14} />
                             </button>
                         </span>
                     )}
-                    <button className="clear-all-btn" onClick={clearAllFilters}>
+                    <Button variant="ghost" size="sm" className="clear-all-btn" onClick={clearAllFilters}>
                         Clear All
-                    </button>
+                    </Button>
                 </div>
             )}
-
-            {/* Results Header */}
-            <div className="templates-results-header">
-                <span className="results-count">
-                    {sortedTemplates.length} template{sortedTemplates.length !== 1 ? 's' : ''}
-                </span>
-                <div className="sort-dropdown">
-                    <label>Sort by:</label>
-                    <select value={sortBy} onChange={(e) => setSortByFilter(e.target.value)}>
-                        <option value="name-asc">Name (A-Z)</option>
-                        <option value="name-desc">Name (Z-A)</option>
-                        <option value="featured">Featured First</option>
-                    </select>
-                    <ChevronDown size={16} className="dropdown-icon" />
-                </div>
-            </div>
 
             {/* Templates Grid */}
             <div className="templates-grid">
@@ -390,9 +398,9 @@ const Templates = () => {
                         <Layers size={48} />
                         <p>No templates found</p>
                         {hasActiveFilters && (
-                            <button className="btn btn-secondary btn-sm" onClick={clearAllFilters}>
+                            <Button variant="outline" size="sm" onClick={clearAllFilters}>
                                 Clear Filters
-                            </button>
+                            </Button>
                         )}
                     </div>
                 ) : (
@@ -438,7 +446,7 @@ const Templates = () => {
             {/* Template Detail Modal */}
             {selectedTemplate && (
                 <div className="modal-overlay" onClick={() => setSelectedTemplate(null)}>
-                    <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+                    <div className="modal template-detail-drawer" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <div className="template-detail-header">
                                 <div className="template-icon-large">
@@ -456,13 +464,17 @@ const Templates = () => {
 
                             <div className="template-links">
                                 {selectedTemplate.website && (
-                                    <a href={selectedTemplate.website} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">
-                                        <ExternalLink size={14} /> Website
+                                    <a href={selectedTemplate.website} target="_blank" rel="noopener noreferrer">
+                                        <Button variant="outline" size="sm">
+                                            <ExternalLink size={14} /> Website
+                                        </Button>
                                     </a>
                                 )}
                                 {selectedTemplate.documentation && (
-                                    <a href={selectedTemplate.documentation} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">
-                                        <BookOpen size={14} /> Documentation
+                                    <a href={selectedTemplate.documentation} target="_blank" rel="noopener noreferrer">
+                                        <Button variant="outline" size="sm">
+                                            <BookOpen size={14} /> Documentation
+                                        </Button>
                                     </a>
                                 )}
                             </div>
@@ -546,7 +558,9 @@ const Templates = () => {
                                     <div className="detail-section">
                                         <h4>
                                             <Container size={16} /> Docker Compose
-                                            <button
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
                                                 className="copy-btn"
                                                 onClick={() => {
                                                     navigator.clipboard.writeText('docker-compose.yml available after install');
@@ -555,7 +569,7 @@ const Templates = () => {
                                                 }}
                                             >
                                                 {copiedCompose ? <Check size={14} /> : <Copy size={14} />}
-                                            </button>
+                                            </Button>
                                         </h4>
                                         <div className="compose-preview">
                                             <code>Docker Compose configuration will be generated during installation</code>
@@ -565,17 +579,16 @@ const Templates = () => {
                             </div>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setSelectedTemplate(null)}>
+                            <Button variant="outline" onClick={() => setSelectedTemplate(null)}>
                                 Close
-                            </button>
-                            <button
-                                className="btn btn-primary"
+                            </Button>
+                            <Button
                                 onClick={() => {
                                     setShowInstallModal(true);
                                 }}
                             >
                                 Install Template
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 </div>
@@ -605,8 +618,13 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
     const toast = useToast();
     const [appName, setAppName] = useState(template.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'));
     const [variables, setVariables] = useState({});
+    const [servers, setServers] = useState([{ id: 'local', name: 'Local server', is_local: true }]);
+    const [selectedServerId, setSelectedServerId] = useState('local');
     const [installing, setInstalling] = useState(false);
     const [errors, setErrors] = useState([]);
+    const [job, setJob] = useState(null);
+    const [jobLogs, setJobLogs] = useState([]);
+    const pollRef = useRef(null);
 
     useEffect(() => {
         // Initialize variables with defaults
@@ -619,10 +637,65 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
         setVariables(defaults);
     }, [template]);
 
+    useEffect(() => {
+        loadServers();
+        return () => {
+            if (pollRef.current) {
+                clearInterval(pollRef.current);
+            }
+        };
+    }, []);
+
+    async function loadServers() {
+        try {
+            const data = await api.getAvailableServers();
+            const list = Array.isArray(data) ? data : [];
+            if (list.length > 0) {
+                setServers(list);
+                setSelectedServerId(list[0].id);
+            }
+        } catch {
+            setServers([{ id: 'local', name: 'Local server', is_local: true }]);
+            setSelectedServerId('local');
+        }
+    }
+
+    function startPolling(jobId) {
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+        }
+
+        pollRef.current = setInterval(async () => {
+            try {
+                const data = await api.getDeploymentJob(jobId, true);
+                const latestJob = data.job;
+                setJob(latestJob);
+                setJobLogs(latestJob.logs || []);
+
+                if (latestJob.status === 'succeeded' && latestJob.result?.app_id) {
+                    clearInterval(pollRef.current);
+                    pollRef.current = null;
+                    setInstalling(false);
+                    onSuccess(latestJob.result?.app_id);
+                } else if (latestJob.status === 'failed') {
+                    clearInterval(pollRef.current);
+                    pollRef.current = null;
+                    setInstalling(false);
+                    setErrors([latestJob.error_message || 'Deployment failed']);
+                    toast.error(latestJob.error_message || 'Deployment failed');
+                }
+            } catch (err) {
+                console.error('Failed to poll deployment job:', err);
+            }
+        }, 1500);
+    }
+
     async function handleInstall(e) {
         e.preventDefault();
         setInstalling(true);
         setErrors([]);
+        setJob(null);
+        setJobLogs([]);
 
         try {
             // Validate first
@@ -634,15 +707,21 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
             }
 
             // Install
-            const result = await api.installTemplate(template.id, appName, variables);
-            if (result.success) {
+            const result = await api.installTemplate(template.id, appName, variables, {
+                serverId: selectedServerId
+            });
+            if (result.success && result.job_id) {
+                setJob(result.job);
+                setJobLogs(result.job?.logs || []);
+                startPolling(result.job_id);
+            } else if (result.success) {
                 onSuccess(result.app_id);
             } else {
                 setErrors([result.error || 'Installation failed']);
+                setInstalling(false);
             }
         } catch (err) {
             setErrors([err.message || 'Installation failed']);
-        } finally {
             setInstalling(false);
         }
     }
@@ -666,7 +745,7 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
 
                         <div className="form-group">
                             <label>Application Name *</label>
-                            <input
+                            <Input
                                 type="text"
                                 value={appName}
                                 onChange={(e) => setAppName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
@@ -675,6 +754,21 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
                                 required
                             />
                             <span className="form-help">Lowercase letters, numbers, and hyphens only (min 2 chars)</span>
+                        </div>
+
+                        <div className="form-group">
+                            <label>Target Server</label>
+                            <select
+                                value={selectedServerId}
+                                onChange={(e) => setSelectedServerId(e.target.value)}
+                                disabled={installing}
+                            >
+                                {servers.map(server => (
+                                    <option key={server.id} value={server.id}>
+                                        {server.name}{server.is_local ? ' (local)' : ''}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
 
                         {(template.variables || []).filter(v => !v.hidden).length > 0 && (
@@ -698,7 +792,7 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
                                                 ))}
                                             </select>
                                         ) : variable.type === 'password' ? (
-                                            <input
+                                            <Input
                                                 type="password"
                                                 value={variables[variable.name] || ''}
                                                 onChange={(e) => setVariables({...variables, [variable.name]: e.target.value})}
@@ -706,7 +800,7 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
                                                 required={variable.required && !variable.default}
                                             />
                                         ) : (
-                                            <input
+                                            <Input
                                                 type={variable.type === 'port' ? 'number' : 'text'}
                                                 value={variables[variable.name] || ''}
                                                 onChange={(e) => setVariables({...variables, [variable.name]: e.target.value})}
@@ -721,14 +815,35 @@ const InstallModal = ({ template, onClose, onSuccess }) => {
                                 ))}
                             </>
                         )}
+
+                        {job && (
+                            <div className="detail-section">
+                                <h4>Deployment Status</h4>
+                                <div className="deployment-progress">
+                                    <div className="deployment-progress-track">
+                                        <div
+                                            className="deployment-progress-fill"
+                                            style={{ width: `${job.progress_percent || 0}%` }}
+                                        />
+                                    </div>
+                                    <span>{job.status} {job.progress_percent || 0}%</span>
+                                </div>
+                                <pre className="log-viewer">
+                                    {(jobLogs || []).map(log => {
+                                        const prefix = log.step_index ? `[${log.step_index}] ` : '';
+                                        return `${prefix}${log.message}`;
+                                    }).join('\n') || 'Waiting for deployment logs...'}
+                                </pre>
+                            </div>
+                        )}
                     </div>
                     <div className="modal-footer">
-                        <button type="button" className="btn btn-secondary" onClick={onClose} disabled={installing}>
+                        <Button type="button" variant="outline" onClick={onClose} disabled={installing}>
                             Cancel
-                        </button>
-                        <button type="submit" className="btn btn-primary" disabled={installing}>
+                        </Button>
+                        <Button type="submit" disabled={installing}>
                             {installing ? 'Installing...' : 'Install'}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>

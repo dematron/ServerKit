@@ -27,6 +27,11 @@ import {
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
+import { StatCard, StatsGrid } from '../components/StatCard';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const AgentFleet = () => {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -179,15 +184,15 @@ const AgentFleet = () => {
         }
     };
 
-    const rolloutStatusBadge = (status) => {
+    const rolloutStatusVariant = (status) => {
         const map = {
-            running: 'badge-info',
-            completed: 'badge-success',
-            failed: 'badge-error',
-            cancelled: 'badge-warning',
-            pending: 'badge-default'
+            running: 'info',
+            completed: 'success',
+            failed: 'destructive',
+            cancelled: 'warning',
+            pending: 'secondary'
         };
-        return map[status] || 'badge-default';
+        return map[status] || 'secondary';
     };
 
     return (
@@ -198,19 +203,15 @@ const AgentFleet = () => {
                     <p>Monitor health, manage versions, and control updates across your infrastructure.</p>
                 </div>
                 <div className="header-actions">
-                    <button
-                        className="btn btn-primary"
-                        onClick={fetchData}
-                        disabled={loading}
-                    >
+                    <Button onClick={fetchData} disabled={loading}>
                         <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                         Refresh
-                    </button>
+                    </Button>
                 </div>
             </div>
 
-            <div className="tabs-container">
-                <div className="tabs">
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList>
                     {[
                         { key: 'dashboard', icon: Activity, label: 'Dashboard' },
                         { key: 'versions', icon: Package, label: 'Versions' },
@@ -219,66 +220,30 @@ const AgentFleet = () => {
                         { key: 'discovery', icon: Search, label: 'Discovery' },
                         { key: 'approvals', icon: Shield, label: 'Approvals' },
                     ].map(tab => (
-                        <button
-                            key={tab.key}
-                            className={`tab ${activeTab === tab.key ? 'active' : ''}`}
-                            onClick={() => setActiveTab(tab.key)}
-                        >
+                        <TabsTrigger key={tab.key} value={tab.key}>
                             <tab.icon size={18} />
                             {tab.label}
                             {tab.key === 'approvals' && pendingServers.length > 0 && (
-                                <span className="badge badge-error ml-2">{pendingServers.length}</span>
+                                <Badge variant="destructive" className="ml-2">{pendingServers.length}</Badge>
                             )}
                             {tab.key === 'queue' && queuedCommands.length > 0 && (
-                                <span className="badge badge-warning ml-2">{queuedCommands.length}</span>
+                                <Badge variant="warning" className="ml-2">{queuedCommands.length}</Badge>
                             )}
-                        </button>
+                        </TabsTrigger>
                     ))}
-                </div>
-            </div>
+                </TabsList>
+            </Tabs>
 
             <div className="tab-content mt-6">
                 {/* ==================== Dashboard ==================== */}
                 {activeTab === 'dashboard' && health && (
                     <div className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div className="stat-card">
-                                <div className="stat-icon bg-blue-100 text-blue-600">
-                                    <Server size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <div className="stat-value">{health.total_servers}</div>
-                                    <div className="stat-label">Total Agents</div>
-                                </div>
-                            </div>
-                            <div className="stat-card">
-                                <div className="stat-icon bg-green-100 text-green-600">
-                                    <CheckCircle size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <div className="stat-value">{health.online_servers}</div>
-                                    <div className="stat-label">Online</div>
-                                </div>
-                            </div>
-                            <div className="stat-card">
-                                <div className="stat-icon bg-red-100 text-red-600">
-                                    <AlertCircle size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <div className="stat-value">{health.offline_servers}</div>
-                                    <div className="stat-label">Offline</div>
-                                </div>
-                            </div>
-                            <div className="stat-card">
-                                <div className="stat-icon bg-purple-100 text-purple-600">
-                                    <Zap size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <div className="stat-value">{health.command_success_rate}%</div>
-                                    <div className="stat-label">Success Rate</div>
-                                </div>
-                            </div>
-                        </div>
+                        <StatsGrid>
+                            <StatCard icon={Server} iconVariant="backups" label="Total Agents" value={health.total_servers} />
+                            <StatCard icon={CheckCircle} iconVariant="apps" label="Online" value={health.online_servers} />
+                            <StatCard icon={AlertCircle} iconVariant="alerts" label="Offline" value={health.offline_servers} />
+                            <StatCard icon={Zap} iconVariant="schedules" label="Success Rate" value={`${health.command_success_rate}%`} />
+                        </StatsGrid>
 
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="card">
@@ -356,9 +321,9 @@ const AgentFleet = () => {
                     <div className="card">
                         <div className="card-header flex justify-between items-center">
                             <h2>Agent Versions</h2>
-                            <button className="btn btn-sm btn-primary">
+                            <Button size="sm">
                                 <Plus size={16} /> Add Version
-                            </button>
+                            </Button>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="table">
@@ -377,9 +342,9 @@ const AgentFleet = () => {
                                         <tr key={v.id}>
                                             <td className="font-semibold">v{v.version}</td>
                                             <td>
-                                                <span className={`badge ${v.channel === 'stable' ? 'badge-success' : 'badge-warning'}`}>
+                                                <Badge variant={v.channel === 'stable' ? 'success' : 'warning'}>
                                                     {v.channel}
-                                                </span>
+                                                </Badge>
                                             </td>
                                             <td>{new Date(v.published_at).toLocaleDateString()}</td>
                                             <td>{v.min_panel_version || 'Any'} - {v.max_panel_version || 'Latest'}</td>
@@ -390,8 +355,8 @@ const AgentFleet = () => {
                                                 </span>
                                             </td>
                                             <td className="actions">
-                                                <button className="btn btn-ghost btn-sm" title="Edit"><RefreshCw size={14} /></button>
-                                                <button className="btn btn-ghost btn-sm text-red-600" title="Delete"><Trash2 size={14} /></button>
+                                                <Button variant="ghost" size="sm" title="Edit"><RefreshCw size={14} /></Button>
+                                                <Button variant="ghost" size="sm" className="text-red-600" title="Delete"><Trash2 size={14} /></Button>
                                             </td>
                                         </tr>
                                     ))}
@@ -455,9 +420,8 @@ const AgentFleet = () => {
                                         <>
                                             <div className="form-group">
                                                 <label>Batch Size</label>
-                                                <input
+                                                <Input
                                                     type="number"
-                                                    className="form-input w-full"
                                                     value={rolloutBatchSize}
                                                     onChange={e => setRolloutBatchSize(parseInt(e.target.value) || 5)}
                                                     min={1}
@@ -465,9 +429,8 @@ const AgentFleet = () => {
                                             </div>
                                             <div className="form-group">
                                                 <label>Delay (minutes)</label>
-                                                <input
+                                                <Input
                                                     type="number"
-                                                    className="form-input w-full"
                                                     value={rolloutDelay}
                                                     onChange={e => setRolloutDelay(parseInt(e.target.value) || 10)}
                                                     min={1}
@@ -477,13 +440,9 @@ const AgentFleet = () => {
                                     )}
                                 </div>
                                 <div className="mt-6 flex justify-end">
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={triggerUpgrade}
-                                        disabled={!selectedVersion}
-                                    >
+                                    <Button onClick={triggerUpgrade} disabled={!selectedVersion}>
                                         <Play size={18} /> Start Rollout
-                                    </button>
+                                    </Button>
                                 </div>
                             </div>
                         </div>
@@ -527,20 +486,22 @@ const AgentFleet = () => {
                                                         </div>
                                                     </td>
                                                     <td>
-                                                        <span className={`badge ${rolloutStatusBadge(r.status)}`}>
+                                                        <Badge variant={rolloutStatusVariant(r.status)}>
                                                             {r.status}
-                                                        </span>
+                                                        </Badge>
                                                     </td>
                                                     <td className="text-sm">{r.started_at ? new Date(r.started_at).toLocaleString() : '-'}</td>
                                                     <td className="actions">
                                                         {r.status === 'running' && (
-                                                            <button
-                                                                className="btn btn-sm btn-ghost text-red-600"
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="text-red-600"
                                                                 onClick={() => cancelRollout(r.id)}
                                                                 title="Cancel Rollout"
                                                             >
                                                                 <XCircle size={14} /> Cancel
-                                                            </button>
+                                                            </Button>
                                                         )}
                                                         {r.error && (
                                                             <span className="text-xs text-red-500" title={r.error}>
@@ -594,13 +555,14 @@ const AgentFleet = () => {
                                                 </td>
                                                 <td className="text-sm">{new Date(cmd.created_at).toLocaleString()}</td>
                                                 <td className="actions">
-                                                    <button
-                                                        className="btn btn-sm btn-ghost"
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
                                                         onClick={() => retryCommand(cmd.id)}
                                                         title="Retry now"
                                                     >
                                                         <RotateCcw size={14} /> Retry
-                                                    </button>
+                                                    </Button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -621,14 +583,10 @@ const AgentFleet = () => {
                     <div className="space-y-6">
                         <div className="flex justify-between items-center">
                             <h2>Network Discovery</h2>
-                            <button
-                                className="btn btn-primary"
-                                onClick={startDiscovery}
-                                disabled={isScanning}
-                            >
+                            <Button onClick={startDiscovery} disabled={isScanning}>
                                 {isScanning ? <RefreshCw size={18} className="animate-spin" /> : <Search size={18} />}
                                 {isScanning ? 'Scanning...' : 'Start Scan'}
-                            </button>
+                            </Button>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -640,9 +598,9 @@ const AgentFleet = () => {
                                                 <Server size={20} />
                                             </div>
                                             {agent.is_registered ? (
-                                                <span className="badge badge-success">Registered</span>
+                                                <Badge variant="success">Registered</Badge>
                                             ) : (
-                                                <span className="badge badge-warning">New</span>
+                                                <Badge variant="warning">New</Badge>
                                             )}
                                         </div>
                                         <h3 className="font-bold">{agent.hostname}</h3>
@@ -660,17 +618,19 @@ const AgentFleet = () => {
                                     </div>
                                     <div className="mt-4 pt-4 border-t">
                                         {agent.is_registered ? (
-                                            <button
-                                                className="btn btn-sm btn-ghost w-full"
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="w-full"
                                                 onClick={() => {
                                                     setActiveTab('dashboard');
                                                     loadDiagnostics(agent.server_id);
                                                 }}
                                             >
                                                 View Details
-                                            </button>
+                                            </Button>
                                         ) : (
-                                            <button className="btn btn-sm btn-primary w-full">Add to Fleet</button>
+                                            <Button size="sm" className="w-full">Add to Fleet</Button>
                                         )}
                                     </div>
                                 </div>
@@ -710,18 +670,21 @@ const AgentFleet = () => {
                                             <td>{new Date(server.created_at).toLocaleString()}</td>
                                             <td>v{server.agent_version || 'Unknown'}</td>
                                             <td className="actions">
-                                                <button
-                                                    className="btn btn-sm btn-success flex items-center gap-1"
+                                                <Button
+                                                    size="sm"
+                                                    className="flex items-center gap-1"
                                                     onClick={() => approveAgent(server.id)}
                                                 >
                                                     <CheckCircle size={14} /> Approve
-                                                </button>
-                                                <button
-                                                    className="btn btn-sm btn-ghost text-red-600"
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="text-red-600"
                                                     onClick={() => rejectAgent(server.id)}
                                                 >
                                                     <XCircle size={14} /> Reject
-                                                </button>
+                                                </Button>
                                             </td>
                                         </tr>
                                     ))}
@@ -746,9 +709,9 @@ const AgentFleet = () => {
                                 <h2 className="text-lg font-semibold">
                                     Agent Diagnostics - {diagnostics.server_name}
                                 </h2>
-                                <button className="btn btn-ghost btn-sm" onClick={() => setDiagnostics(null)}>
+                                <Button variant="ghost" size="sm" onClick={() => setDiagnostics(null)}>
                                     <XCircle size={18} />
-                                </button>
+                                </Button>
                             </div>
                             <div className="p-6 space-y-6">
                                 <div className="grid grid-cols-2 gap-4">

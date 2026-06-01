@@ -490,6 +490,38 @@ class DockerService:
             return None
 
     @staticmethod
+    def get_containers_stats(container_ids):
+        """Get resource usage stats for multiple containers in one Docker call."""
+        if not container_ids:
+            return {}
+
+        try:
+            cleaned_ids = [str(container_id) for container_id in container_ids if container_id]
+            if not cleaned_ids:
+                return {}
+
+            result = subprocess.run(
+                ['docker', 'stats', '--no-stream', '--format', '{{json .}}', *cleaned_ids],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                logger.error(f"Failed to get container stats: {result.stderr.strip()}")
+                return {}
+
+            stats_map = {}
+            for line in result.stdout.splitlines():
+                if not line.strip():
+                    continue
+                stats = json.loads(line)
+                for key in (stats.get('ID'), stats.get('Container'), stats.get('Name')):
+                    if key:
+                        stats_map[key] = stats
+            return stats_map
+        except Exception as e:
+            logger.error(f"Failed to get bulk container stats: {e}")
+            return {}
+
+    @staticmethod
     def exec_command(container_id, command, interactive=False, tty=False):
         """Execute a command in a running container."""
         try:
@@ -719,6 +751,96 @@ class DockerService:
             return {'success': False, 'error': str(e)}
 
     # ==================== DOCKER COMPOSE ====================
+
+    @classmethod
+    def compose_list(cls):
+        """List Docker Compose projects known to the Docker CLI."""
+        try:
+            result = subprocess.run(
+                cls._get_compose_cmd() + ['ls', '--format', 'json'],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                output = result.stdout.strip()
+                try:
+                    parsed = json.loads(output)
+                    if isinstance(parsed, list):
+                        return parsed
+                    if isinstance(parsed, dict):
+                        return [parsed]
+                except json.JSONDecodeError:
+                    projects = []
+                    for line in output.split('\n'):
+                        line = line.strip()
+                        if not line or line.startswith('time=') or line.startswith('WARN'):
+                            continue
+                        try:
+                            parsed = json.loads(line)
+                            if isinstance(parsed, list):
+                                projects.extend(parsed)
+                            elif isinstance(parsed, dict):
+                                projects.append(parsed)
+                        except json.JSONDecodeError:
+                            continue
+                    return projects
+
+            return DockerService._compose_list_from_container_labels()
+        except Exception as e:
+            logger.error(f"Failed to list compose projects: {e}")
+            return []
+
+    @staticmethod
+    def _compose_list_from_container_labels():
+        """Fallback for older compose binaries without `compose ls --format json`."""
+        try:
+            result = subprocess.run(
+                ['docker', 'ps', '-a', '--format', '{{json .}}'],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                return []
+
+            projects = {}
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                container = json.loads(line)
+                labels = {}
+                for label in (container.get('Labels') or '').split(','):
+                    if '=' in label:
+                        key, value = label.split('=', 1)
+                        labels[key] = value
+
+                project = labels.get('com.docker.compose.project')
+                if not project:
+                    continue
+
+                entry = projects.setdefault(project, {
+                    'Name': project,
+                    'Status': '',
+                    'ConfigFiles': labels.get('com.docker.compose.project.config_files', ''),
+                    'Running': 0,
+                    'Containers': 0
+                })
+                entry['Containers'] += 1
+                if (container.get('State') or '').lower() == 'running':
+                    entry['Running'] += 1
+
+            for project in projects.values():
+                running = project.pop('Running', 0)
+                total = project.pop('Containers', 0)
+                stopped = max(total - running, 0)
+                status_parts = []
+                if running:
+                    status_parts.append(f'running({running})')
+                if stopped:
+                    status_parts.append(f'exited({stopped})')
+                project['Status'] = ', '.join(status_parts) or 'unknown'
+
+            return list(projects.values())
+        except Exception as e:
+            logger.error(f"Failed to build compose project fallback list: {e}")
+            return []
 
     @classmethod
     def compose_up(cls, project_path, detach=True, build=False):

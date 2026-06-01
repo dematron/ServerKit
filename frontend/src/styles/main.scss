@@ -31,6 +31,8 @@
 // --------------------------------------------
 @import 'components/_buttons';
 @import 'components/_cards';
+@import 'components/_tables';
+@import 'components/_alerts';
 @import 'components/_modals';
 @import 'components/_forms';
 @import 'components/_badges';
@@ -59,6 +61,7 @@
 @import 'components/_contribution-graph';
 @import 'components/_command-palette';
 @import 'components/_logs-drawer';
+@import 'components/_ui';
 
 // --------------------------------------------
 // 5. PAGE-SPECIFIC STYLES
@@ -71,6 +74,7 @@
 @import 'pages/_domains';
 @import 'pages/_monitoring';
 @import 'pages/_backups';
+@import 'pages/_deployments';
 @import 'pages/_terminal';
 @import 'pages/_settings';
 @import 'pages/_file-manager';
@@ -89,13 +93,17 @@
 @import 'pages/_email';
 @import 'pages/_setup-wizard';
 @import 'pages/_migration-wizard';
+@import 'pages/_new-service';
 @import 'pages/_services';
 @import 'pages/_service-detail';
 @import 'pages/_fleet-monitor';
-@import 'pages/_agent-plugins';
 @import 'pages/_server-templates';
+@import 'pages/_server-packages';
+@import 'pages/_server-services';
 @import 'pages/_workspaces';
 @import 'pages/_dns-zones';
 @import 'pages/_status-pages';
 @import 'pages/_cloud-provision';
 @import 'pages/_marketplace';
+@import 'pages/_style-guide';
+@import 'pages/_app-map';

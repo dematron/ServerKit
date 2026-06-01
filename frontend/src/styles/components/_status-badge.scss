@@ -2,11 +2,13 @@
     display: inline-flex;
     align-items: center;
     gap: $spacing-xs;
-    padding: 2px $spacing-sm;
+    min-height: 24px;
+    padding: 4px $spacing-sm;
     border-radius: $radius-full;
-    font-size: $font-size-xs + 1;
-    font-weight: $font-weight-medium;
-    line-height: 1.4;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+    line-height: 1;
+    white-space: nowrap;
 
     &__dot {
         width: 6px;

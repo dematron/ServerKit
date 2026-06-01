@@ -1,7 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import {
+    Activity,
+    CheckCircle2,
+    Clock3,
+    Folder,
+    Plus,
+    RefreshCw,
+    Search,
+    Server as ServerLucideIcon,
+    XCircle,
+} from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const Servers = () => {
     const [servers, setServers] = useState([]);
@@ -10,14 +24,14 @@ const Servers = () => {
     const [showAddModal, setShowAddModal] = useState(false);
     const [showGroupModal, setShowGroupModal] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState('all');
+    const [selectedStatus, setSelectedStatus] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
+    const [selectedIds, setSelectedIds] = useState(() => new Set());
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
     const toast = useToast();
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    async function loadData() {
+    const loadData = useCallback(async () => {
         setLoading(true);
         try {
             const [serversData, groupsData] = await Promise.all([
@@ -32,7 +46,11 @@ const Servers = () => {
         } finally {
             setLoading(false);
         }
-    }
+    }, [toast]);
+
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
 
     async function handlePingServer(serverId) {
         try {
@@ -43,136 +61,387 @@ const Servers = () => {
                 toast.error('Server did not respond');
             }
             loadData();
-        } catch (err) {
+        } catch {
             toast.error('Failed to ping server');
         }
     }
 
+    async function handleDeleteServer() {
+        if (!deleteTarget) return;
+        try {
+            await api.deleteServer(deleteTarget.id);
+            toast.success(`${deleteTarget.name} removed from fleet`);
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                next.delete(deleteTarget.id);
+                return next;
+            });
+            setDeleteTarget(null);
+            loadData();
+        } catch (err) {
+            toast.error(err.message || 'Failed to delete server');
+        }
+    }
+
+    async function handleBulkDelete() {
+        const ids = Array.from(selectedIds);
+        if (ids.length === 0) return;
+        const results = await Promise.allSettled(ids.map(id => api.deleteServer(id)));
+        const failed = results.filter(r => r.status === 'rejected').length;
+        if (failed === 0) {
+            toast.success(`${ids.length} server${ids.length === 1 ? '' : 's'} deleted`);
+        } else {
+            toast.error(`${failed} of ${ids.length} could not be deleted`);
+        }
+        setSelectedIds(new Set());
+        setBulkDeleteOpen(false);
+        loadData();
+    }
+
+    async function handleCopyInstall(server) {
+        try {
+            const result = await api.generateRegistrationToken(server.id);
+            const connString = result?.connection_string;
+            if (!connString) {
+                toast.error('Could not generate connection string');
+                return;
+            }
+            await navigator.clipboard.writeText(connString);
+            toast.success('Connection string copied to clipboard');
+        } catch (err) {
+            toast.error(err.message || 'Failed to generate connection string');
+        }
+    }
+
+    function toggleSelect(id) {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    }
+
+    function toggleSelectAll(visibleIds) {
+        setSelectedIds(prev => {
+            const allSelected = visibleIds.length > 0 && visibleIds.every(id => prev.has(id));
+            if (allSelected) {
+                const next = new Set(prev);
+                visibleIds.forEach(id => next.delete(id));
+                return next;
+            }
+            const next = new Set(prev);
+            visibleIds.forEach(id => next.add(id));
+            return next;
+        });
+    }
+
     const filteredServers = servers.filter(server => {
-        const matchesGroup = selectedGroup === 'all' || server.group_id === selectedGroup;
+        const matchesGroup = selectedGroup === 'all' ||
+            (selectedGroup === 'ungrouped' && !server.group_id) ||
+            String(server.group_id) === String(selectedGroup);
+        const matchesStatus = selectedStatus === 'all' || server.status === selectedStatus;
         const matchesSearch = !searchTerm ||
             server.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             server.hostname?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             server.ip_address?.toLowerCase().includes(searchTerm.toLowerCase());
-        return matchesGroup && matchesSearch;
+        return matchesGroup && matchesStatus && matchesSearch;
     });
 
-    const stats = {
+    const fleetStats = {
         total: servers.length,
         online: servers.filter(s => s.status === 'online').length,
         offline: servers.filter(s => s.status === 'offline').length,
-        connecting: servers.filter(s => s.status === 'connecting').length
+        connecting: servers.filter(s => s.status === 'connecting').length,
+        pending: servers.filter(s => s.status === 'pending').length
     };
+    const availability = fleetStats.total > 0 ? Math.round((fleetStats.online / fleetStats.total) * 100) : 0;
+    const hasActiveFilters = selectedGroup !== 'all' || selectedStatus !== 'all' || Boolean(searchTerm);
+    const groupCounts = servers.reduce((acc, server) => {
+        const key = server.group_id ? String(server.group_id) : 'ungrouped';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+    }, {});
+    const statusFilters = [
+        {
+            key: 'all',
+            label: 'All servers',
+            value: fleetStats.total,
+            detail: `${groups.length} group${groups.length === 1 ? '' : 's'}`,
+            icon: ServerLucideIcon,
+        },
+        {
+            key: 'online',
+            label: 'Online',
+            value: fleetStats.online,
+            detail: `${availability}% available`,
+            icon: CheckCircle2,
+        },
+        {
+            key: 'offline',
+            label: 'Offline',
+            value: fleetStats.offline,
+            detail: 'Needs attention',
+            icon: XCircle,
+        },
+        {
+            key: 'connecting',
+            label: 'Connecting',
+            value: fleetStats.connecting,
+            detail: 'Agent handshake',
+            icon: RefreshCw,
+        },
+        {
+            key: 'pending',
+            label: 'Pending',
+            value: fleetStats.pending,
+            detail: 'Awaiting install',
+            icon: Clock3,
+        },
+    ];
+    const groupFilters = [
+        { key: 'all', label: 'All groups', value: fleetStats.total },
+        ...groups.map(group => ({
+            key: String(group.id),
+            label: group.name,
+            value: groupCounts[String(group.id)] || 0,
+        })),
+        { key: 'ungrouped', label: 'Ungrouped', value: groupCounts.ungrouped || 0 },
+    ];
+    const activeStatusLabel = statusFilters.find(filter => filter.key === selectedStatus)?.label || 'All servers';
+    const fleetStateLabel = fleetStats.total === 0
+        ? 'No agents paired'
+        : fleetStats.offline > 0
+            ? 'Needs attention'
+            : (fleetStats.connecting + fleetStats.pending) > 0
+                ? 'Pairing in progress'
+                : 'Healthy';
 
     if (loading) {
-        return <div className="loading">Loading servers...</div>;
+        return (
+            <div className="page-container servers-page servers-page--loading">
+                <div className="servers-loading-card">
+                    <ServerIcon />
+                    <span>Scanning fleet...</span>
+                </div>
+            </div>
+        );
     }
 
+    const visibleIds = filteredServers.map(s => s.id);
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+    const someVisibleSelected = visibleIds.some(id => selectedIds.has(id));
+
     return (
-        <div className="servers-page">
-            <div className="page-header">
-                <div className="page-header-content">
-                    <h1>Servers</h1>
-                    <p className="page-description">Manage your connected servers and agents</p>
-                </div>
-                <div className="page-header-actions">
-                    <button className="btn btn-secondary" onClick={() => setShowGroupModal(true)}>
-                        <FolderIcon />
-                        Manage Groups
-                    </button>
-                    <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-                        <PlusIcon />
-                        Add Server
-                    </button>
-                </div>
-            </div>
+        <div className="page-container page-container--full-bleed servers-page servers-page--ops">
+            <div className="servers-ops-workspace">
+                <aside className="servers-fleet-rail">
+                    <section className="servers-rail-section servers-rail-section--health">
+                        <div className="servers-rail-section-header">
+                            <Activity size={14} />
+                            <span>Fleet health</span>
+                        </div>
+                        <div className="servers-health-dial" style={{ '--availability': `${availability * 3.6}deg` }}>
+                            <strong>{availability}%</strong>
+                            <span>available</span>
+                        </div>
+                        <div className="servers-health-summary">
+                            <strong>{fleetStateLabel}</strong>
+                            <span>{fleetStats.online} of {fleetStats.total} online</span>
+                        </div>
+                    </section>
 
-            <div className="servers-stats">
-                <div className="stat-card">
-                    <div className="stat-icon total">
-                        <ServerIcon />
-                    </div>
-                    <div className="stat-content">
-                        <div className="stat-value">{stats.total}</div>
-                        <div className="stat-label">Total Servers</div>
-                    </div>
-                </div>
-                <div className="stat-card">
-                    <div className="stat-icon online">
-                        <CheckCircleIcon />
-                    </div>
-                    <div className="stat-content">
-                        <div className="stat-value">{stats.online}</div>
-                        <div className="stat-label">Online</div>
-                    </div>
-                </div>
-                <div className="stat-card">
-                    <div className="stat-icon offline">
-                        <XCircleIcon />
-                    </div>
-                    <div className="stat-content">
-                        <div className="stat-value">{stats.offline}</div>
-                        <div className="stat-label">Offline</div>
-                    </div>
-                </div>
-                <div className="stat-card">
-                    <div className="stat-icon connecting">
-                        <RefreshIcon />
-                    </div>
-                    <div className="stat-content">
-                        <div className="stat-value">{stats.connecting}</div>
-                        <div className="stat-label">Connecting</div>
-                    </div>
-                </div>
-            </div>
+                    <section className="servers-rail-section">
+                        <div className="servers-rail-section-header">
+                            <ServerLucideIcon size={14} />
+                            <span>Status</span>
+                        </div>
+                        <div className="servers-status-nav">
+                            {statusFilters.map(filter => {
+                                const Icon = filter.icon;
+                                return (
+                                    <button
+                                        type="button"
+                                        key={filter.key}
+                                        className={`servers-status-nav-item servers-status-nav-item--${filter.key} ${selectedStatus === filter.key ? 'active' : ''}`}
+                                        onClick={() => setSelectedStatus(filter.key)}
+                                    >
+                                        <Icon size={15} />
+                                        <span>
+                                            <strong>{filter.label}</strong>
+                                            <small>{filter.detail}</small>
+                                        </span>
+                                        <b>{filter.value}</b>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </section>
 
-            <div className="servers-toolbar">
-                <div className="search-box">
-                    <SearchIcon />
-                    <input
-                        type="text"
-                        placeholder="Search servers..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                </div>
-                <div className="group-filter">
-                    <select value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)}>
-                        <option value="all">All Groups</option>
-                        {groups.map(group => (
-                            <option key={group.id} value={group.id}>{group.name}</option>
-                        ))}
-                        <option value="ungrouped">Ungrouped</option>
-                    </select>
-                </div>
-            </div>
+                    <section className="servers-rail-section">
+                        <div className="servers-rail-section-header servers-rail-section-header--split">
+                            <span>
+                                <Folder size={14} />
+                                Groups
+                            </span>
+                            <button type="button" onClick={() => setShowGroupModal(true)}>
+                                Manage
+                            </button>
+                        </div>
+                        <div className="servers-group-nav">
+                            {groupFilters.map(filter => (
+                                <button
+                                    type="button"
+                                    key={filter.key}
+                                    className={`servers-group-nav-item ${selectedGroup === filter.key ? 'active' : ''}`}
+                                    onClick={() => setSelectedGroup(filter.key)}
+                                >
+                                    <Folder size={14} />
+                                    <span>{filter.label}</span>
+                                    <b>{filter.value}</b>
+                                </button>
+                            ))}
+                        </div>
+                    </section>
+                </aside>
 
-            {filteredServers.length === 0 ? (
-                <div className="empty-state">
-                    <ServerIcon className="empty-icon" />
-                    <h3>No servers found</h3>
-                    <p>
-                        {servers.length === 0
-                            ? 'Add your first server to start managing remote infrastructure.'
-                            : 'No servers match your current filters.'}
-                    </p>
-                    {servers.length === 0 && (
-                        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-                            <PlusIcon /> Add Server
-                        </button>
+                <main className="servers-main">
+                    <div className="servers-workbar">
+                        <div className="servers-workbar-title">
+                            <span>Servers</span>
+                            <h1>{activeStatusLabel}</h1>
+                            <em>{filteredServers.length} visible of {servers.length}</em>
+                        </div>
+                        <div className="servers-workbar-actions">
+                            <Button variant="outline" onClick={() => setShowGroupModal(true)}>
+                                <Folder size={16} /> Groups
+                            </Button>
+                            <Button onClick={() => setShowAddModal(true)}>
+                                <Plus size={16} /> Add Server
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div className="servers-command-bar">
+                        <div className="servers-toolbar">
+                            <label className="search-box">
+                                <Search size={16} />
+                                <Input
+                                    type="text"
+                                    placeholder="Search by name, host, or IP..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </label>
+                        </div>
+
+                        <div className="servers-results-summary">
+                            <strong>{filteredServers.length}</strong>
+                            <span>{filteredServers.length === 1 ? 'server' : 'servers'}</span>
+                            {hasActiveFilters && (
+                                <button
+                                    type="button"
+                                    className="servers-clear-filters"
+                                    onClick={() => {
+                                        setSelectedGroup('all');
+                                        setSelectedStatus('all');
+                                        setSearchTerm('');
+                                    }}
+                                >
+                                    Clear filters
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {selectedIds.size > 0 && (
+                        <div className="servers-bulk-bar" role="region" aria-label="Bulk actions">
+                            <div className="servers-bulk-bar__info">
+                                <span className="servers-bulk-bar__count">{selectedIds.size}</span>
+                                <span>selected</span>
+                            </div>
+                            <div className="servers-bulk-bar__actions">
+                                <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
+                                    Clear selection
+                                </Button>
+                                <Button type="button" variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)}>
+                                    <TrashIcon /> Delete {selectedIds.size}
+                                </Button>
+                            </div>
+                        </div>
                     )}
-                </div>
-            ) : (
-                <div className="servers-grid">
-                    {filteredServers.map(server => (
-                        <ServerCard
-                            key={server.id}
-                            server={server}
-                            onPing={() => handlePingServer(server.id)}
-                        />
-                    ))}
-                </div>
-            )}
+
+                    {filteredServers.length === 0 ? (
+                        <div className="servers-empty-workspace">
+                            <div className="servers-empty-workspace__icon">
+                                <ServerLucideIcon size={28} />
+                            </div>
+                            <h2>{servers.length === 0 ? 'No servers yet' : 'No servers match these filters'}</h2>
+                            <p>
+                                {servers.length === 0
+                                    ? 'Pair an agent to bring a machine into this fleet.'
+                                    : 'Adjust the rail filters or search query to bring machines back into view.'}
+                            </p>
+                            <div className="servers-empty-workspace__actions">
+                                {servers.length === 0 ? (
+                                    <Button onClick={() => setShowAddModal(true)}>
+                                        <Plus size={16} /> Add your first server
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => {
+                                            setSelectedGroup('all');
+                                            setSelectedStatus('all');
+                                            setSearchTerm('');
+                                        }}
+                                    >
+                                        Clear filters
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="servers-table-wrap">
+                            <table className="servers-table">
+                                <thead>
+                                    <tr>
+                                        <th className="col-check">
+                                            <input
+                                                type="checkbox"
+                                                aria-label="Select all visible servers"
+                                                checked={allVisibleSelected}
+                                                ref={el => { if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected; }}
+                                                onChange={() => toggleSelectAll(visibleIds)}
+                                            />
+                                        </th>
+                                        <th>Server</th>
+                                        <th>Status</th>
+                                        <th>Group</th>
+                                        <th>OS · Agent</th>
+                                        <th>Telemetry</th>
+                                        <th>Last seen</th>
+                                        <th className="col-actions" aria-label="Actions" />
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredServers.map(server => (
+                                        <ServerRow
+                                            key={server.id}
+                                            server={server}
+                                            selected={selectedIds.has(server.id)}
+                                            onToggle={() => toggleSelect(server.id)}
+                                            onPing={() => handlePingServer(server.id)}
+                                            onDelete={() => setDeleteTarget(server)}
+                                            onCopyInstall={() => handleCopyInstall(server)}
+                                        />
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </main>
+            </div>
 
             {showAddModal && (
                 <AddServerModal
@@ -192,128 +461,419 @@ const Servers = () => {
                     onUpdated={loadData}
                 />
             )}
+
+            <ConfirmDialog
+                isOpen={Boolean(deleteTarget)}
+                title={`Delete ${deleteTarget?.name || 'server'}?`}
+                message="This removes the server from your fleet and revokes its agent token. The agent on the host will stop reporting."
+                requireConfirmation={deleteTarget?.name}
+                confirmText="Delete server"
+                variant="danger"
+                onConfirm={handleDeleteServer}
+                onCancel={() => setDeleteTarget(null)}
+            />
+
+            <ConfirmDialog
+                isOpen={bulkDeleteOpen}
+                title={`Delete ${selectedIds.size} server${selectedIds.size === 1 ? '' : 's'}?`}
+                message="All selected servers will be removed from the fleet and their agent tokens revoked. This cannot be undone."
+                requireConfirmation="DELETE"
+                confirmText={`Delete ${selectedIds.size} server${selectedIds.size === 1 ? '' : 's'}`}
+                variant="danger"
+                onConfirm={handleBulkDelete}
+                onCancel={() => setBulkDeleteOpen(false)}
+            />
         </div>
     );
 };
 
-const ServerCard = ({ server, onPing }) => {
-    const statusColors = {
-        online: '#10B981',
-        offline: '#EF4444',
-        connecting: '#F59E0B',
-        pending: '#6B7280'
+const formatLastSeen = (timestamp) => {
+    if (!timestamp) return 'Never';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = (now - date) / 1000;
+    if (diff < 60) return 'Just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return date.toLocaleDateString();
+};
+
+const clamp = (v) => Math.min(100, Math.max(0, Number(v) || 0));
+
+const ServerRow = ({ server, selected, onToggle, onPing, onDelete, onCopyInstall }) => {
+    const [menuPos, setMenuPos] = useState(null);
+    const triggerRef = useRef(null);
+    const menuRef = useRef(null);
+
+    const closeMenu = useCallback(() => setMenuPos(null), []);
+
+    const openMenu = () => {
+        const r = triggerRef.current?.getBoundingClientRect();
+        if (!r) return;
+        const menuHeight = 240;
+        const menuWidth = 220;
+        const flipUp = r.bottom + menuHeight + 8 > window.innerHeight;
+        setMenuPos({
+            top: flipUp ? r.top - menuHeight - 4 : r.bottom + 4,
+            left: Math.max(8, r.right - menuWidth),
+        });
     };
 
-    const formatLastSeen = (timestamp) => {
-        if (!timestamp) return 'Never';
-        const date = new Date(timestamp);
-        const now = new Date();
-        const diff = (now - date) / 1000;
+    useEffect(() => {
+        if (!menuPos) return undefined;
+        const onDocDown = (e) => {
+            if (
+                menuRef.current && !menuRef.current.contains(e.target) &&
+                triggerRef.current && !triggerRef.current.contains(e.target)
+            ) {
+                closeMenu();
+            }
+        };
+        const onScroll = () => closeMenu();
+        document.addEventListener('mousedown', onDocDown);
+        window.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', onScroll);
+        return () => {
+            document.removeEventListener('mousedown', onDocDown);
+            window.removeEventListener('scroll', onScroll, true);
+            window.removeEventListener('resize', onScroll);
+        };
+    }, [menuPos, closeMenu]);
 
-        if (diff < 60) return 'Just now';
-        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-        return date.toLocaleDateString();
+    const status = server.status || 'pending';
+    const displayHost = server.hostname || server.ip_address || 'Unassigned endpoint';
+    const initial = (server.name || displayHost || '?').charAt(0).toUpperCase();
+    const metrics = {
+        cpu: clamp(server.metrics?.cpu_percent),
+        memory: clamp(server.metrics?.memory_percent),
+        disk: clamp(server.metrics?.disk_percent),
     };
+    const hasMetrics = server.metrics && status === 'online';
 
     return (
-        <div className={`server-card ${server.status}`}>
-            <div className="server-card-header">
-                <div className="server-status-indicator" style={{ backgroundColor: statusColors[server.status] || '#6B7280' }} />
-                <div className="server-info">
-                    <h3 className="server-name">{server.name}</h3>
-                    <span className="server-hostname">{server.hostname || server.ip_address}</span>
-                </div>
-            </div>
-
-            <div className="server-card-body">
-                <div className="server-meta">
-                    <div className="meta-item">
-                        <span className="meta-label">OS</span>
-                        <span className="meta-value">{server.os_type || 'Unknown'}</span>
-                    </div>
-                    <div className="meta-item">
-                        <span className="meta-label">Agent</span>
-                        <span className="meta-value">{server.agent_version || 'Not installed'}</span>
-                    </div>
-                    <div className="meta-item">
-                        <span className="meta-label">Docker</span>
-                        <span className="meta-value">{server.docker_version || 'N/A'}</span>
-                    </div>
-                    <div className="meta-item">
-                        <span className="meta-label">Last Seen</span>
-                        <span className="meta-value">{formatLastSeen(server.last_seen)}</span>
-                    </div>
-                </div>
-
-                {server.metrics && server.status === 'online' && (
-                    <div className="server-metrics-mini">
-                        <div className="metric-bar">
-                            <span className="metric-label">CPU</span>
-                            <div className="bar-track">
-                                <div
-                                    className="bar-fill cpu"
-                                    style={{ width: `${server.metrics.cpu_percent || 0}%` }}
-                                />
-                            </div>
-                            <span className="metric-value">{(server.metrics.cpu_percent || 0).toFixed(0)}%</span>
-                        </div>
-                        <div className="metric-bar">
-                            <span className="metric-label">RAM</span>
-                            <div className="bar-track">
-                                <div
-                                    className="bar-fill memory"
-                                    style={{ width: `${server.metrics.memory_percent || 0}%` }}
-                                />
-                            </div>
-                            <span className="metric-value">{(server.metrics.memory_percent || 0).toFixed(0)}%</span>
-                        </div>
-                        <div className="metric-bar">
-                            <span className="metric-label">Disk</span>
-                            <div className="bar-track">
-                                <div
-                                    className="bar-fill disk"
-                                    style={{ width: `${server.metrics.disk_percent || 0}%` }}
-                                />
-                            </div>
-                            <span className="metric-value">{(server.metrics.disk_percent || 0).toFixed(0)}%</span>
-                        </div>
-                    </div>
-                )}
-
-                {server.group_name && (
-                    <div className="server-group-badge">
+        <tr className={`server-row server-row--${status} ${selected ? 'is-selected' : ''}`}>
+            <td className="col-check">
+                <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={onToggle}
+                    aria-label={`Select ${server.name}`}
+                />
+            </td>
+            <td>
+                <Link to={`/servers/${server.id}`} className="server-row__name">
+                    <span className={`server-row__avatar server-row__avatar--${status}`} aria-hidden="true">{initial}</span>
+                    <span className="server-row__identity">
+                        <span className="server-row__title">{server.name}</span>
+                        <span className="server-row__sub">{displayHost}</span>
+                    </span>
+                </Link>
+            </td>
+            <td>
+                <span className={`status-pill status-pill--${status}`}>
+                    <span className="status-pill__dot" />
+                    {status}
+                </span>
+            </td>
+            <td>
+                {server.group_name ? (
+                    <span className="server-row__group">
                         <FolderIcon size={12} />
                         {server.group_name}
-                    </div>
+                    </span>
+                ) : (
+                    <span className="muted">—</span>
                 )}
-            </div>
-
-            <div className="server-card-footer">
-                <Link to={`/servers/${server.id}`} className="btn btn-sm btn-secondary">
-                    <EyeIcon /> Details
-                </Link>
-                <button className="btn btn-sm btn-secondary" onClick={onPing} title="Ping Server">
-                    <RefreshIcon />
-                </button>
-                <Link to={`/servers/${server.id}/docker`} className="btn btn-sm btn-primary">
-                    <DockerIcon /> Docker
-                </Link>
-            </div>
-        </div>
+            </td>
+            <td>
+                <div className="server-row__stack">
+                    <span>{server.os_type || 'Unknown'}</span>
+                    <span className="muted">{server.agent_version ? `agent ${server.agent_version}` : 'agent not installed'}</span>
+                </div>
+            </td>
+            <td>
+                {hasMetrics ? (
+                    <div className="server-row__telemetry">
+                        <span title={`CPU ${metrics.cpu.toFixed(0)}%`}>
+                            <em>CPU</em>
+                            <span className="bar"><span className="bar-fill cpu" style={{ width: `${metrics.cpu}%` }} /></span>
+                            <b>{metrics.cpu.toFixed(0)}%</b>
+                        </span>
+                        <span title={`RAM ${metrics.memory.toFixed(0)}%`}>
+                            <em>RAM</em>
+                            <span className="bar"><span className="bar-fill memory" style={{ width: `${metrics.memory}%` }} /></span>
+                            <b>{metrics.memory.toFixed(0)}%</b>
+                        </span>
+                        <span title={`Disk ${metrics.disk.toFixed(0)}%`}>
+                            <em>DSK</em>
+                            <span className="bar"><span className="bar-fill disk" style={{ width: `${metrics.disk}%` }} /></span>
+                            <b>{metrics.disk.toFixed(0)}%</b>
+                        </span>
+                    </div>
+                ) : (
+                    <span className="muted">{status === 'pending' ? 'Awaiting agent' : status === 'offline' ? 'Offline' : 'No data'}</span>
+                )}
+            </td>
+            <td>
+                <span className="server-row__lastseen">{formatLastSeen(server.last_seen)}</span>
+            </td>
+            <td className="col-actions">
+                <div className="row-actions">
+                    <button type="button" className="row-actions__icon" onClick={onPing} title="Ping server" aria-label={`Ping ${server.name}`}>
+                        <RefreshIcon />
+                    </button>
+                    <Link to={`/servers/${server.id}/docker`} className="row-actions__icon" title="Open Docker" aria-label={`Open Docker for ${server.name}`}>
+                        <DockerIcon />
+                    </Link>
+                    <button
+                        ref={triggerRef}
+                        type="button"
+                        className="row-actions__icon"
+                        onClick={() => (menuPos ? closeMenu() : openMenu())}
+                        aria-haspopup="menu"
+                        aria-expanded={Boolean(menuPos)}
+                        title="More actions"
+                    >
+                        <MoreIcon />
+                    </button>
+                    {menuPos && (
+                        <div
+                            ref={menuRef}
+                            className="row-menu"
+                            role="menu"
+                            style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
+                        >
+                            <Link to={`/servers/${server.id}`} className="row-menu__item" role="menuitem" onClick={closeMenu}>
+                                <EyeIcon /> View details
+                            </Link>
+                            <button type="button" className="row-menu__item" role="menuitem" onClick={() => { closeMenu(); onPing(); }}>
+                                <RefreshIcon /> Ping now
+                            </button>
+                            {status === 'pending' && (
+                                <button type="button" className="row-menu__item" role="menuitem" onClick={() => { closeMenu(); onCopyInstall(); }}>
+                                    <CopyIcon /> Copy connection string
+                                </button>
+                            )}
+                            <Link to={`/servers/${server.id}/docker`} className="row-menu__item" role="menuitem" onClick={closeMenu}>
+                                <DockerIcon /> Manage Docker
+                            </Link>
+                            <div className="row-menu__divider" />
+                            <button type="button" className="row-menu__item row-menu__item--danger" role="menuitem" onClick={() => { closeMenu(); onDelete(); }}>
+                                <TrashIcon /> Delete server
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </td>
+        </tr>
     );
 };
 
+const PairAgentForm = ({ groups, onClose, onClaimed }) => {
+    const [pairCode, setPairCode] = useState('');
+    const [passphrase, setPassphrase] = useState('');
+    const [name, setName] = useState('');
+    const [groupId, setGroupId] = useState('');
+    const [lookupResult, setLookupResult] = useState(null);
+    const [lookupError, setLookupError] = useState('');
+    const [claimError, setClaimError] = useState('');
+    const [loading, setLoading] = useState(false);
+    const toast = useToast();
+
+    const formattedCode = pairCode
+        .toUpperCase()
+        .replace(/[^0-9A-Z]/g, '')
+        .replace(/[01OIL]/g, '')
+        .slice(0, 6);
+
+    // Auto-lookup as soon as the user finishes typing all 6 characters.
+    // Avoids showing "must be 6 chars" while the user is still mid-entry or
+    // just clicking around — the previous onBlur trigger fired too eagerly.
+    useEffect(() => {
+        if (formattedCode.length !== 6) return;
+        let cancelled = false;
+        setLookupError('');
+        setLoading(true);
+        api.lookupPairCode(formattedCode)
+            .then((res) => {
+                if (cancelled) return;
+                setLookupResult(res);
+                // Prefer the operator-set display name (entered in the agent's
+                // wizard) over the raw hostname. Falls back to hostname when
+                // the agent didn't supply one.
+                const suggestedName = res.system_info?.display_name
+                    || res.system_info?.hostname;
+                if (!name && suggestedName) setName(suggestedName);
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                setLookupError(err.message || 'Pair code not found');
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [formattedCode]);
+
+    async function handleClaim(e) {
+        e.preventDefault();
+        setClaimError('');
+        // Trim before validating: copy/paste from the agent screen sometimes
+        // catches a trailing space, which used to silently fail the claim.
+        const cleanPass = passphrase.trim();
+        if (!cleanPass) {
+            setClaimError('Passphrase is required');
+            return;
+        }
+        setLoading(true);
+        try {
+            await api.claimPairedAgent({
+                pair_code: formattedCode,
+                passphrase: cleanPass,
+                name: name || undefined,
+                group_id: groupId || undefined,
+                trust_fingerprint: true
+            });
+            toast.success('Agent paired successfully');
+            onClaimed();
+        } catch (err) {
+            const status = err.status || err.response?.status;
+            if (status === 429) {
+                setClaimError('Too many attempts. Wait a few minutes, or re-open the agent wizard to start a new pairing.');
+            } else if (status === 401) {
+                setClaimError('Pair code or passphrase is wrong. Check both values exactly as shown on the agent screen.');
+            } else {
+                setClaimError(err.message || 'Failed to claim agent');
+            }
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function formatDisplay(code) {
+        if (!code) return '------';
+        return code.length > 3 ? `${code.slice(0, 3)}-${code.slice(3)}` : code;
+    }
+
+    return (
+        <form className="server-setup-form" onSubmit={handleClaim}>
+            <div className="server-setup-form__body">
+                <div className="pair-instructions">
+                    <p>
+                        On the target machine, start the agent. It will display a&nbsp;6-character pair code and a passphrase — enter both below.
+                    </p>
+                </div>
+
+                <div className="form-group">
+                    <label>Pair code</label>
+                    <Input
+                        type="text"
+                        value={formatDisplay(formattedCode)}
+                        onChange={(e) => {
+                            setPairCode(e.target.value);
+                            setLookupResult(null);
+                            setLookupError('');
+                        }}
+                        placeholder="ABC-123"
+                        autoFocus
+                        autoComplete="off"
+                        spellCheck={false}
+                        style={{ fontFamily: 'monospace', fontSize: '1.25rem', letterSpacing: '0.15em', textAlign: 'center' }}
+                        required
+                    />
+                    <span className="form-hint">The code is shown in the terminal output or system tray.</span>
+                    {lookupError && <div className="error-message" style={{ marginTop: '0.5rem' }}>{lookupError}</div>}
+                </div>
+
+                {lookupResult && (
+                    <div className="success-banner" style={{ marginTop: '0.5rem' }}>
+                        <div>
+                            <strong>Agent found</strong>
+                            <p className="success-subtitle">
+                                {lookupResult.system_info?.display_name && (
+                                    <>Server: <code>{lookupResult.system_info.display_name}</code><br /></>
+                                )}
+                                Hostname: <code>{lookupResult.system_info?.hostname || 'unknown'}</code><br />
+                                Fingerprint: <code style={{ fontFamily: 'monospace' }}>{lookupResult.pubkey_fpr}</code>
+                            </p>
+                            <p className="text-muted" style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
+                                Confirm this fingerprint matches the one shown by the agent before continuing.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                <div className="form-group">
+                    <label>Passphrase *</label>
+                    <Input
+                        type="text"
+                        value={passphrase}
+                        onChange={(e) => setPassphrase(e.target.value)}
+                        placeholder="Shown on the agent's pairing screen"
+                        autoComplete="off"
+                        spellCheck={false}
+                        style={{ fontFamily: 'monospace', fontSize: '1.1rem', letterSpacing: '0.08em' }}
+                        required
+                    />
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Server name</label>
+                        <Input
+                            type="text"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder={lookupResult?.system_info?.hostname || 'Auto-detected from agent (optional)'}
+                        />
+                        <span className="form-hint">Leave blank to use the agent&apos;s hostname.</span>
+                    </div>
+                    <div className="form-group">
+                        <label>Group</label>
+                        <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+                            <option value="">No Group</option>
+                            {groups.map(g => (
+                                <option key={g.id} value={g.id}>{g.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {claimError && <div className="error-message">{claimError}</div>}
+            </div>
+
+            <div className="modal-actions">
+                <Button type="button" variant="outline" onClick={onClose}>
+                    Cancel
+                </Button>
+                <Button type="submit" disabled={loading || formattedCode.length !== 6}>
+                    {loading ? 'Pairing…' : 'Pair Agent'}
+                </Button>
+            </div>
+        </form>
+    );
+};
+
+// Token-lifetime presets shown in the "Add Server" expiry dropdown. The value
+// is in seconds; -1 is a sentinel for "never" (the backend turns it into a
+// far-future date). Default is 7 days — long enough to set up later that
+// evening, short enough that an abandoned string doesn't linger forever as a
+// usable bearer credential.
+const EXPIRY_OPTIONS = [
+    { label: '1 hour',  value: 60 * 60 },
+    { label: '24 hours', value: 24 * 60 * 60 },
+    { label: '7 days',  value: 7 * 24 * 60 * 60 },
+    { label: '30 days', value: 30 * 24 * 60 * 60 },
+    { label: 'Never',   value: -1 },
+];
+const DEFAULT_EXPIRY = 7 * 24 * 60 * 60;
+
 const AddServerModal = ({ groups, onClose, onCreated }) => {
+    const [mode, setMode] = useState('install');
     const [step, setStep] = useState(1);
-    const [formData, setFormData] = useState({
-        name: '',
-        description: '',
-        group_id: '',
-        hostname: '',
-        ip_address: '',
-        permissions: ['docker:read', 'docker:write', 'system:read']
-    });
+    const [groupId, setGroupId] = useState('');
+    const [expiresIn, setExpiresIn] = useState(DEFAULT_EXPIRY);
     const [registrationData, setRegistrationData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -325,7 +885,14 @@ const AddServerModal = ({ groups, onClose, onCreated }) => {
         setLoading(true);
 
         try {
-            const result = await api.createServer(formData);
+            // The backend now derives the server name from the agent's
+            // hostname on /register, so we just send what the user can
+            // actually pick: the token's lifetime and (optionally) which
+            // group the row should land in.
+            const result = await api.createServer({
+                expires_in: expiresIn,
+                group_id: groupId || undefined,
+            });
             setRegistrationData(result);
             setStep(2);
         } catch (err) {
@@ -335,16 +902,12 @@ const AddServerModal = ({ groups, onClose, onCreated }) => {
         }
     }
 
-    function handleChange(e) {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
-    }
-
     function copyToClipboard(text) {
         navigator.clipboard.writeText(text);
         toast.success('Copied to clipboard');
     }
 
+    const connectionString = registrationData?.connection_string || '';
     const linuxInstallScript = registrationData ? `curl -fsSL ${window.location.origin}/api/v1/servers/install.sh | sudo bash -s -- \\
   --server "${window.location.origin}" \\
   --token "${registrationData.registration_token}"` : '';
@@ -354,154 +917,164 @@ Install-ServerKitAgent -Server "${window.location.origin}" -Token "${registratio
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal server-setup-modal" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>{step === 1 ? 'Add Server' : 'Install Agent'}</h2>
+                    <div>
+                        <h2>{step === 1 ? 'Add Server' : (mode === 'pair' ? 'Pair Agent' : 'Connect Agent')}</h2>
+                        <p>
+                            {step === 2 && mode !== 'pair'
+                                ? 'Paste the connection string into the agent, or run the one-liner installer.'
+                                : step === 2
+                                ? 'Enter the 6-char code shown on the agent and your passphrase.'
+                                : 'Connect an existing agent or set up a brand-new machine.'}
+                        </p>
+                    </div>
                     <button className="modal-close" onClick={onClose}>&times;</button>
                 </div>
 
-                {step === 1 ? (
-                    <form onSubmit={handleCreateServer}>
-                        {error && <div className="error-message">{error}</div>}
+                {step === 1 && (
+                    <div className="mode-switcher">
+                        <button
+                            type="button"
+                            className={`mode-switcher__tab${mode === 'install' ? ' is-active' : ''}`}
+                            onClick={() => setMode('install')}
+                        >
+                            Connection string
+                        </button>
+                        <button
+                            type="button"
+                            className={`mode-switcher__tab${mode === 'pair' ? ' is-active' : ''}`}
+                            onClick={() => setMode('pair')}
+                        >
+                            Pair code
+                        </button>
+                    </div>
+                )}
 
-                        <div className="form-group">
-                            <label>Server Name *</label>
-                            <input
-                                type="text"
-                                name="name"
-                                value={formData.name}
-                                onChange={handleChange}
-                                placeholder="My Production Server"
-                                required
-                            />
-                        </div>
+                {step === 1 && mode === 'pair' ? (
+                    <PairAgentForm
+                        groups={groups}
+                        onClose={onClose}
+                        onClaimed={onCreated}
+                    />
+                ) : step === 1 ? (
+                    <form className="server-setup-form" onSubmit={handleCreateServer}>
+                        <div className="server-setup-form__body">
+                            {error && <div className="error-message">{error}</div>}
 
-                        <div className="form-group">
-                            <label>Description</label>
-                            <textarea
-                                name="description"
-                                value={formData.description}
-                                onChange={handleChange}
-                                placeholder="Optional description..."
-                                rows={2}
-                            />
-                        </div>
+                            <p className="section-description">
+                                Generate a single connection string. Paste it into the agent&apos;s
+                                pairing wizard, or use it with the one-liner installer. The
+                                agent&apos;s hostname becomes the server name on first connect — you
+                                can rename it later from the server&apos;s Settings tab.
+                            </p>
 
-                        <div className="form-row">
-                            <div className="form-group">
-                                <label>Hostname</label>
-                                <input
-                                    type="text"
-                                    name="hostname"
-                                    value={formData.hostname}
-                                    onChange={handleChange}
-                                    placeholder="server.example.com"
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label>IP Address</label>
-                                <input
-                                    type="text"
-                                    name="ip_address"
-                                    value={formData.ip_address}
-                                    onChange={handleChange}
-                                    placeholder="192.168.1.100"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="form-group">
-                            <label>Group</label>
-                            <select name="group_id" value={formData.group_id} onChange={handleChange}>
-                                <option value="">No Group</option>
-                                {groups.map(group => (
-                                    <option key={group.id} value={group.id}>{group.name}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div className="form-group">
-                            <label>Permissions</label>
-                            <div className="permissions-grid">
-                                {[
-                                    { key: 'docker:read', label: 'Docker (Read)' },
-                                    { key: 'docker:write', label: 'Docker (Write)' },
-                                    { key: 'system:read', label: 'System Metrics' },
-                                    { key: 'system:exec', label: 'Remote Execution' }
-                                ].map(perm => (
-                                    <label key={perm.key} className="permission-checkbox">
-                                        <input
-                                            type="checkbox"
-                                            checked={formData.permissions.includes(perm.key)}
-                                            onChange={(e) => {
-                                                const newPerms = e.target.checked
-                                                    ? [...formData.permissions, perm.key]
-                                                    : formData.permissions.filter(p => p !== perm.key);
-                                                setFormData(prev => ({ ...prev, permissions: newPerms }));
-                                            }}
-                                        />
-                                        {perm.label}
-                                    </label>
-                                ))}
+                            <div className="form-row">
+                                <div className="form-group">
+                                    <label>Group</label>
+                                    <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+                                        <option value="">No Group</option>
+                                        {groups.map(group => (
+                                            <option key={group.id} value={group.id}>{group.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label>Token expires</label>
+                                    <select
+                                        value={expiresIn}
+                                        onChange={(e) => setExpiresIn(Number(e.target.value))}
+                                    >
+                                        {EXPIRY_OPTIONS.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                    <span className="form-hint">Single-use. Burned the moment an agent registers with it.</span>
+                                </div>
                             </div>
                         </div>
 
                         <div className="modal-actions">
-                            <button type="button" className="btn btn-secondary" onClick={onClose}>
+                            <Button type="button" variant="outline" onClick={onClose}>
                                 Cancel
-                            </button>
-                            <button type="submit" className="btn btn-primary" disabled={loading}>
-                                {loading ? 'Creating...' : 'Create & Get Install Script'}
-                            </button>
+                            </Button>
+                            <Button type="submit" disabled={loading}>
+                                {loading ? 'Generating…' : 'Generate Connection String'}
+                            </Button>
                         </div>
                     </form>
                 ) : (
                     <div className="install-instructions">
-                        <div className="success-banner">
-                            <CheckCircleIcon />
-                            <div>
-                                <strong>Server registered successfully</strong>
-                                <p className="success-subtitle">Run the install script on your target machine to connect the agent.</p>
+                        <div className="install-instructions__scroll">
+                            <div className="success-banner">
+                                <CheckCircleIcon />
+                                <div>
+                                    <strong>Connection string ready</strong>
+                                    <p className="success-subtitle">Paste this into the agent, or run the installer.</p>
+                                </div>
+                            </div>
+
+                            <ConnectionStringField
+                                value={connectionString}
+                                onCopy={() => copyToClipboard(connectionString)}
+                            />
+
+                            <details className="install-fallback">
+                                <summary>Need to install the agent first? Use the one-liner installer.</summary>
+                                <div className="install-tabs" style={{ marginTop: '0.75rem' }}>
+                                    <InstallTab
+                                        title="Linux"
+                                        description="curl, tar, sudo, and systemd"
+                                        icon={<TerminalIcon />}
+                                        script={linuxInstallScript}
+                                        onCopy={() => copyToClipboard(linuxInstallScript)}
+                                    />
+                                    <InstallTab
+                                        title="Windows (PowerShell)"
+                                        description="Run as Administrator"
+                                        icon={<WindowsIcon />}
+                                        script={windowsInstallScript}
+                                        onCopy={() => copyToClipboard(windowsInstallScript)}
+                                    />
+                                </div>
+                            </details>
+
+                            <div className="install-info">
+                                <h4>What happens next?</h4>
+                                <ol>
+                                    <li>Open the agent on your target machine and paste the connection string.</li>
+                                    <li>The agent registers automatically and reports its hostname back as the server name.</li>
+                                    <li>The row in this list will switch from <strong>Pending</strong> to <strong>Online</strong>.</li>
+                                </ol>
+                                <p className="text-muted">
+                                    The token is single-use. If you reinstall the agent later, generate a new connection string from the server&apos;s Settings tab.
+                                </p>
                             </div>
                         </div>
 
-                        <div className="install-tabs">
-                            <InstallTab
-                                title="Linux / macOS"
-                                description="Ubuntu, Debian, CentOS, Fedora, Arch, macOS — requires curl and sudo"
-                                icon={<TerminalIcon />}
-                                script={linuxInstallScript}
-                                onCopy={() => copyToClipboard(linuxInstallScript)}
-                            />
-                            <InstallTab
-                                title="Windows (PowerShell)"
-                                description="Run as Administrator"
-                                icon={<WindowsIcon />}
-                                script={windowsInstallScript}
-                                onCopy={() => copyToClipboard(windowsInstallScript)}
-                            />
-                        </div>
-
-                        <div className="install-info">
-                            <h4>What happens next?</h4>
-                            <ol>
-                                <li>Copy and run the install script on your server</li>
-                                <li>The agent downloads, installs, and registers automatically</li>
-                                <li>Your server will appear as <strong>"Pending"</strong> until the agent connects, then switch to <strong>"Online"</strong></li>
-                            </ol>
-                            <p className="text-muted">
-                                The registration token expires in 24 hours. You can regenerate it from the server details page.
-                            </p>
-                        </div>
-
                         <div className="modal-actions">
-                            <button className="btn btn-primary" onClick={onCreated}>
+                            <Button onClick={onCreated}>
                                 Close
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 )}
             </div>
+        </div>
+    );
+};
+
+const ConnectionStringField = ({ value, onCopy }) => {
+    return (
+        <div className="connection-string-field">
+            <div className="connection-string-field__header">
+                <KeyIcon />
+                <span>Connection string</span>
+                <Button variant="outline" size="sm" onClick={onCopy}>
+                    <CopyIcon /> Copy
+                </Button>
+            </div>
+            <pre className="connection-string-field__value">{value}</pre>
         </div>
     );
 };
@@ -515,9 +1088,9 @@ const InstallTab = ({ title, description, icon, script, onCopy }) => {
                     <span>{title}</span>
                     {description && <span className="install-tab-description">{description}</span>}
                 </div>
-                <button className="btn btn-sm btn-secondary" onClick={onCopy}>
+                <Button variant="outline" size="sm" onClick={onCopy}>
                     <CopyIcon /> Copy
-                </button>
+                </Button>
             </div>
             <pre className="install-script">{script}</pre>
         </div>
@@ -586,16 +1159,16 @@ const ManageGroupsModal = ({ groups, onClose, onUpdated }) => {
                 </div>
 
                 <form onSubmit={handleCreateGroup} className="group-form">
-                    <input
+                    <Input
                         type="text"
                         value={newGroupName}
                         onChange={(e) => setNewGroupName(e.target.value)}
                         placeholder="New group name..."
                         disabled={loading}
                     />
-                    <button type="submit" className="btn btn-primary" disabled={loading || !newGroupName.trim()}>
+                    <Button type="submit" disabled={loading || !newGroupName.trim()}>
                         <PlusIcon /> Add
-                    </button>
+                    </Button>
                 </form>
 
                 <div className="groups-list">
@@ -605,7 +1178,7 @@ const ManageGroupsModal = ({ groups, onClose, onUpdated }) => {
                         groupList.map(group => (
                             <div key={group.id} className="group-item">
                                 {editingGroup === group.id ? (
-                                    <input
+                                    <Input
                                         type="text"
                                         defaultValue={group.name}
                                         onBlur={(e) => handleUpdateGroup(group.id, e.target.value)}
@@ -646,7 +1219,7 @@ const ManageGroupsModal = ({ groups, onClose, onUpdated }) => {
                 </div>
 
                 <div className="modal-actions">
-                    <button className="btn btn-primary" onClick={onClose}>Done</button>
+                    <Button onClick={onClose}>Done</Button>
                 </div>
             </div>
         </div>
@@ -676,25 +1249,10 @@ const FolderIcon = ({ size = 16 }) => (
     </svg>
 );
 
-const SearchIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="11" cy="11" r="8"/>
-        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-    </svg>
-);
-
 const CheckCircleIcon = () => (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
         <polyline points="22 4 12 14.01 9 11.01"/>
-    </svg>
-);
-
-const XCircleIcon = () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="10"/>
-        <line x1="15" y1="9" x2="9" y2="15"/>
-        <line x1="9" y1="9" x2="15" y2="15"/>
     </svg>
 );
 
@@ -753,6 +1311,20 @@ const TrashIcon = () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <polyline points="3 6 5 6 21 6"/>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+    </svg>
+);
+
+const MoreIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="5" cy="12" r="1.6"/>
+        <circle cx="12" cy="12" r="1.6"/>
+        <circle cx="19" cy="12" r="1.6"/>
+    </svg>
+);
+
+const KeyIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
     </svg>
 );
 

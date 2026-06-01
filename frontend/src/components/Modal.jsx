@@ -1,51 +1,55 @@
-import { useEffect, useRef } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
-export default function Modal({ open, onClose, title, children, footer, className = '', size = '' }) {
-    const modalRef = useRef(null);
+// Size → Tailwind max-width on >=sm screens. Mobile is always nearly full-width.
+const SIZE_CLASS = {
+  sm:  'sm:max-w-sm',
+  md:  'sm:max-w-lg',
+  lg:  'sm:max-w-2xl',
+  xl:  'sm:max-w-4xl',
+  '2xl': 'sm:max-w-6xl',
+};
 
-    // Close on Escape key
-    useEffect(() => {
-        if (!open) return;
-        const handleKeyDown = (e) => {
-            if (e.key === 'Escape') onClose();
-        };
-        document.addEventListener('keydown', handleKeyDown);
-        return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [open, onClose]);
+export default function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  className = '',
+  size = 'md',
+}) {
+  const sizeClass = SIZE_CLASS[size] || SIZE_CLASS.md;
 
-    // Focus trap: focus the modal when it opens
-    useEffect(() => {
-        if (open && modalRef.current) {
-            modalRef.current.focus();
-        }
-    }, [open]);
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent
+        className={cn(
+          'max-h-[90vh] overflow-hidden p-0 flex flex-col gap-0',
+          sizeClass,
+          className
+        )}
+      >
+        {title && (
+          <DialogHeader className="px-6 py-4 pr-12 border-b border-border space-y-0">
+            <DialogTitle>{title}</DialogTitle>
+          </DialogHeader>
+        )}
 
-    if (!open) return null;
+        <div className="flex-1 overflow-y-auto px-6 py-4">{children}</div>
 
-    return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div
-                className={`modal ${size ? `modal-${size}` : ''} ${className}`.trim()}
-                onClick={e => e.stopPropagation()}
-                ref={modalRef}
-                tabIndex={-1}
-                role="dialog"
-                aria-modal="true"
-                aria-label={title}
-            >
-                <div className="modal-header">
-                    <h3>{title}</h3>
-                    <button className="modal-close" onClick={onClose} aria-label="Close">&times;</button>
-                </div>
-                <div className="modal-body">
-                    {children}
-                </div>
-                {footer && (
-                    <div className="modal-footer">
-                        {footer}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
+        {footer && (
+          <DialogFooter className="px-6 py-3 border-t border-border bg-card sm:justify-end">
+            {footer}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }

@@ -11,6 +11,7 @@ Provides REST endpoints for:
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, Application
+from app.services.deployment_job_service import DeploymentJobService
 from app.services.template_service import TemplateService
 
 templates_bp = Blueprint('templates', __name__)
@@ -151,15 +152,23 @@ def install_template(template_id):
             }), 400
 
         user_variables = data.get('variables', {})
+        server_id = data.get('server_id') or data.get('target_server_id')
+        wait = bool(data.get('wait', False))
 
-        result = TemplateService.install_template(
+        result = DeploymentJobService.install_template(
             template_id=template_id,
             app_name=app_name,
             user_variables=user_variables,
-            user_id=current_user_id
+            user_id=current_user_id,
+            server_id=server_id,
+            wait=wait,
         )
 
-        return jsonify(result), 201 if result.get('success') else 400
+        if not result.get('success'):
+            return jsonify(result), 400
+
+        status = result.get('job', {}).get('status')
+        return jsonify(result), 201 if status == 'succeeded' else 202
 
     except Exception as e:
         import traceback

@@ -1,239 +1,113 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    ServerKit development launcher and validation tool.
+    Windows entry point for the ServerKit development environment.
 .DESCRIPTION
-    Start backend, frontend, or both. Run validation checks.
-.PARAMETER Mode
-    Operation mode: start (default), backend, frontend, validate
+    Delegates to dev/dev.sh through WSL so local development runs in a
+    Linux-like environment and stays in sync with the Bash launcher.
 .EXAMPLE
-    .\dev.ps1              # Start backend + frontend
-    .\dev.ps1 backend      # Backend only
-    .\dev.ps1 frontend     # Frontend only
-    .\dev.ps1 validate     # Run all linters/checks
+    .\dev.ps1
+    Start backend + frontend through WSL on stable non-default ports.
+.EXAMPLE
+    .\dev.ps1 frontend -BackendPort 5600
+    Start Vite through WSL, targeting an existing backend on port 5600.
 #>
 
-param(
-    [Parameter(Position = 0)]
-    [ValidateSet('start', 'backend', 'frontend', 'validate')]
-    [string]$Mode = 'start'
-)
-
 $ProjectRoot = $PSScriptRoot
-$BackendDir = Join-Path $ProjectRoot 'backend'
-$FrontendDir = Join-Path $ProjectRoot 'frontend'
 
-function Write-Header {
-    param([string]$Text)
-    Write-Host ""
-    Write-Host "=== $Text ===" -ForegroundColor Cyan
-    Write-Host ""
+if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+    Write-Host "Error: WSL is required for .\dev.ps1." -ForegroundColor Red
+    Write-Host "Install WSL, then run this again, or run ./dev.sh directly from Linux/WSL." -ForegroundColor Yellow
+    exit 1
 }
 
-function Write-Pass {
-    param([string]$Text)
-    Write-Host "  PASS " -ForegroundColor Green -NoNewline
-    Write-Host $Text
+$wslRoot = (& wsl.exe --exec wslpath -a -u "$ProjectRoot" 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $wslRoot) {
+    Write-Host "Error: Could not map this Windows path into WSL: $ProjectRoot" -ForegroundColor Red
+    Write-Host "Make sure a WSL distro is installed and can access this repository." -ForegroundColor Yellow
+    exit 1
 }
 
-function Write-Fail {
-    param([string]$Text)
-    Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-    Write-Host $Text
-}
+$wslRoot = $wslRoot.Trim()
+$devArgs = @($args)
+$forwardedEnv = @()
 
-function Start-Backend {
-    Write-Header "Starting Backend (http://localhost:5000)"
-    Push-Location $BackendDir
-    try {
-        if (Test-Path 'venv\Scripts\Activate.ps1') {
-            & 'venv\Scripts\Activate.ps1'
-        }
-        python run.py
-    }
-    finally {
-        Pop-Location
-    }
-}
-
-function Start-Frontend {
-    Write-Header "Starting Frontend (http://localhost:5173)"
-    Push-Location $FrontendDir
-    try {
-        npm run dev
-    }
-    finally {
-        Pop-Location
-    }
-}
-
-function Start-Both {
-    Write-Host ""
-    Write-Host "ServerKit Dev Server" -ForegroundColor Cyan
-    Write-Host "  Backend:  http://localhost:5000"
-    Write-Host "  Frontend: http://localhost:5173"
-    Write-Host ""
-
-    $backendJob = Start-Job -ScriptBlock {
-        param($dir)
-        Set-Location $dir
-        if (Test-Path 'venv\Scripts\Activate.ps1') {
-            & 'venv\Scripts\Activate.ps1'
-        }
-        python run.py
-    } -ArgumentList $BackendDir
-
-    Start-Sleep -Seconds 2
-
-    $frontendJob = Start-Job -ScriptBlock {
-        param($dir)
-        Set-Location $dir
-        npm run dev
-    } -ArgumentList $FrontendDir
-
-    try {
-        Write-Host "Press Ctrl+C to stop..." -ForegroundColor DarkGray
-        while ($true) {
-            # Stream output from both jobs
-            Receive-Job $backendJob -ErrorAction SilentlyContinue
-            Receive-Job $frontendJob -ErrorAction SilentlyContinue
-
-            if ($backendJob.State -eq 'Failed') {
-                Write-Host "Backend crashed!" -ForegroundColor Red
-                Receive-Job $backendJob
-                break
-            }
-            if ($frontendJob.State -eq 'Failed') {
-                Write-Host "Frontend crashed!" -ForegroundColor Red
-                Receive-Job $frontendJob
-                break
-            }
-            Start-Sleep -Seconds 1
+function Get-DevMode {
+    foreach ($arg in $devArgs) {
+        if ($arg -in @('start', 'backend', 'frontend', 'tunnel', 'validate')) {
+            return $arg
         }
     }
-    finally {
-        Stop-Job $backendJob -ErrorAction SilentlyContinue
-        Stop-Job $frontendJob -ErrorAction SilentlyContinue
-        Remove-Job $backendJob -Force -ErrorAction SilentlyContinue
-        Remove-Job $frontendJob -Force -ErrorAction SilentlyContinue
-        Write-Host "`nStopped." -ForegroundColor Yellow
-    }
+    return 'start'
 }
 
-function Invoke-Check {
+function Get-DevPort {
     param(
-        [string]$Name,
-        [string]$WorkDir,
-        [scriptblock]$Command
+        [string[]]$Names,
+        [string]$EnvName,
+        [int]$Default
     )
-    Write-Host "Running $Name..." -ForegroundColor Yellow
-    $prev = $PWD
-    if ($WorkDir) { Set-Location $WorkDir }
-    $ErrorActionPreference = 'Continue'
-    & $Command 2>&1 | Tee-Object -Variable output | Out-Null
-    $exitCode = $LASTEXITCODE
-    if ($WorkDir) { Set-Location $prev }
 
-    if ($exitCode -eq 0) {
-        Write-Pass $Name
-        return $true
-    }
-    else {
-        Write-Fail $Name
-        $output | ForEach-Object { Write-Host "    $_" }
-        return $false
-    }
-}
-
-function Run-Validate {
-    Write-Header "ServerKit Validation Suite"
-    $failed = 0
-    $passed = 0
-
-    # --- ESLint (warn-only, does not block) ---
-    Write-Host "Running ESLint..." -ForegroundColor Yellow
-    Push-Location $FrontendDir
-    $ErrorActionPreference = 'Continue'
-    npm run lint 2>&1 | Out-Null
-    $eslintExit = $LASTEXITCODE
-    Pop-Location
-    if ($eslintExit -eq 0) {
-        Write-Pass "ESLint"
-        $passed++
-    }
-    else {
-        Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "ESLint (has warnings/errors - run 'cd frontend && npm run lint' for details)"
-        $passed++  # count as pass — pre-existing issues should not block
-    }
-
-    # --- Bandit ---
-    if (Get-Command bandit -ErrorAction SilentlyContinue) {
-        if (Invoke-Check "Bandit (security scan)" "" { bandit -r "$BackendDir\app" --ini "$BackendDir\.bandit" --severity-level medium }) { $passed++ } else { $failed++ }
-    }
-    else {
-        Write-Fail "Bandit (not installed - pip install bandit)"
-        $failed++
-    }
-
-    # --- Pytest ---
-    if (Test-Path "$BackendDir\venv\Scripts\Activate.ps1") {
-        & "$BackendDir\venv\Scripts\Activate.ps1"
-    }
-    if (Invoke-Check "Pytest" $BackendDir { pytest --tb=short -q }) { $passed++ } else { $failed++ }
-
-    # --- Frontend build ---
-    if (Invoke-Check "Frontend build" $FrontendDir { npm run build }) { $passed++ } else { $failed++ }
-
-    # --- Summary ---
-    Write-Header "Results"
-    Write-Host "  Passed: $passed" -ForegroundColor Green
-    if ($failed -gt 0) {
-        Write-Host "  Failed: $failed" -ForegroundColor Red
-        exit 1
-    }
-    else {
-        Write-Host "  All checks passed!" -ForegroundColor Green
-    }
-}
-
-function Run-ValidateWatch {
-    Write-Host "Watching for changes... (Ctrl+C to stop)" -ForegroundColor DarkGray
-    Run-Validate
-
-    $watcher = [System.IO.FileSystemWatcher]::new()
-    $watcher.Path = $ProjectRoot
-    $watcher.IncludeSubdirectories = $true
-    $watcher.Filter = '*.*'
-    $watcher.EnableRaisingEvents = $true
-
-    $lastRun = [DateTime]::MinValue
-
-    try {
-        while ($true) {
-            $result = $watcher.WaitForChanged([System.IO.WatcherChangeTypes]::All, 2000)
-            if (-not $result.TimedOut) {
-                $ext = [System.IO.Path]::GetExtension($result.Name)
-                if ($ext -in '.py', '.js', '.jsx', '.ts', '.tsx') {
-                    $now = [DateTime]::Now
-                    if (($now - $lastRun).TotalSeconds -gt 3) {
-                        $lastRun = $now
-                        Write-Host "`nChange detected: $($result.Name)" -ForegroundColor Yellow
-                        Run-Validate
-                    }
-                }
+    for ($i = 0; $i -lt $devArgs.Count; $i++) {
+        $arg = [string]$devArgs[$i]
+        foreach ($name in $Names) {
+            if ($arg -eq $name -and ($i + 1) -lt $devArgs.Count) {
+                return [int]$devArgs[$i + 1]
+            }
+            if ($arg.StartsWith("$name=")) {
+                return [int]$arg.Substring($name.Length + 1)
             }
         }
     }
-    finally {
-        $watcher.Dispose()
+
+    $item = Get-Item -Path "Env:$EnvName" -ErrorAction SilentlyContinue
+    if ($item -and $item.Value) {
+        return [int]$item.Value
+    }
+
+    return $Default
+}
+
+function Stop-WindowsListenersOnPort {
+    param(
+        [int]$Port,
+        [string]$Label
+    )
+
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique |
+        Where-Object { $_ -and $_ -ne 0 -and $_ -ne $PID })
+
+    foreach ($processId in $listeners) {
+        $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if (-not $proc) {
+            continue
+        }
+
+        Write-Host "Stopping existing $Label listener on port $Port ($($proc.ProcessName) PID $processId)..." -ForegroundColor Yellow
+        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
     }
 }
 
-# --- Main ---
-switch ($Mode) {
-    'backend' { Start-Backend }
-    'frontend' { Start-Frontend }
-    'validate' { Run-ValidateWatch }
-    default { Start-Both }
+$mode = Get-DevMode
+$backendPort = Get-DevPort -Names @('--backend-port', '-BackendPort') -EnvName 'SERVERKIT_BACKEND_PORT' -Default 47927
+$frontendPort = Get-DevPort -Names @('--frontend-port', '-FrontendPort') -EnvName 'SERVERKIT_FRONTEND_PORT' -Default 41921
+$isHelp = $devArgs -contains '-h' -or $devArgs -contains '--help'
+
+if (-not $isHelp -and $mode -in @('start', 'backend', 'tunnel')) {
+    Stop-WindowsListenersOnPort -Port $backendPort -Label 'backend'
 }
+if (-not $isHelp -and $mode -in @('start', 'frontend', 'tunnel')) {
+    Stop-WindowsListenersOnPort -Port $frontendPort -Label 'frontend'
+}
+
+foreach ($name in @('SERVERKIT_BACKEND_PORT', 'SERVERKIT_FRONTEND_PORT', 'SERVERKIT_BROWSER_BACKEND_HOST', 'SERVERKIT_BACKEND_VENV', 'SERVERKIT_KILL_PORTS', 'NGROK_DOMAIN', 'NGROK_AUTHTOKEN', 'CORS_ORIGINS')) {
+    $item = Get-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+    if ($item -and $item.Value) {
+        $forwardedEnv += "$name=$($item.Value)"
+    }
+}
+
+Write-Host "Launching ServerKit dev environment in WSL..." -ForegroundColor Cyan
+& wsl.exe --cd "$wslRoot" --exec env @forwardedEnv bash ./dev/dev.sh @devArgs
+exit $LASTEXITCODE

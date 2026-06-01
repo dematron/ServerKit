@@ -1,0 +1,101 @@
+/**
+ * Extension route resolver.
+ *
+ * Splits contributed routes into two buckets based on their `layout`:
+ *
+ *   dashboardRoutes   — render inside <DashboardLayout/> alongside core
+ *                       pages (layout: 'padded' (default) | 'full').
+ *
+ *   standaloneGroups  — render OUTSIDE DashboardLayout. One group per
+ *                       distinct layout id (built-in 'bare' or any
+ *                       plugin-contributed layout). App.jsx wraps each
+ *                       group's routes in a parent <Route> that uses
+ *                       the layout component.
+ *
+ * Routes whose `component` (or whose custom `layout`) can't be resolved
+ * are skipped + logged in dev so a misconfigured plugin can't blow up
+ * the whole route tree.
+ */
+import { Route } from 'react-router-dom';
+import StandaloneLayout from '../layouts/StandaloneLayout';
+import {
+    useContributions,
+    resolveComponent,
+    resolveCustomLayout,
+    isInsideDashboard,
+} from './contributions';
+
+function devWarn(msg) {
+    if (import.meta.env.DEV) {
+        console.warn(`[plugins] ${msg}`);
+    }
+}
+
+function buildRoute(contrib, key) {
+    const Component = resolveComponent(contrib.plugin, contrib.component);
+    if (!Component) {
+        devWarn(
+            `Cannot resolve component "${contrib.component}" for plugin `
+            + `"${contrib.plugin}" (route ${contrib.path})`
+        );
+        return null;
+    }
+    return (
+        <Route
+            key={key}
+            path={contrib.path}
+            element={<Component />}
+        />
+    );
+}
+
+// Built-in layout components for non-dashboard groups. Custom plugin
+// layouts get resolved via resolveCustomLayout().
+const BUILTIN_LAYOUT_COMPONENTS = {
+    bare: StandaloneLayout,
+};
+
+export default function useExtensionRoutes() {
+    const { routes, layouts } = useContributions();
+
+    const dashboardRoutes = [];
+    const groupsByLayout = new Map();
+
+    (routes || []).forEach((contrib, i) => {
+        const key = `${contrib.plugin}:${contrib.path}:${i}`;
+        const layoutId = contrib.layout || 'padded';
+
+        if (isInsideDashboard(layoutId)) {
+            const node = buildRoute(contrib, key);
+            if (node) dashboardRoutes.push(node);
+            return;
+        }
+
+        // Standalone (bare or custom). Resolve the layout component once
+        // per group; skip the whole route if its layout can't be found.
+        let LayoutComponent = BUILTIN_LAYOUT_COMPONENTS[layoutId]
+            || resolveCustomLayout(layoutId, layouts);
+        if (!LayoutComponent) {
+            devWarn(
+                `Cannot resolve layout "${layoutId}" for plugin `
+                + `"${contrib.plugin}" (route ${contrib.path})`
+            );
+            return;
+        }
+
+        const node = buildRoute(contrib, key);
+        if (!node) return;
+
+        let group = groupsByLayout.get(layoutId);
+        if (!group) {
+            group = { layoutId, LayoutComponent, routes: [] };
+            groupsByLayout.set(layoutId, group);
+        }
+        group.routes.push(node);
+    });
+
+    return {
+        dashboardRoutes,
+        standaloneGroups: Array.from(groupsByLayout.values()),
+    };
+}

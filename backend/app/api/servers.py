@@ -6,6 +6,7 @@ Endpoints for managing remote servers and their agents.
 
 import os
 import hashlib
+import hmac
 import requests
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, Response, current_app, redirect
@@ -17,9 +18,85 @@ from app.models.server import Server, ServerGroup, ServerMetrics, ServerCommand,
 from app.services.agent_registry import agent_registry
 from app.services.agent_fleet_service import fleet_service
 from app.services.discovery_service import discovery_service
+from app.services import connection_string as connection_string_codec
 from app.middleware.rbac import admin_required, developer_required
 
+
+# Default token lifetime when the caller doesn't specify one. 7 days is
+# the sweet spot from the design discussion: long enough that "I'll set
+# this up later tonight" survives, short enough that an abandoned string
+# doesn't linger forever as a usable bearer credential.
+_DEFAULT_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
+
+# Sentinel placeholder name used while a server row exists but no agent
+# has registered against it yet. The register endpoint replaces this
+# with the agent's reported hostname; the prefix check there is the
+# reason the format here must stay stable.
+_PLACEHOLDER_NAME_PREFIX = "Pending pairing ("
+
+
+def _placeholder_name(server_id: str) -> str:
+    """Generate the placeholder name shown in the panel until pairing
+    completes. Includes a short id suffix so multiple unpaired rows are
+    distinguishable."""
+    return f"{_PLACEHOLDER_NAME_PREFIX}{server_id[:8]})"
+
+
+def _is_placeholder_name(name) -> bool:
+    """True if the given name is the placeholder we issued at create
+    time. Used by the register endpoint to decide whether overwriting
+    with the agent's hostname is safe (a user-chosen name shouldn't be
+    clobbered on re-pair)."""
+    return isinstance(name, str) and name.startswith(_PLACEHOLDER_NAME_PREFIX)
+
+
+def _resolve_token_expiry(expires_in):
+    """Convert an ``expires_in`` request field to a concrete datetime.
+
+    - missing / None       → default 7 days
+    - positive int seconds → that many seconds from now
+    - -1                   → "never" (100 years out — DB-safe sentinel)
+    """
+    if expires_in is None:
+        seconds = _DEFAULT_TOKEN_TTL_SECONDS
+    elif expires_in == -1:
+        return datetime.utcnow() + timedelta(days=365 * 100)
+    else:
+        try:
+            seconds = int(expires_in)
+        except (TypeError, ValueError):
+            seconds = _DEFAULT_TOKEN_TTL_SECONDS
+        if seconds <= 0:
+            seconds = _DEFAULT_TOKEN_TTL_SECONDS
+    return datetime.utcnow() + timedelta(seconds=seconds)
+
 servers_bp = Blueprint('servers', __name__)
+
+
+def _get_external_base_url():
+    """Return the public origin agents should use when this app sits behind a proxy."""
+    public_url = current_app.config.get('PUBLIC_URL') or os.environ.get('SERVERKIT_PUBLIC_URL')
+    if public_url:
+        return public_url.rstrip('/')
+
+    forwarded_proto = request.headers.get('X-Forwarded-Proto', request.scheme)
+    forwarded_host = request.headers.get('X-Forwarded-Host', request.host)
+
+    scheme = forwarded_proto.split(',')[0].strip() or request.scheme
+    host = forwarded_host.split(',')[0].strip() or request.host
+
+    return f"{scheme}://{host}".rstrip('/')
+
+
+def _get_external_websocket_url():
+    base_url = _get_external_base_url()
+
+    if base_url.startswith('https://'):
+        return f"wss://{base_url[len('https://'):]}/agent"
+    if base_url.startswith('http://'):
+        return f"ws://{base_url[len('http://'):]}/agent"
+
+    return f"{base_url}/agent"
 
 
 # ==================== Permission Profiles ====================
@@ -46,6 +123,22 @@ PERMISSION_PROFILES = {
             'docker:compose:*',
             'docker:volume:*',
             'docker:network:*',
+            'system:metrics:read',
+            'system:logs:read',
+        ]
+    },
+    'deployment_runner': {
+        'name': 'Deployment Runner',
+        'description': 'Deploy and operate ServerKit-managed Docker Compose apps',
+        'permissions': [
+            'docker:container:*',
+            'docker:image:*',
+            'docker:compose:*',
+            'docker:volume:*',
+            'docker:network:*',
+            'file:read',
+            'file:write',
+            'file:list',
             'system:metrics:read',
             'system:logs:read',
         ]
@@ -185,43 +278,74 @@ def list_servers():
 @developer_required
 def create_server():
     """
-    Create a new server and generate registration token.
+    Create a new server slot and generate a connection string.
 
-    Returns server info with registration token for agent installation.
+    The user no longer types a server name here — the agent's hostname
+    becomes the name on first register. We just allocate a row, mint a
+    single-use registration token, and bundle URL+token+expiry into one
+    pasteable string.
+
+    Body fields (all optional):
+      expires_in: token TTL in seconds. -1 = never, missing = 7 days.
+      description, group_id, tags, permissions, permission_profile,
+      allowed_ips: passed through unchanged.
     """
-    data = request.get_json()
+    data = request.get_json() or {}
     user_id = get_jwt_identity()
-
-    if not data.get('name'):
-        return jsonify({'error': 'Name is required'}), 400
 
     # Generate registration token
     registration_token = Server.generate_registration_token()
 
-    # Get permissions from profile or custom list
-    permissions = data.get('permissions', [])
+    # Get permissions from profile or custom list. Default is `['*']`
+    # (full access) — ServerKit is single-tenant by default and the
+    # previous default of `[]` left every new server 403'ing on every
+    # action. Users who want a locked-down ACL pass an explicit list
+    # or `permission_profile`.
+    permissions = data.get('permissions')
     profile = data.get('permission_profile')
     if profile and profile in PERMISSION_PROFILES:
         permissions = PERMISSION_PROFILES[profile]['permissions']
+    elif permissions is None:
+        permissions = ['*']
+
+    expires_at = _resolve_token_expiry(data.get('expires_in'))
 
     server = Server(
-        name=data['name'],
+        # Temporary name — replaced with the agent's hostname when the
+        # agent calls /register. _is_placeholder_name() in the register
+        # endpoint detects this and overwrites it; user-chosen names are
+        # left alone.
+        name=_PLACEHOLDER_NAME_PREFIX + "...)",
         description=data.get('description'),
         group_id=data.get('group_id'),
         tags=data.get('tags', []),
         permissions=permissions,
         allowed_ips=data.get('allowed_ips', []),
         registered_by=user_id,
-        registration_token_expires=datetime.utcnow() + timedelta(hours=24)
+        registration_token_expires=expires_at,
     )
     server.set_registration_token(registration_token)
 
     db.session.add(server)
     db.session.commit()
 
+    # Now that the row has its UUID, give it a placeholder with a short
+    # id suffix so multiple unpaired rows are distinguishable in the UI.
+    server.name = _placeholder_name(server.id)
+    db.session.commit()
+
+    panel_url = _get_external_base_url()
+    conn_string = connection_string_codec.encode(
+        url=panel_url,
+        token=registration_token,
+        expires_at=expires_at,
+    )
+
     result = server.to_dict()
     result['registration_token'] = registration_token
     result['registration_expires'] = server.registration_token_expires.isoformat()
+    result['connection_string'] = conn_string
+    result['panel_url'] = panel_url
 
     return jsonify(result), 201
 
@@ -235,7 +359,55 @@ def get_server(server_id):
         return jsonify({'error': 'Server not found'}), 404
 
     result = server.to_dict(include_metrics=True)
-    result['is_connected'] = agent_registry.is_agent_connected(server.id)
+    # Surface the live transport so the UI can disable / banner features
+    # that don't work when the agent is on the polling fallback (live
+    # logs, real-time metrics fan-out, terminal). Possible values:
+    #   "ws"   — long-lived Socket.IO connection, all features work
+    #   "poll" — REST polling fallback, streams unavailable
+    #   None   — agent not connected
+    agent = agent_registry.get_agent(server.id)
+    # Self-healing inconsistency check: if the Server row claims
+    # "online" but there's no in-memory agent (panel was restarted, or
+    # the agent process died without a clean disconnect), the status
+    # is lying. Flip it to "offline" so the UI doesn't show the user
+    # an "online" pill while the Docker tab errors with "Agent not
+    # connected." Persist the correction so subsequent reads agree.
+    if not agent and server.status == 'online':
+        server.status = 'offline'
+        try:
+            db.session.commit()
+            result['status'] = 'offline'
+        except Exception:
+            db.session.rollback()
+    result['is_connected'] = agent is not None
+    result['transport'] = agent.transport if agent else None
+    # Capability map the agent advertised on connect. When the agent is
+    # connected, prefer the live in-memory copy; when offline, fall back
+    # to the snapshot persisted by update_capabilities so the Overview
+    # tab can still render the last-known state instead of an empty
+    # screen. capabilities_stale + capabilities_at let the UI badge the
+    # data as cached.
+    if agent:
+        result['capabilities'] = dict(agent.capabilities)
+        result['runtimes'] = dict(agent.runtimes)
+        result['runtime_managers'] = dict(getattr(agent, 'runtime_managers', {}) or {})
+        result['allowed_paths'] = list(getattr(agent, 'allowed_paths', []) or [])
+        result['sudo'] = getattr(agent, 'sudo', '') or (server.cached_sudo or '')
+        result['systemd_json'] = bool(getattr(agent, 'systemd_json', server.cached_systemd_json or False))
+        result['platform'] = agent.platform
+        result['distro'] = agent.distro
+        result['distro_version'] = agent.distro_version
+        result['capabilities_stale'] = False
+        result['capabilities_at'] = server.capabilities_at.isoformat() + 'Z' if server.capabilities_at else None
+    else:
+        result['capabilities'] = dict(server.cached_capabilities or {})
+        result['runtimes'] = dict(server.cached_runtimes or {})
+        result['runtime_managers'] = dict(server.cached_runtime_managers or {})
+        result['allowed_paths'] = list(server.cached_allowed_paths or [])
+        result['sudo'] = server.cached_sudo or ''
+        result['systemd_json'] = bool(server.cached_systemd_json)
+        result['capabilities_stale'] = bool(server.capabilities_at)
+        result['capabilities_at'] = server.capabilities_at.isoformat() + 'Z' if server.capabilities_at else None
 
     return jsonify(result)
 
@@ -300,22 +472,41 @@ def delete_server(server_id):
 @jwt_required()
 @developer_required
 def regenerate_token(server_id):
-    """Regenerate registration token for a server"""
+    """Regenerate the registration token for a server and return a fresh
+    connection string.
+
+    Used both for first-pair (panel just created the row) and re-pair
+    (the agent was uninstalled / reinstalled and lost its credentials).
+    Body is optional; only ``expires_in`` is read (same semantics as
+    create_server).
+    """
     server = Server.query.get(server_id)
     if not server:
         return jsonify({'error': 'Server not found'}), 404
 
+    data = request.get_json(silent=True) or {}
+    expires_at = _resolve_token_expiry(data.get('expires_in'))
+
     registration_token = Server.generate_registration_token()
     server.set_registration_token(registration_token)
-    server.registration_token_expires = datetime.utcnow() + timedelta(hours=24)
+    server.registration_token_expires = expires_at
     server.status = 'pending'
     server.agent_id = None
 
     db.session.commit()
 
+    panel_url = _get_external_base_url()
+    conn_string = connection_string_codec.encode(
+        url=panel_url,
+        token=registration_token,
+        expires_at=expires_at,
+    )
+
     return jsonify({
         'registration_token': registration_token,
-        'registration_expires': server.registration_token_expires.isoformat()
+        'registration_expires': server.registration_token_expires.isoformat(),
+        'connection_string': conn_string,
+        'panel_url': panel_url,
     })
 
 
@@ -379,15 +570,17 @@ def register_agent():
 
     server.agent_version = data.get('agent_version')
 
-    # Update name if provided and different
-    if data.get('name') and not server.name:
-        server.name = data['name']
+    # Replace the panel-issued placeholder name with whatever the agent
+    # reports — preferring the OS hostname over the agent's optional
+    # top-level "name" field. Once a user has renamed the server in the
+    # UI, the placeholder check fails and we leave their name alone, so
+    # re-pair after reinstall doesn't clobber renames.
+    if _is_placeholder_name(server.name):
+        reported_name = (system_info.get('hostname') if system_info else None) or data.get('name')
+        if reported_name:
+            server.name = reported_name
 
     db.session.commit()
-
-    # Construct WebSocket URL
-    ws_scheme = 'wss' if request.is_secure else 'ws'
-    ws_url = f"{ws_scheme}://{request.host}/agent"
 
     # Security note: api_secret is returned once during registration so the agent
     # can store it. The server-side copy is stored encrypted. The registration token
@@ -397,7 +590,7 @@ def register_agent():
         'name': server.name,
         'api_key': api_key,
         'api_secret': api_secret,
-        'websocket_url': ws_url,
+        'websocket_url': _get_external_websocket_url(),
         'server_id': server.id
     })
 
@@ -734,7 +927,30 @@ def rotate_api_key(server_id):
     new_api_key, new_api_secret, rotation_id = server.start_key_rotation()
     db.session.commit()
 
-    # Send credential update to agent
+    # Send credential update to agent. The agent verifies an HMAC over
+    # the new credentials computed with its *current* secret before
+    # applying the rotation, so a session-level WS auth bypass alone
+    # can't be used to silently rotate fleet credentials to attacker-
+    # controlled values. The agent expects:
+    #   hex(HMAC-SHA256("rotation_id:agent_id:new_api_key:new_api_secret",
+    #                    current_api_secret))
+    current_secret = server.get_api_secret() or ''
+    if not current_secret:
+        # Agents paired before the api_secret_encrypted column existed
+        # can't be verified. Better to fail the rotation than silently
+        # ship an unsigned credential update — operators can re-pair to
+        # establish a verifiable secret on disk.
+        return jsonify({
+            'error': 'Server has no recoverable secret on file; re-pair the agent before rotating.',
+            'code': 'NO_CURRENT_SECRET'
+        }), 409
+    payload = f'{rotation_id}:{server.agent_id}:{new_api_key}:{new_api_secret}'
+    sig = hmac.new(
+        current_secret.encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()
+
     agent = agent_registry.get_agent(server_id)
     if agent and agent_registry._socketio:
         agent_registry._socketio.emit(
@@ -743,7 +959,8 @@ def rotate_api_key(server_id):
                 'type': 'credential_update',
                 'rotation_id': rotation_id,
                 'api_key': new_api_key,
-                'api_secret': new_api_secret
+                'api_secret': new_api_secret,
+                'hmac_sig': sig,
             },
             room=agent.socket_id,
             namespace='/agent'
@@ -1056,6 +1273,22 @@ def list_remote_volumes(server_id):
     return jsonify(result.get('data', []))
 
 
+@servers_bp.route('/<server_id>/docker/volumes/<volume_name>', methods=['DELETE'])
+@jwt_required()
+@developer_required
+def remove_remote_volume(server_id, volume_name):
+    """Remove a volume on a remote server"""
+    user_id = get_jwt_identity()
+    force = request.args.get('force', 'false').lower() == 'true'
+
+    result = RemoteDockerService.remove_volume(server_id, volume_name, force=force, user_id=user_id)
+
+    if not result.get('success'):
+        return jsonify(result), 500
+
+    return jsonify({'message': 'Volume removed'})
+
+
 @servers_bp.route('/<server_id>/docker/networks', methods=['GET'])
 @jwt_required()
 def list_remote_networks(server_id):
@@ -1068,6 +1301,21 @@ def list_remote_networks(server_id):
         return jsonify(result), 500
 
     return jsonify(result.get('data', []))
+
+
+@servers_bp.route('/<server_id>/docker/networks/<network_id>', methods=['DELETE'])
+@jwt_required()
+@developer_required
+def remove_remote_network(server_id, network_id):
+    """Remove a network on a remote server"""
+    user_id = get_jwt_identity()
+
+    result = RemoteDockerService.remove_network(server_id, network_id, user_id=user_id)
+
+    if not result.get('success'):
+        return jsonify(result), 500
+
+    return jsonify({'message': 'Network removed'})
 
 
 @servers_bp.route('/<server_id>/system/metrics', methods=['GET'])
@@ -1447,7 +1695,7 @@ def get_install_script_linux():
     the ServerKit agent on Linux systems.
 
     Usage:
-        curl -fsSL https://your-server/api/servers/install.sh | sudo bash -s -- \\
+        curl -fsSL https://your-server/api/v1/servers/install.sh | sudo bash -s -- \\
             --token "YOUR_TOKEN" --server "https://your-server"
     """
     script_path = os.path.join(_get_scripts_dir(), 'install.sh')
@@ -1459,7 +1707,7 @@ def get_install_script_linux():
         content = f.read()
 
     # Replace placeholders with actual values
-    server_url = request.url_root.rstrip('/')
+    server_url = _get_external_base_url()
     content = content.replace('https://your-serverkit.com', server_url)
     content = content.replace('jhd3197/ServerKit', GITHUB_REPO)
 
@@ -1482,7 +1730,7 @@ def get_install_script_windows():
     the ServerKit agent on Windows systems.
 
     Usage:
-        irm https://your-server/api/servers/install.ps1 | iex; \\
+        irm https://your-server/api/v1/servers/install.ps1 | iex; \\
             Install-ServerKitAgent -Token "YOUR_TOKEN" -Server "https://your-server"
     """
     script_path = os.path.join(_get_scripts_dir(), 'install.ps1')
@@ -1494,7 +1742,7 @@ def get_install_script_windows():
         content = f.read()
 
     # Replace placeholders with actual values
-    server_url = request.url_root.rstrip('/')
+    server_url = _get_external_base_url()
     content = content.replace('https://your-serverkit.com', server_url)
     content = content.replace('jhd3197/ServerKit', GITHUB_REPO)
 
@@ -1514,8 +1762,8 @@ def get_install_instructions(server_id):
     """
     Get installation instructions for a specific server.
 
-    Returns the installation commands with the server's registration token
-    already embedded.
+    Returns installation commands with the correct API endpoint. Registration
+    tokens are only shown when they are generated, so the UI supplies the token.
     """
     server = Server.query.get(server_id)
     if not server:
@@ -1535,8 +1783,8 @@ def get_install_instructions(server_id):
         }), 400
 
     # Get base URL
-    base_url = request.url_root.rstrip('/')
-    api_url = f"{base_url}/api/servers"
+    base_url = _get_external_base_url()
+    api_url = f"{base_url}/api/v1/servers"
 
     return jsonify({
         'linux': {
@@ -2054,3 +2302,510 @@ def get_server_diagnostics(server_id):
     if 'error' in diagnostics:
         return jsonify(diagnostics), 404
     return jsonify(diagnostics)
+
+
+# ==================== Remote Cron Operations ====================
+#
+# Endpoints under /servers/<id>/cron/ proxy to the agent's cron:*
+# command handlers. They mirror the panel-local /api/v1/cron/* surface
+# (CronService) but target a remote host. The agent owns validation and
+# crontab IO; this layer is just transport.
+
+from app.services.remote_cron_service import RemoteCronService
+
+
+def _agent_result(result, ok_status=200, missing_status=503):
+    """Translate an agent_registry.send_command result into an HTTP
+    response. AGENT_OFFLINE → 503; other failures → 500; success → ok."""
+    if not result.get('success'):
+        code = 500
+        if result.get('code') == 'AGENT_OFFLINE':
+            code = missing_status
+        elif result.get('code') == 'PERMISSION_DENIED':
+            code = 403
+        return jsonify(result), code
+    # Unwrap the agent's data payload so callers see the same shape as
+    # the local CronService responses.
+    data = result.get('data')
+    if isinstance(data, dict):
+        return jsonify(data), ok_status
+    return jsonify({'data': data, 'success': True}), ok_status
+
+
+@servers_bp.route('/<server_id>/cron/status', methods=['GET'])
+@jwt_required()
+def remote_cron_status(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteCronService.status(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cron/jobs', methods=['GET'])
+@jwt_required()
+def remote_cron_list(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteCronService.list_jobs(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cron/jobs', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_cron_add(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    schedule = (data.get('schedule') or '').strip()
+    command = (data.get('command') or '').strip()
+    if not schedule:
+        return jsonify({'error': 'schedule is required'}), 400
+    if not command:
+        return jsonify({'error': 'command is required'}), 400
+
+    result = RemoteCronService.add_job(
+        server_id, schedule, command,
+        name=data.get('name'),
+        description=data.get('description'),
+        user_id=user_id,
+    )
+    return _agent_result(result, ok_status=201)
+
+
+@servers_bp.route('/<server_id>/cron/jobs/<job_id>', methods=['DELETE'])
+@jwt_required()
+@developer_required
+def remote_cron_remove(server_id, job_id):
+    user_id = get_jwt_identity()
+    result = RemoteCronService.remove_job(server_id, job_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cron/jobs/<job_id>/toggle', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_cron_toggle(server_id, job_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get('enabled', True))
+    result = RemoteCronService.toggle_job(server_id, job_id, enabled, user_id=user_id)
+    return _agent_result(result)
+
+
+# ==================== Remote Cloudflared Operations ====================
+#
+# Auth: the user runs `cloudflared tunnel login` once per server.
+# That writes ~/.cloudflared/cert.pem (or /etc/cloudflared/cert.pem
+# when run as root). The panel never sees a Cloudflare API token —
+# every cloudflared:* action just shells out to the binary, which
+# uses the cert for auth.
+#
+# /status surfaces both "binary installed" and "cert present" so the
+# UI can show a "log in first" prompt before letting users hit the
+# CRUD actions and getting confusing errors.
+
+from app.services.remote_cloudflared_service import RemoteCloudflaredService
+
+
+@servers_bp.route('/<server_id>/cloudflared/status', methods=['GET'])
+@jwt_required()
+def remote_cloudflared_status(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteCloudflaredService.status(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cloudflared/login', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_cloudflared_login(server_id):
+    """Start `cloudflared tunnel login` on the agent. Returns
+    {job_id, channel}; the panel subscribes to the corresponding
+    Socket.IO room and renders the auth_url the agent surfaces."""
+    user_id = get_jwt_identity()
+    result = RemoteCloudflaredService.login(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cloudflared/tunnels', methods=['GET'])
+@jwt_required()
+def remote_cloudflared_list(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteCloudflaredService.list_tunnels(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cloudflared/tunnels', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_cloudflared_create(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name is required'}), 400
+
+    result = RemoteCloudflaredService.create_tunnel(server_id, name, user_id=user_id)
+    return _agent_result(result, ok_status=201)
+
+
+@servers_bp.route('/<server_id>/cloudflared/tunnels/<tunnel_ref>/route', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_cloudflared_route(server_id, tunnel_ref):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    hostname = (data.get('hostname') or '').strip()
+    if not hostname:
+        return jsonify({'error': 'hostname is required'}), 400
+
+    result = RemoteCloudflaredService.route_tunnel(
+        server_id, tunnel_ref, hostname, user_id=user_id,
+    )
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/cloudflared/tunnels/<tunnel_ref>', methods=['DELETE'])
+@jwt_required()
+@developer_required
+def remote_cloudflared_delete(server_id, tunnel_ref):
+    user_id = get_jwt_identity()
+    result = RemoteCloudflaredService.delete_tunnel(server_id, tunnel_ref, user_id=user_id)
+    return _agent_result(result)
+
+
+# ==================== Remote Capability Refresh ====================
+#
+# Lets the panel ask the agent to re-run its capability probe on
+# demand — useful after the user installs a runtime, sudoers entry,
+# or new package manager and wants new tabs to light up without an
+# agent service restart. The agent's response is the freshly merged
+# capabilities map; the agent additionally pushes via the persistent
+# Capabilities message so all panel listeners stay in sync.
+
+@servers_bp.route('/<server_id>/refresh-capabilities', methods=['POST'])
+@jwt_required()
+def remote_refresh_capabilities(server_id):
+    user_id = get_jwt_identity()
+    result = agent_registry.send_command(
+        server_id=server_id, action='agent:recapabilities',
+        params={}, user_id=user_id, timeout=20.0,
+    )
+    return _agent_result(result)
+
+
+# ==================== Remote Packages ====================
+#
+# Exposes the agent's packages:* surface for the Packages tab.
+# Long-running operations (install/upgrade) return {job_id, channel};
+# the frontend subscribes to Socket.IO room
+# server_<id>_<channel> for live progress events.
+
+from app.services.remote_packages_service import RemotePackagesService
+
+
+@servers_bp.route('/<server_id>/packages', methods=['GET'])
+@jwt_required()
+def remote_packages_list(server_id):
+    user_id = get_jwt_identity()
+    result = RemotePackagesService.list_installed(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/search', methods=['GET'])
+@jwt_required()
+def remote_packages_search(server_id):
+    user_id = get_jwt_identity()
+    query = (request.args.get('q') or '').strip()
+    if not query:
+        return jsonify({'error': 'q is required'}), 400
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    result = RemotePackagesService.search(server_id, query, limit=limit, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/info/<name>', methods=['GET'])
+@jwt_required()
+def remote_packages_info(server_id, name):
+    user_id = get_jwt_identity()
+    result = RemotePackagesService.info(server_id, name, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/update-cache', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_update_cache(server_id):
+    user_id = get_jwt_identity()
+    result = RemotePackagesService.update_cache(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/install', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_install(server_id):
+    """Streaming install. Body: {names: ['nginx', 'redis-server']}.
+    Returns {job_id, channel} immediately; the panel subscribes to the
+    matching Socket.IO room for live install output."""
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    names = data.get('names') or []
+    if isinstance(names, str):
+        names = [names]
+    if not names:
+        return jsonify({'error': 'names is required'}), 400
+    result = RemotePackagesService.install_async(server_id, names, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/remove', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_remove(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name is required'}), 400
+    result = RemotePackagesService.remove(server_id, name, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/packages/upgrade', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_packages_upgrade(server_id):
+    """Streaming upgrade. Body: {all: bool, names?: [...]}. Returns
+    {job_id, channel}."""
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    names = data.get('names') or []
+    all_pkgs = bool(data.get('all', False))
+    if not all_pkgs and not names:
+        return jsonify({'error': 'either all=true or names=[...] required'}), 400
+    result = RemotePackagesService.upgrade(
+        server_id,
+        names=names if names else None,
+        all_packages=all_pkgs,
+        user_id=user_id,
+    )
+    return _agent_result(result)
+
+
+# ==================== Remote Services (systemd) ====================
+
+from app.services.remote_systemd_service import RemoteSystemdService
+
+
+@servers_bp.route('/<server_id>/services', methods=['GET'])
+@jwt_required()
+def remote_services_list(server_id):
+    user_id = get_jwt_identity()
+    state = request.args.get('state')
+    type_ = request.args.get('type', 'service')
+    result = RemoteSystemdService.list_units(server_id, state=state, type_=type_, user_id=user_id)
+    return _agent_result(result)
+
+
+# Static-suffix routes must come before the generic <unit>/<action>
+# route so Werkzeug picks the right matcher in registration order.
+
+@servers_bp.route('/<server_id>/services/daemon-reload', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_services_daemon_reload(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteSystemdService.daemon_reload(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/services/<unit>/logs', methods=['GET'])
+@jwt_required()
+def remote_services_logs(server_id, unit):
+    user_id = get_jwt_identity()
+    try:
+        lines = int(request.args.get('lines', 200))
+    except (TypeError, ValueError):
+        lines = 200
+    result = RemoteSystemdService.logs(server_id, unit, lines=lines, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/services/<unit>', methods=['GET'])
+@jwt_required()
+def remote_services_status(server_id, unit):
+    user_id = get_jwt_identity()
+    result = RemoteSystemdService.status(server_id, unit, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/services/<unit>/<action>', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_services_control(server_id, unit, action):
+    user_id = get_jwt_identity()
+    result = RemoteSystemdService.control(server_id, unit, action, user_id=user_id)
+    return _agent_result(result)
+
+
+# ==================== Remote Runtimes (pyenv) ====================
+#
+# Manages Python versions via pyenv (Linux) and pyenv-win (Windows).
+# Bootstrap and install return {job_id, channel} for streaming
+# progress; everything else is a synchronous round-trip.
+
+from app.services.remote_runtimes_service import RemoteRuntimesService
+
+
+@servers_bp.route('/<server_id>/runtimes', methods=['GET'])
+@jwt_required()
+def remote_runtimes_list(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteRuntimesService.list_state(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/pyenv/bootstrap', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_runtimes_pyenv_bootstrap(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteRuntimesService.pyenv_bootstrap(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/python', methods=['GET'])
+@jwt_required()
+def remote_runtimes_python_installed(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteRuntimesService.python_installed(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/python/available', methods=['GET'])
+@jwt_required()
+def remote_runtimes_python_available(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteRuntimesService.python_available(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/python/current', methods=['GET'])
+@jwt_required()
+def remote_runtimes_python_current(server_id):
+    user_id = get_jwt_identity()
+    result = RemoteRuntimesService.python_current(server_id, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/python/install', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_runtimes_python_install(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    version = (data.get('version') or '').strip()
+    if not version:
+        return jsonify({'error': 'version is required'}), 400
+    result = RemoteRuntimesService.python_install(server_id, version, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/python/uninstall', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_runtimes_python_uninstall(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    version = (data.get('version') or '').strip()
+    if not version:
+        return jsonify({'error': 'version is required'}), 400
+    result = RemoteRuntimesService.python_uninstall(server_id, version, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/python/global', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_runtimes_python_set_global(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    version = (data.get('version') or '').strip()
+    if not version:
+        return jsonify({'error': 'version is required'}), 400
+    result = RemoteRuntimesService.python_set_global(server_id, version, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/runtimes/python/local', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_runtimes_python_set_local(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    version = (data.get('version') or '').strip()
+    dir_path = (data.get('dir') or '').strip()
+    if not version or not dir_path:
+        return jsonify({'error': 'version and dir are required'}), 400
+    result = RemoteRuntimesService.python_set_local(server_id, version, dir_path, user_id=user_id)
+    return _agent_result(result)
+
+
+# ==================== Remote File Operations ====================
+#
+# Endpoints under /servers/<id>/files/ proxy to the agent's file:*
+# command handlers. Phase 3b ships browse/read/write only — the broader
+# verb set (delete, mkdir, rename, copy, chmod, search, disk_usage)
+# requires new agent handlers and lands in a follow-up. The agent owns
+# allowed_paths enforcement; the panel just transports.
+
+from app.services.remote_file_service import RemoteFileService
+
+
+@servers_bp.route('/<server_id>/files/allowed-paths', methods=['GET'])
+@jwt_required()
+def remote_file_allowed_paths(server_id):
+    """Return the file roots the agent advertised on connect. Lets the
+    file manager seed the browse picker without guessing or hardcoding."""
+    paths = RemoteFileService.get_allowed_paths(server_id)
+    return jsonify({'allowed_paths': paths})
+
+
+@servers_bp.route('/<server_id>/files/browse', methods=['GET'])
+@jwt_required()
+def remote_file_browse(server_id):
+    user_id = get_jwt_identity()
+    path = request.args.get('path')
+    if not path:
+        return jsonify({'error': 'path is required'}), 400
+    result = RemoteFileService.list_directory(server_id, path, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/files/read', methods=['GET'])
+@jwt_required()
+def remote_file_read(server_id):
+    user_id = get_jwt_identity()
+    path = request.args.get('path')
+    if not path:
+        return jsonify({'error': 'path is required'}), 400
+    result = RemoteFileService.read_file(server_id, path, user_id=user_id)
+    return _agent_result(result)
+
+
+@servers_bp.route('/<server_id>/files/write', methods=['POST'])
+@jwt_required()
+@developer_required
+def remote_file_write(server_id):
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    path = (data.get('path') or '').strip()
+    content = data.get('content')
+    if not path:
+        return jsonify({'error': 'path is required'}), 400
+    if content is None:
+        return jsonify({'error': 'content is required'}), 400
+    result = RemoteFileService.write_file(server_id, path, content, user_id=user_id)
+    return _agent_result(result)

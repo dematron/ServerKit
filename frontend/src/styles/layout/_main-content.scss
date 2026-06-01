@@ -10,6 +10,7 @@
 .main-content {
     margin-left: $sidebar-width;
     flex: 1;
+    min-width: 0;
     padding: $space-10;
     overflow-y: auto;
     background-image:
@@ -22,10 +23,13 @@
         padding: $space-5;
     }
 
-    // Remove padding for fullscreen pages (workflow builder)
-    &:has(.workflow-page.fullscreen) {
+    // Remove padding for routed tool surfaces that manage their own layout.
+    &--full-page,
+    &:has(.workflow-page.fullscreen),
+    &:has(.page-container--full-bleed) {
         padding: 0;
         overflow: hidden;
+        height: 100vh;
     }
 }
 
@@ -58,6 +62,12 @@
     max-width: 1400px;
     margin: 0 auto;
     padding-bottom: $space-10;
+
+    &--full-bleed {
+        max-width: none;
+        margin: 0;
+        padding-bottom: 0;
+    }
 }
 
 // Page Header (shared base)
@@ -105,11 +115,8 @@
     }
 }
 
-// Page placeholder
-.page {
-    font-size: $font-size-2xl;
-    color: $text-secondary;
-}
+// .page is a legacy alias for .page-container — kept for any stragglers, no styling.
+// New pages should use .page-container directly.
 
 // Loading state (full-page spinner)
 .loading {

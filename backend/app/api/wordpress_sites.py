@@ -12,7 +12,7 @@ because Flask resolves the first-registered match).
 """
 
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.middleware.rbac import auth_required, get_current_user
 import json
 
 from app import db
@@ -30,10 +30,11 @@ wordpress_sites_bp = Blueprint('wordpress_sites', __name__)
 # =============================================================================
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/sync', methods=['POST'])
-@jwt_required()
+@auth_required()
 def sync_environment(site_id):
     """Sync an environment from its production source."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
     data = request.get_json() or {}
 
     site = WordPressSite.query.join(Application).filter(
@@ -59,10 +60,11 @@ def sync_environment(site_id):
 # =============================================================================
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/snapshots', methods=['GET'])
-@jwt_required()
+@auth_required()
 def list_snapshots(site_id):
     """List database snapshots for a site."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
 
     site = WordPressSite.query.join(Application).filter(
         WordPressSite.id == site_id,
@@ -83,10 +85,11 @@ def list_snapshots(site_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/snapshots', methods=['POST'])
-@jwt_required()
+@auth_required()
 def create_snapshot(site_id):
     """Create a database snapshot."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
     data = request.get_json() or {}
 
     site = WordPressSite.query.join(Application).filter(
@@ -125,6 +128,9 @@ def create_snapshot(site_id):
         db.session.add(snapshot)
         db.session.commit()
 
+        # Best-effort offsite upload (no-op unless remote storage + auto_upload enabled)
+        DatabaseSyncService.upload_snapshot_offsite(snapshot.file_path)
+
         return jsonify({
             'success': True,
             'snapshot': snapshot.to_dict()
@@ -134,10 +140,11 @@ def create_snapshot(site_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/snapshots/<int:snapshot_id>/restore', methods=['POST'])
-@jwt_required()
+@auth_required()
 def restore_snapshot(site_id, snapshot_id):
     """Restore a database snapshot."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
 
     site = WordPressSite.query.join(Application).filter(
         WordPressSite.id == site_id,
@@ -182,10 +189,11 @@ def restore_snapshot(site_id, snapshot_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/snapshots/<int:snapshot_id>', methods=['DELETE'])
-@jwt_required()
+@auth_required()
 def delete_snapshot(site_id, snapshot_id):
     """Delete a database snapshot."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
 
     site = WordPressSite.query.join(Application).filter(
         WordPressSite.id == site_id,
@@ -210,10 +218,11 @@ def delete_snapshot(site_id, snapshot_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/clone-db', methods=['POST'])
-@jwt_required()
+@auth_required()
 def clone_database(site_id):
     """Clone the database to another environment."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
     data = request.get_json()
 
     site = WordPressSite.query.join(Application).filter(
@@ -259,10 +268,11 @@ def clone_database(site_id):
 # =============================================================================
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/git', methods=['GET'])
-@jwt_required()
+@auth_required()
 def get_git_status(site_id):
     """Get Git integration status for a site."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
 
     site = WordPressSite.query.join(Application).filter(
         WordPressSite.id == site_id,
@@ -277,10 +287,11 @@ def get_git_status(site_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/git', methods=['POST'])
-@jwt_required()
+@auth_required()
 def connect_repo(site_id):
     """Connect a Git repository to a site."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
     data = request.get_json()
 
     site = WordPressSite.query.join(Application).filter(
@@ -310,10 +321,11 @@ def connect_repo(site_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/git', methods=['DELETE'])
-@jwt_required()
+@auth_required()
 def disconnect_repo(site_id):
     """Disconnect Git repository from a site."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
 
     site = WordPressSite.query.join(Application).filter(
         WordPressSite.id == site_id,
@@ -331,10 +343,11 @@ def disconnect_repo(site_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/git/commits', methods=['GET'])
-@jwt_required()
+@auth_required()
 def get_commits(site_id):
     """Get recent commits from the connected repository."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
 
     site = WordPressSite.query.join(Application).filter(
         WordPressSite.id == site_id,
@@ -350,10 +363,11 @@ def get_commits(site_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/git/deploy', methods=['POST'])
-@jwt_required()
+@auth_required()
 def deploy_commit(site_id):
     """Deploy a specific commit or branch."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
     data = request.get_json() or {}
 
     site = WordPressSite.query.join(Application).filter(
@@ -378,10 +392,11 @@ def deploy_commit(site_id):
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/git/dev-from-commit', methods=['POST'])
-@jwt_required()
+@auth_required()
 def create_dev_from_commit(site_id):
     """Create a development environment for a specific commit."""
-    user_id = get_jwt_identity()
+    user = get_current_user()
+    user_id = user.id
     data = request.get_json()
 
     site = WordPressSite.query.join(Application).filter(

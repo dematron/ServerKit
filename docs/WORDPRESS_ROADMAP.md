@@ -66,13 +66,13 @@ These are bugs the rest of the roadmap stands on. **Estimated cluster: half a da
 - **Done when:** Exactly one rule answers `POST /api/v1/wordpress/sites`; the UI payload matches it.
 - **Landed:** `wordpress_bp` (the canonical Docker-stack model the live UI creates against with `{name, adminEmail}`) keeps the hub/plugins/themes/update routes; the shadowed duplicates were removed from `wordpress_sites_bp`, which now owns only its unique routes (sync, snapshots, clone-db, git). Verified **0 path+method collisions** across the two blueprints. Provably behavior-preserving since `wordpress_bp` already won every collision. *(Follow-up for #2/#15: the resource-tier gate and snapshot-before-update that lived in the removed legacy create/update should be ported onto the canonical path.)*
 
-### #2 — Make every create path harden + install properly `[S]` 🐛
+### #2 — Make every create path harden + install properly `[S]` 🐛 — ✅ Done (Docker-valid hardening via wp_cli; admin password surfaced once)
 - **Today:** The UI path (`pages/WordPress.jsx:43-65` → `services/wordpress.js:9`) sends only `{name, adminEmail}` and runs the container-only template path — **no** wp-config hardening, **no** admin user, **no** SSL. The hardening path (`WordPressService.install_wordpress` → `harden_wordpress`, `services/wordpress_service.py:146,497`) is the one that gets shadowed by #1.
 - **Do:** Route the single create through `install_wordpress` + `harden_wordpress` regardless of standalone vs Docker.
 - **Reuse:** `install_wordpress` (`:146`), `harden_wordpress` (`:497`).
 - **Done when:** A freshly created site has an admin user, `DISALLOW_FILE_EDIT`/`FORCE_SSL_ADMIN`, XML-RPC off, and shuffled salts.
 
-### #3 — Report the real site URL `[S]` 🐛
+### #3 — Report the real site URL `[S]` 🐛 — ✅ Done
 - **Today:** `_enrich_site_data` (`services/wordpress_service.py:918-932`) sets `site.url` to `http://localhost:<port>`, so "Open Site"/"Open WP Admin" are wrong for any real domain.
 - **Do:** Derive `url` from the site's primary domain (HTTPS when SSL present), falling back to the port only when no domain is attached.
 - **Reuse:** `application.domains` (already in `to_dict`, `models/wordpress_site.py:158`).
@@ -127,7 +127,7 @@ Every task here reuses a service that already exists and is verified present. **
 - **Reuse:** `restore_snapshot`, `PromotionJob`.
 - **Done when:** A bad promote can be undone in one click.
 
-### #11 — Push WP snapshots offsite + enforce retention `[M]` 🟡
+### #11 — Push WP snapshots offsite + enforce retention `[M]` 🟡 — ✅ Done
 - **Today:** `DatabaseSnapshot`s land only in the local `SNAPSHOT_DIR`. `storage_provider_service.upload_file/upload_directory` (S3/B2/MinIO/Wasabi, SSRF-validated, verify-by-MD5) and `backup_service` retention/scheduling/notifications are fully built but bound to the generic `Application` model. `db_sync_service.cleanup_old_snapshots` exists but **no scheduler calls it** and `expires_at` is never set.
 - **Do:** Hand each completed snapshot to `StorageProviderService`; populate `expires_at`; schedule `cleanup_old_snapshots`.
 - **Reuse:** `storage_provider_service`, `backup_service`, the cron scheduler.
@@ -139,13 +139,13 @@ Every task here reuses a service that already exists and is verified present. **
 - **Reuse:** `QueryRunner`, File Manager, log viewer.
 - **Done when:** Each button opens the right resource pre-scoped to the site.
 
-### #13 — Make push-to-deploy actually deploy WordPress `[M]` 🟡
+### #13 — Make push-to-deploy actually deploy WordPress `[M]` 🟡 — ✅ Done
 - **Today:** `WordPressSite.auto_deploy`/`git_repo_url`/`git_branch`/`last_deploy_commit` are persisted (`connect_repo`) and returned in status, but `auto_deploy` is **never consumed** — inbound git webhooks only deploy generic `Application`s. `git_wordpress_service.rollback_to_commit` and `deploy_from_commit` exist with no route/UI; WP keeps only a single `last_deploy_commit`.
 - **Do:** Route inbound git webhooks to `GitWordPressService.deploy_from_commit` when `auto_deploy` is set; expose a WP deploy history list + rollback button.
 - **Reuse:** `git_wordpress_service`, the existing webhook receiver, the `GitDeployment` history pattern.
 - **Done when:** A push to the tracked branch deploys theme/plugin/code and history is browsable + reversible.
 
-### #14 — Make the WP REST surface API-key reachable `[S]` 🟡
+### #14 — Make the WP REST surface API-key reachable `[S]` 🟡 — ✅ Done
 - **Today:** The `X-API-Key` middleware authenticates only the RBAC decorators, but **all** of `api/wordpress_sites.py` is bare `@jwt_required()` (24 routes), so programmatic automation can't touch WordPress.
 - **Do:** Switch WP routes to the RBAC decorators that honor `g.api_key_user`.
 - **Reuse:** the existing API-key middleware + RBAC decorators.

@@ -331,6 +331,9 @@ def create_app(config_name=None):
         # Start auto-sync scheduler for WordPress environments
         _start_auto_sync_scheduler(app)
 
+        # Start snapshot-retention scheduler (sets expires_at + prunes expired)
+        _start_snapshot_retention_scheduler(app)
+
         # Start workflow scheduler
         _start_workflow_scheduler(app)
 
@@ -505,6 +508,58 @@ def _start_pairing_pruner(app):
 
 
 _pairing_prune_thread = None
+
+
+_snapshot_retention_thread = None
+
+
+def _start_snapshot_retention_scheduler(app):
+    """Start a background thread that sets DatabaseSnapshot.expires_at per the
+    retention policy and prunes expired snapshots (file + DB row) hourly."""
+    global _snapshot_retention_thread
+    if _snapshot_retention_thread is not None:
+        return
+
+    import threading
+    import time
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    def retention_loop():
+        # Delay first run so the app is fully initialized.
+        time.sleep(120)
+        while True:
+            try:
+                with app.app_context():
+                    from app.services.db_sync_service import DatabaseSyncService
+                    from app.services.settings_service import SettingsService
+                    # Honor an admin-set override if present; otherwise use the
+                    # code default (no settings seed / migration required).
+                    days = SettingsService.get(
+                        'snapshot_retention_days',
+                        DatabaseSyncService.DEFAULT_SNAPSHOT_RETENTION_DAYS,
+                    )
+                    try:
+                        days = int(days)
+                    except (TypeError, ValueError):
+                        days = DatabaseSyncService.DEFAULT_SNAPSHOT_RETENTION_DAYS
+                    result = DatabaseSyncService.prune_expired_snapshots(retention_days=days)
+                    if result.get('deleted') or result.get('backfilled'):
+                        logger.info(
+                            f"Snapshot retention: backfilled={result.get('backfilled', 0)} "
+                            f"deleted={result.get('deleted', 0)}"
+                        )
+            except Exception as e:
+                logger.error(f'Snapshot retention scheduler error: {e}')
+            time.sleep(3600)  # hourly
+
+    _snapshot_retention_thread = threading.Thread(
+        target=retention_loop,
+        daemon=True,
+        name='snapshot-retention',
+    )
+    _snapshot_retention_thread.start()
 
 
 def _start_api_background_threads(app):

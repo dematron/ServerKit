@@ -1497,6 +1497,33 @@
     }
 }
 
+// One-time admin credentials banner (after site create)
+.wp-creds-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $space-4;
+    margin: 0 $space-4 $space-4;
+    padding: $space-4;
+    background: fade($color-success, 8%);
+    border: 1px solid fade($color-success, 25%);
+    border-radius: $radius-md;
+
+    .wp-creds-banner-text {
+        display: flex;
+        flex-direction: column;
+        gap: $space-1;
+        font-size: $font-size-sm;
+
+        code {
+            font-family: $font-family-mono;
+            background: $bg-tertiary;
+            padding: 1px 6px;
+            border-radius: 3px;
+        }
+    }
+}
+
 // ============================================
 // SITE HEALTH + SSL PANEL HELPERS (Overview tab)
 // ============================================

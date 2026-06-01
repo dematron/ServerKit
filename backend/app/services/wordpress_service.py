@@ -508,6 +508,38 @@ define('WP_AUTO_UPDATE_CORE', 'minor');
             return {'success': False, 'error': str(e)}
 
     @classmethod
+    def _wait_for_wp_ready(cls, path: str, timeout: int = 60) -> bool:
+        """Poll the WP container (via the Docker-aware wp_cli bridge) until
+        WordPress core files + DB are reachable so `wp` commands can run.
+
+        Returns True once `wp core version` succeeds, else False on timeout.
+        """
+        import time as _time
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            check = cls.wp_cli(path, ['core', 'version'])
+            if check.get('success'):
+                return True
+            _time.sleep(3)
+        return False
+
+    @classmethod
+    def _harden_docker_site(cls, path: str) -> List[str]:
+        """Apply container-valid security hardening via the Docker-aware wp_cli
+        bridge. Filesystem hardening (chmod/.htaccess) does NOT apply to the
+        named-volume Docker model and is intentionally skipped. FORCE_SSL_ADMIN
+        is also skipped (these sites are http://localhost:PORT with no TLS).
+        """
+        actions = []
+        if cls.wp_cli(path, ['config', 'set', 'DISALLOW_FILE_EDIT', 'true', '--raw']).get('success'):
+            actions.append('Disabled in-admin file editing')
+        if cls.wp_cli(path, ['config', 'set', 'XMLRPC_REQUEST', 'false', '--raw']).get('success'):
+            actions.append('Disabled XML-RPC')
+        if cls.wp_cli(path, ['config', 'shuffle-salts']).get('success'):
+            actions.append('Regenerated security keys')
+        return actions
+
+    @classmethod
     def harden_wordpress(cls, path: str) -> Dict:
         """Apply security hardening to WordPress."""
         results = []
@@ -941,8 +973,15 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
                 site.application.status = 'stopped'
             site_data['status'] = site.application.status
 
-            # Build access URL from port
-            if site.application.port:
+            # Build access URL: prefer the primary domain, fall back to localhost:port
+            domains = site.application.domains
+            primary = next((d for d in domains if d.is_primary), None)
+            if primary is None and domains:
+                primary = domains[0]
+            if primary is not None:
+                scheme = 'https' if primary.ssl_enabled else 'http'
+                site_data['url'] = f"{scheme}://{primary.name}"
+            elif site.application.port:
                 site_data['url'] = f"http://localhost:{site.application.port}"
         return site_data
 
@@ -985,7 +1024,7 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
         return {'site': site_data}
 
     @classmethod
-    def create_site(cls, name: str, admin_email: str, user_id: int) -> Dict:
+    def create_site(cls, name: str, admin_email: str, user_id: int, admin_user: str = 'admin') -> Dict:
         """Create a new WordPress site via Docker."""
         from app import db
         from app.models import Application, WordPressSite
@@ -1019,9 +1058,44 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
             if not app:
                 return {'success': False, 'error': 'Application record not created'}
 
+            # Finalize the WordPress install inside the container: the official
+            # wordpress image only generates wp-config from env vars; it does NOT
+            # run the install, so no admin user exists. Do it via the Docker-aware
+            # wp_cli bridge (host-filesystem hardening does not apply to volumes).
+            admin_password = cls._generate_password()
+            site_url = f'http://localhost:{http_port}' if http_port else 'http://localhost'
+            wp_warning = None
+            harden_actions = []
+            if cls._wait_for_wp_ready(app.root_path):
+                install_res = cls.wp_cli(app.root_path, [
+                    'core', 'install',
+                    f'--url={site_url}',
+                    f'--title={name}',
+                    f'--admin_user={admin_user}',
+                    f'--admin_password={admin_password}',
+                    f'--admin_email={admin_email}',
+                    '--skip-email',
+                ])
+                if install_res.get('success'):
+                    harden_actions = cls._harden_docker_site(app.root_path)
+                else:
+                    admin_password = None
+                    wp_warning = (
+                        'WordPress container did not accept the automated install; '
+                        'complete setup via the WordPress wizard. '
+                        + (install_res.get('error') or '')
+                    ).strip()
+            else:
+                admin_password = None
+                wp_warning = (
+                    'WordPress container was not ready in time; the install was not '
+                    'finalized. Complete setup via the WordPress wizard.'
+                )
+
             # Create WordPressSite record
             wp_site = WordPressSite(
                 application_id=app.id,
+                admin_user=admin_user if admin_password else None,
                 admin_email=admin_email,
                 is_production=True,
                 environment_type='production',
@@ -1031,12 +1105,18 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
             db.session.add(wp_site)
             db.session.commit()
 
-            return {
+            result = {
                 'success': True,
                 'message': 'WordPress site created successfully',
                 'site': wp_site.to_dict(),
-                'http_port': http_port
+                'http_port': http_port,
+                'admin_user': admin_user if admin_password else None,
+                'admin_password': admin_password,
+                'hardening': harden_actions,
             }
+            if wp_warning:
+                result['warning'] = wp_warning
+            return result
 
         except Exception as e:
             db.session.rollback()

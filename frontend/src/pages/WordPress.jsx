@@ -18,6 +18,7 @@ function WordPress() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [createLoading, setCreateLoading] = useState(false);
     const [createForm, setCreateForm] = useState({ name: '', adminEmail: '' });
+    const [createdCreds, setCreatedCreds] = useState(null);
 
     const navigate = useNavigate();
     const toast = useToast();
@@ -50,6 +51,12 @@ function WordPress() {
         try {
             const result = await wordpressApi.createSite(createForm);
             if (result.success) {
+                if (result.admin_password) {
+                    // The generated admin password is returned once — surface it.
+                    setCreatedCreds({ user: result.admin_user || 'admin', password: result.admin_password });
+                } else if (result.warning) {
+                    toast.info(result.warning, { duration: 8000 });
+                }
                 toast.success('WordPress site created successfully');
                 setShowCreateModal(false);
                 setCreateForm({ name: '', adminEmail: '' });
@@ -126,6 +133,17 @@ function WordPress() {
                     </Button>
                 </div>
             </div>
+
+            {createdCreds && (
+                <div className="wp-creds-banner">
+                    <div className="wp-creds-banner-text">
+                        <strong>Save these admin credentials — they are shown only once.</strong>
+                        <span>Username: <code>{createdCreds.user}</code></span>
+                        <span>Password: <code>{createdCreds.password}</code></span>
+                    </div>
+                    <Button variant="ghost" onClick={() => setCreatedCreds(null)}>Dismiss</Button>
+                </div>
+            )}
 
             {sites.length === 0 ? (
                 <EmptyState

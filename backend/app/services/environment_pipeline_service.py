@@ -687,6 +687,7 @@ class EnvironmentPipelineService:
                     db.session.flush()
                     pre_snapshot_id = snapshot_record.id
                     job.pre_promotion_snapshot_id = pre_snapshot_id
+                    DatabaseSyncService.upload_snapshot_offsite(snapshot_result['file_path'])
 
             cls._emit_progress(progress_callback, 3, 5, 'Syncing code files...')
 
@@ -879,6 +880,7 @@ class EnvironmentPipelineService:
                     db.session.flush()
                     pre_snapshot_id = snapshot_record.id
                     job.pre_promotion_snapshot_id = pre_snapshot_id
+                    DatabaseSyncService.upload_snapshot_offsite(file_path)
 
             cls._emit_progress(progress_callback, 3, 5, 'Cloning database with transformations...')
 

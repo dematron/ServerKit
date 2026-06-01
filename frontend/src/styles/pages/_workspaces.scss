@@ -115,3 +115,10 @@
     background: transparent;
     cursor: pointer;
 }
+
+// Per-app row actions (Share + Remove) in the workspace Resources modal (#33).
+.workspace-row-actions {
+    display: flex;
+    gap: $spacing-sm;
+    flex-shrink: 0;
+}

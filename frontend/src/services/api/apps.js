@@ -18,6 +18,19 @@ export async function setAppWorkspace(appId, workspaceId) {
     });
 }
 
+// Per-resource access grants (#33 per-site ACL): share an app with a user.
+export async function getAppGrants(appId) {
+    return this.request(`/apps/${appId}/grants`);
+}
+
+export async function grantAppAccess(appId, userId, role) {
+    return this.request(`/apps/${appId}/grants`, { method: 'POST', body: { user_id: userId, role } });
+}
+
+export async function revokeAppAccess(appId, grantId) {
+    return this.request(`/apps/${appId}/grants/${grantId}`, { method: 'DELETE' });
+}
+
 export async function getApp(id) {
     return this.request(`/apps/${id}`);
 }

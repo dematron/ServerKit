@@ -186,6 +186,28 @@ def test_grant_extends_to_other_app_blueprints(app, client):
     assert client.get(url, headers=_token(grantee.id)).status_code == 200
 
 
+def test_grant_opens_python_read_gate(app, client):
+    """python.py's get_app_or_404 (the shared read gate) honors grants; its mutating
+    endpoints are independently @admin_required, so a grant only opens the reads."""
+    from app import db
+    from app.models import Application
+    from app.services.resource_grant_service import ResourceGrantService
+
+    owner = _mk_user(db, 'py_owner')
+    grantee = _mk_user(db, 'py_grantee')
+    stranger = _mk_user(db, 'py_stranger')
+    a = Application(name='py-app', app_type='flask', user_id=owner.id, root_path='/srv/py')
+    db.session.add(a)
+    db.session.commit()
+
+    url = f'/api/v1/python/apps/{a.id}/packages'  # GET, read (no @admin_required)
+    assert client.get(url, headers=_token(stranger.id)).status_code == 403  # gate denies
+    ResourceGrantService.grant(user_id=grantee.id, resource_type='application',
+                               resource_id=a.id, granted_by=owner.id, role='viewer')
+    # The grantee passes the read gate (the read itself may be empty, but not a 403).
+    assert client.get(url, headers=_token(grantee.id)).status_code != 403
+
+
 def test_grant_enables_wordpress_per_site_routes(app, client):
     from app import db
     from app.models import Application, WordPressSite

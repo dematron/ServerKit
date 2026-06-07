@@ -12,4 +12,5 @@ export { AreaChart } from './AreaChart';
 export { ScoreGauge } from './ScoreGauge';
 export { Feed, FeedItem } from './Feed';
 export { Drawer } from './Drawer';
+export { PageTopbar } from './PageTopbar';
 export { svcGrad, initials, gaugeColor } from './utils';

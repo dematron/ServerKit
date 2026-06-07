@@ -35,15 +35,15 @@ export const SIDEBAR_ITEMS = [
         ]
     },
     {
+        // Redesign: Domains is migrated to the top-bar layout (REDESIGN_MAP §6
+        // decision 3). Its DNS Zones + SSL sub-nav now lives in the page's top
+        // bar (PageTopbar tabs), not as sidebar sub-items. Routes /dns and /ssl
+        // are unchanged and still reachable from those tabs.
         id: 'domains',
         label: 'Domains',
         route: '/domains',
         category: 'infrastructure',
-        icon: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
-        subItems: [
-            { id: 'dns', label: 'DNS Zones', route: '/dns', icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>' },
-            { id: 'ssl', label: 'SSL Certificates', route: '/ssl', icon: '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>' }
-        ]
+        icon: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'
     },
     {
         id: 'services',

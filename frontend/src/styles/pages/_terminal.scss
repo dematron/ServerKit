@@ -1291,7 +1291,7 @@ $lk-default:  #71717a;
         }
 
         &.selected {
-            background: rgba(59, 130, 246, 0.1);
+            background: fade($info, 10%);
         }
     }
 

@@ -242,21 +242,21 @@
 }
 
 // Node icon color variants
-.node-icon-manual { color: #3b82f6; }
+.node-icon-manual { color: $info; }
 .node-icon-cron { color: #a855f7; }
-.node-icon-webhook { color: #10b981; }
-.node-icon-event { color: #f59e0b; }
+.node-icon-webhook { color: $success; }
+.node-icon-event { color: $warning; }
 .node-icon-bash { color: $text-secondary; }
 .node-icon-python { color: #93c5fd; }
 .node-icon-logic { color: #f97316; }
 .node-icon-discord { color: #818cf8; }
 .node-icon-slack { color: #ec4899; }
-.node-icon-email { color: #3b82f6; }
+.node-icon-email { color: $info; }
 
 // Node status glow variants
-.node-status-active { border-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.3); }
-.node-status-success { border-color: $success; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
-.node-status-error { border-color: $danger; box-shadow: 0 0 10px rgba(239, 68, 68, 0.3); }
+.node-status-active { border-color: $info; box-shadow: 0 0 10px fade($info, 30%); }
+.node-status-success { border-color: $success; box-shadow: 0 0 10px fade($success, 30%); }
+.node-status-error { border-color: $danger; box-shadow: 0 0 10px fade($danger, 30%); }
 .node-status-inactive { border-color: $border-subtle; }
 
 // Logic If/Else branching outputs

@@ -291,14 +291,14 @@
     &__checkbox {
         width: 16px;
         height: 16px;
-        accent-color: var(--accent-primary, #6366f1);
+        accent-color: var(--accent-primary, $accent-primary);
         cursor: pointer;
         flex-shrink: 0;
     }
 
     // Row selected state
     &__row--selected {
-        background: var(--accent-glow, rgba(99, 102, 241, 0.08)) !important;
+        background: var(--accent-glow, fade($accent-primary-raw, 8%)) !important;
     }
 
     // Bulk Actions Bar
@@ -307,8 +307,8 @@
         justify-content: space-between;
         align-items: center;
         padding: $space-3 $space-5;
-        background: var(--accent-glow, rgba(99, 102, 241, 0.08));
-        border: 1px solid var(--accent-primary, #6366f1);
+        background: var(--accent-glow, fade($accent-primary-raw, 8%));
+        border: 1px solid var(--accent-primary, $accent-primary);
         border-radius: $radius-lg;
         margin-bottom: $space-4;
         font-size: $font-size-sm;

@@ -201,7 +201,7 @@
 
     &--online {
         background: linear-gradient(90deg, $success, #84cc16);
-        box-shadow: 0 0 22px rgba(16, 185, 129, 0.35);
+        box-shadow: 0 0 22px fade($success, 35%);
     }
 
     &--connecting {
@@ -3419,7 +3419,7 @@
             background: $success-bg;
             border-color: $success-border;
             color: $success;
-            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.08), 0 0 24px rgba(16, 185, 129, 0.14);
+            box-shadow: 0 0 0 4px fade($success, 8%), 0 0 24px fade($success, 14%);
         }
         &--offline {
             background: $danger-bg;

@@ -16,8 +16,8 @@
         }
 
         &.databases {
-            background: fade(#a855f7, 10%);
-            color: #a855f7;
+            background: fade($violet, 10%);
+            color: $violet;
         }
 
         &.size {
@@ -57,7 +57,7 @@
         }
 
         .icon-db {
-            color: #a855f7;
+            color: $violet;
         }
     }
 

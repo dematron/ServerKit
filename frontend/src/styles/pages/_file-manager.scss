@@ -2000,10 +2000,10 @@ $drawer-width: 520px;
     margin: $space-2 0 $space-3;
     padding: $space-2 $space-3;
     border-radius: $radius-md;
-    background: rgba(99, 102, 241, 0.1);
+    background: fade($accent-primary-raw, 10%);
     color: var(--text-primary);
     font-size: $font-size-sm;
-    border: 1px solid rgba(99, 102, 241, 0.25);
+    border: 1px solid fade($accent-primary-raw, 25%);
 }
 
 .target-picker {

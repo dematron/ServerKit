@@ -25,6 +25,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { PageTopbar } from '@/components/ds';
+import { SERVER_TABS } from '../components/servers/serverTabs';
 
 const CHART_COLORS = [
     '#6366f1', '#ec4899', '#14b8a6', '#f59e0b',
@@ -234,18 +236,19 @@ const FleetMonitor = () => {
 
     return (
         <div className="page-container">
-            <div className="page-header">
-                <div className="header-info">
-                    <h1>Fleet Monitor</h1>
-                    <p>Cross-server monitoring, alerts, and capacity planning.</p>
-                </div>
-                <div className="header-actions">
-                    <Button onClick={fetchTabData} disabled={loading}>
-                        <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-                        Refresh
-                    </Button>
-                </div>
-            </div>
+            <PageTopbar
+                icon={<Activity size={18} />}
+                title="Fleet Monitor"
+                tabs={SERVER_TABS}
+                actions={(
+                    <>
+                        <Button size="sm" onClick={fetchTabData} disabled={loading}>
+                            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                            Refresh
+                        </Button>
+                    </>
+                )}
+            />
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
                 <TabsList>
@@ -828,7 +831,7 @@ const FleetMonitor = () => {
                             ) : searchQuery.length >= 2 && !loading ? (
                                 <div className="py-8 text-center text-gray-500">
                                     <Search size={36} className="mx-auto text-gray-300 mb-3" />
-                                    <p>No results found for "{searchQuery}".</p>
+                                    <p>No results found for &quot;{searchQuery}&quot;.</p>
                                 </div>
                             ) : (
                                 <div className="py-8 text-center text-gray-500">

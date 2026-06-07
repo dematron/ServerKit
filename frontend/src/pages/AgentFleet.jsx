@@ -32,6 +32,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PageTopbar } from '@/components/ds';
+import { SERVER_TABS } from '../components/servers/serverTabs';
 
 const AgentFleet = () => {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -197,18 +199,19 @@ const AgentFleet = () => {
 
     return (
         <div className="page-container">
-            <div className="page-header">
-                <div className="header-info">
-                    <h1>Agent Fleet Management</h1>
-                    <p>Monitor health, manage versions, and control updates across your infrastructure.</p>
-                </div>
-                <div className="header-actions">
-                    <Button onClick={fetchData} disabled={loading}>
-                        <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-                        Refresh
-                    </Button>
-                </div>
-            </div>
+            <PageTopbar
+                icon={<Users size={18} />}
+                title="Agent Fleet"
+                tabs={SERVER_TABS}
+                actions={(
+                    <>
+                        <Button size="sm" onClick={fetchData} disabled={loading}>
+                            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                            Refresh
+                        </Button>
+                    </>
+                )}
+            />
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
                 <TabsList>

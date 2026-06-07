@@ -48,7 +48,7 @@ export async function listTables(conn) {
         case 'mysql':      return api.getMySQLTables(conn.name);
         case 'postgresql': return api.getPostgreSQLTables(conn.name);
         case 'sqlite':     return api.getSQLiteTables(conn.path);
-        case 'docker':     return api.getDockerDatabaseTables(conn.container, conn.name, conn.password);
+        case 'docker':     return api.getDockerDatabaseTables(conn.container, conn.name, conn.password, conn.user);
         default:           return { tables: [] };
     }
 }
@@ -69,7 +69,7 @@ export async function runQuery(conn, sql, readonly) {
         case 'mysql':      return api.executeMySQLQuery(conn.name, sql, readonly);
         case 'postgresql': return api.executePostgreSQLQuery(conn.name, sql, readonly);
         case 'sqlite':     return api.executeSQLiteQuery(conn.path, sql, readonly);
-        case 'docker':     return api.executeDockerQuery(conn.container, conn.name, sql, conn.password, readonly);
+        case 'docker':     return api.executeDockerQuery(conn.container, conn.name, sql, conn.password, readonly, conn.user);
         default:           return { success: false, error: 'Unknown database type' };
     }
 }

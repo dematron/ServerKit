@@ -46,6 +46,21 @@ function dbNode(engine, conn, label, size, idOverride) {
     };
 }
 
+// A database living inside a Docker container, surfaced under its engine node
+// (e.g. a WordPress stack's MySQL appears under "MySQL / MariaDB"). Tagged with
+// source/appName so the tree can show a Docker badge.
+function dockerDbNode(engine, db, i) {
+    return {
+        id: `${engine}:docker:${db.container}:${db.database || 'default'}:${i}`,
+        kind: 'database', engine, label: db.database || 'default', expandable: true,
+        conn: {
+            dbType: 'docker', container: db.container, name: db.database,
+            password: db.password || db.root_password, user: db.user, dockerType: db.type,
+        },
+        source: 'docker', appName: db.app_name,
+    };
+}
+
 function TabIcon({ tab }) {
     if (tab.kind === 'backups') return <Archive size={13} aria-hidden="true" />;
     if (tab.kind === 'console') return <Terminal size={13} aria-hidden="true" />;
@@ -97,8 +112,10 @@ export default function Databases() {
     }, []);
 
     const roots = useMemo(() => ([
-        { id: 'eng:mysql', kind: 'engine', engine: 'mysql', label: ENGINE_META.mysql.label, status: engineState('mysql', status), expandable: engineState('mysql', status) === 'active' },
-        { id: 'eng:postgresql', kind: 'engine', engine: 'postgresql', label: ENGINE_META.postgresql.label, status: engineState('postgresql', status), expandable: engineState('postgresql', status) === 'active' },
+        // mysql/postgresql stay expandable even when the host engine is absent —
+        // they can still contain databases that live in Docker containers.
+        { id: 'eng:mysql', kind: 'engine', engine: 'mysql', label: ENGINE_META.mysql.label, status: engineState('mysql', status), expandable: true },
+        { id: 'eng:postgresql', kind: 'engine', engine: 'postgresql', label: ENGINE_META.postgresql.label, status: engineState('postgresql', status), expandable: true },
         { id: 'eng:sqlite', kind: 'engine', engine: 'sqlite', label: ENGINE_META.sqlite.label, status: 'available', expandable: true },
         { id: 'eng:docker', kind: 'engine', engine: 'docker', label: ENGINE_META.docker.label, status: 'available', expandable: true },
     ]), [status]);
@@ -107,12 +124,22 @@ export default function Databases() {
     const loadChildren = useCallback(async (node) => {
         if (node.kind === 'engine') {
             if (node.engine === 'mysql') {
-                const d = await api.getMySQLDatabases();
-                return (d.databases || []).map((db) => dbNode('mysql', { dbType: 'mysql', name: db.name }, db.name, db.size));
+                const [host, docker] = await Promise.all([
+                    api.getMySQLDatabases().catch(() => ({ databases: [] })),
+                    api.getAllDockerDatabases().catch(() => ({ databases: [] })),
+                ]);
+                const hostNodes = (host.databases || []).map((db) => dbNode('mysql', { dbType: 'mysql', name: db.name }, db.name, db.size));
+                const dockerNodes = (docker.databases || []).filter((db) => db.type === 'mysql').map((db, i) => dockerDbNode('mysql', db, i));
+                return [...hostNodes, ...dockerNodes];
             }
             if (node.engine === 'postgresql') {
-                const d = await api.getPostgreSQLDatabases();
-                return (d.databases || []).map((db) => dbNode('postgresql', { dbType: 'postgresql', name: db.name }, db.name, db.size));
+                const [host, docker] = await Promise.all([
+                    api.getPostgreSQLDatabases().catch(() => ({ databases: [] })),
+                    api.getAllDockerDatabases().catch(() => ({ databases: [] })),
+                ]);
+                const hostNodes = (host.databases || []).map((db) => dbNode('postgresql', { dbType: 'postgresql', name: db.name }, db.name, db.size));
+                const dockerNodes = (docker.databases || []).filter((db) => db.type === 'postgresql').map((db, i) => dockerDbNode('postgresql', db, i));
+                return [...hostNodes, ...dockerNodes];
             }
             if (node.engine === 'sqlite') {
                 const d = await api.getSQLiteDatabases();
@@ -128,7 +155,9 @@ export default function Databases() {
         if (node.kind === 'app') {
             const d = await api.getAppDatabases(node.appId);
             return (d.databases || []).map((db, i) => ({
-                id: `app:${node.appId}:db:${i}`, kind: 'database', engine: 'docker',
+                // engine = the brand (mysql/postgresql) so the row shows the right
+                // brand icon/tint; the connection is still routed over docker exec.
+                id: `app:${node.appId}:db:${i}`, kind: 'database', engine: db.type || 'docker',
                 label: db.database || 'default', expandable: true,
                 conn: { dbType: 'docker', container: db.container, name: db.database, password: db.password || db.root_password, user: db.user, dockerType: db.type },
             }));

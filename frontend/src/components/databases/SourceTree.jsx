@@ -1,15 +1,15 @@
-import { ChevronRight, ChevronDown, Database, HardDrive, Box, Table2, Loader2, MoreHorizontal } from 'lucide-react';
+import { ChevronRight, ChevronDown, Table2, Loader2, MoreHorizontal } from 'lucide-react';
+import { EngineIcon } from '../icons/DatabaseBrands';
 
-// Icon per node kind / engine. Tint comes from `.is-<engine>` in SCSS.
+// Icon per node kind / engine. Brand glyphs come from DatabaseBrands; tint comes
+// from `.is-<engine>` in SCSS (the brand icons use currentColor).
 function NodeIcon({ node }) {
     if (node.kind === 'engine' || node.kind === 'database') {
-        if (node.engine === 'sqlite') return <HardDrive size={15} aria-hidden="true" />;
-        if (node.engine === 'docker') return <Box size={15} aria-hidden="true" />;
-        return <Database size={15} aria-hidden="true" />;
+        return <EngineIcon engine={node.engine} size={15} />;
     }
-    if (node.kind === 'app') return <Box size={15} aria-hidden="true" />;
+    if (node.kind === 'app') return <EngineIcon engine="docker" size={15} />;
     if (node.kind === 'table') return <Table2 size={14} aria-hidden="true" />;
-    return <Database size={15} aria-hidden="true" />;
+    return <EngineIcon engine={node.engine} size={15} />;
 }
 
 const STATUS_LABEL = { active: 'Running', inactive: 'Stopped', missing: 'Not installed' };
@@ -63,6 +63,13 @@ function TreeRow({ node, depth, expanded, childrenCache, loading, activeKey, sel
 
                 <span className="dbx-tree-icon"><NodeIcon node={node} /></span>
                 <span className="dbx-tree-label">{node.label}</span>
+
+                {node.kind === 'database' && node.source === 'docker' && (
+                    <span className="dbx-tree-source" title={node.appName ? `Docker container · ${node.appName}` : 'Docker container'}>
+                        <EngineIcon engine="docker" size={11} />
+                        {node.appName || 'docker'}
+                    </span>
+                )}
 
                 {node.kind === 'engine' && node.status && node.status !== 'available' && (
                     <span className={`dbx-tree-status is-${node.status}`}>

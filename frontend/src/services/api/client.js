@@ -48,14 +48,18 @@ class ApiClient {
         // — the backend resolves it leniently (falls back to no scope).
         const activeWorkspace = localStorage.getItem('active_workspace_id');
 
+        // Spread `...options` FIRST, then set merged headers LAST — otherwise a
+        // call passing custom `headers` (e.g. X-DB-Password) would clobber the
+        // whole merged set, dropping Content-Type/Authorization and triggering
+        // 415 (no application/json) on JSON POSTs.
         const config = {
+            ...options,
             headers: {
                 ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
                 ...(token && { Authorization: `Bearer ${token}` }),
                 ...(activeWorkspace && activeWorkspace !== 'all' && { 'X-Workspace-Id': activeWorkspace }),
                 ...options.headers,
             },
-            ...options,
         };
 
         if (

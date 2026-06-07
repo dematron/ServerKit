@@ -7,6 +7,12 @@ import ResultsGrid from './ResultsGrid';
 const HISTORY_KEY = 'serverkit_query_history';
 const MAX_HISTORY = 50;
 
+// Platform-aware run shortcut. Operators run ServerKit from Linux/Windows far more
+// often than macOS, so default the modifier label to Ctrl and only show ⌘ on Mac.
+const IS_MAC = typeof navigator !== 'undefined'
+    && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl';
+
 // One SQL console bound to a single connection. Owns its editor text, results,
 // readonly flag, and per-connection history. `active` gates keyboard handling so
 // background (hidden) consoles don't steal Ctrl+Enter.
@@ -116,11 +122,11 @@ export default function ConsoleTab({ conn, tabId, active, isAdmin, initialQuery 
                     className="dbx-run"
                     onClick={execute}
                     disabled={loading || !query.trim()}
-                    title="Run query (Ctrl+Enter)"
+                    title={`Run query (${MOD_KEY}+Enter)`}
                 >
                     <Play size={14} aria-hidden="true" />
                     {loading ? 'Running…' : 'Run'}
-                    <kbd>⌘↵</kbd>
+                    <kbd>{MOD_KEY} ↵</kbd>
                 </button>
 
                 {isAdmin && (
@@ -223,7 +229,7 @@ export default function ConsoleTab({ conn, tabId, active, isAdmin, initialQuery 
                     </>
                 ) : (
                     <div className="dbx-console-hint">
-                        <p>Write SQL above and press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run.</p>
+                        <p>Write SQL above and press <kbd>{MOD_KEY}</kbd> + <kbd>Enter</kbd> to run.</p>
                     </div>
                 )}
             </div>

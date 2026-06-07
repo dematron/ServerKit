@@ -74,7 +74,7 @@ $dbx-sqlite: #3d8fd1;
         font-size: $font-size-sm;
         font-weight: $font-weight-semibold;
         cursor: pointer;
-        box-shadow: 0 6px 16px fade($accent-primary-raw, 22%);
+        box-shadow: $shadow-accent;
         transition: background $transition-fast, transform $transition-fast;
 
         &:hover { background: $accent-hover; }
@@ -272,9 +272,30 @@ $dbx-sqlite: #3d8fd1;
         // engine tints on the leading icon
         &.is-mysql .dbx-tree-icon { color: $color-mysql; }
         &.is-postgresql .dbx-tree-icon { color: $color-postgresql; }
+        &.is-mariadb .dbx-tree-icon { color: $color-mariadb; }
+        &.is-mongodb .dbx-tree-icon { color: $color-mongodb; }
+        &.is-redis .dbx-tree-icon { color: $color-redis; }
         &.is-sqlite .dbx-tree-icon { color: $dbx-sqlite; }
         &.is-docker .dbx-tree-icon { color: $color-docker; }
         &.is-table .dbx-tree-icon { color: $text-tertiary; }
+    }
+
+    // "lives in a Docker container" badge on a database row surfaced under its
+    // engine node — a small docker-blue chip carrying the owning app's name.
+    .dbx-tree-source {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        flex-shrink: 0;
+        margin-left: $space-1;
+        padding: 1px 6px;
+        font-size: 10px;
+        font-weight: $font-weight-medium;
+        line-height: 1.5;
+        border-radius: $radius-full;
+        color: $color-docker;
+        background: fade($color-docker, 12%);
+        svg { flex-shrink: 0; }
     }
 
     .dbx-tree-chevron {
@@ -450,6 +471,19 @@ $dbx-sqlite: #3d8fd1;
         padding: $space-8;
     }
 
+    // The workspace is already a bordered card, so the global .empty-state card
+    // (components/_cards.scss) renders here as a faint card-in-card outline — its
+    // fill matches the workspace, so only the border shows. That guard only drops
+    // inside `.card`, which this surface isn't. Neutralize it for empty/result
+    // states so they read as clean centered content, not a nested card.
+    .dbx-welcome .empty-state,
+    .dbx-grid-status .empty-state {
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: $space-6 $space-5;
+    }
+
     // ─── Console ──────────────────────────────────────────
     .dbx-console { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
@@ -479,10 +513,12 @@ $dbx-sqlite: #3d8fd1;
         font-size: $font-size-sm;
         font-weight: $font-weight-semibold;
         cursor: pointer;
-        transition: background $transition-fast;
+        box-shadow: $shadow-accent;
+        transition: background $transition-fast, transform $transition-fast;
 
         &:hover:not(:disabled) { background: $accent-hover; }
-        &:disabled { opacity: 0.5; cursor: not-allowed; }
+        &:active:not(:disabled) { transform: translateY(1px); }
+        &:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
         kbd {
             font-family: $font-mono;
             font-size: 10px;
@@ -822,7 +858,7 @@ $dbx-sqlite: #3d8fd1;
         padding: $space-1 $space-3;
         background: $bg-card;
         border: 1px solid $border-default;
-        border-radius: $radius-md;
+        border-radius: $radius-lg;
         flex-shrink: 0;
         flex-wrap: wrap;
     }

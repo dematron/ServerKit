@@ -38,6 +38,11 @@ class SettingsService:
             'type': 'boolean',
             'description': 'Enable developer mode for debugging tools and icon reference'
         },
+        'managed_app_base_port': {
+            'value': 0,
+            'type': 'integer',
+            'description': 'Starting host port when auto-assigning ports to managed apps/sites (0 = use each template\'s own default). The scanner still skips ports already in use.'
+        },
         # SSO / OAuth settings
         'sso_google_enabled': {'value': False, 'type': 'boolean', 'description': 'Enable Google OAuth login'},
         'sso_google_client_id': {'value': '', 'type': 'string', 'description': 'Google OAuth client ID'},

@@ -19,7 +19,7 @@ variables:
   - name: HTTP_PORT
     description: HTTP port
     type: port
-    default: "8080"
+    default: "8300"
     hidden: true
   - name: DB_PASSWORD
     description: MySQL root password

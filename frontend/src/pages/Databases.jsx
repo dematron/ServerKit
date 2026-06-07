@@ -559,6 +559,7 @@ export default function Databases() {
                                     {activeStatus.readonly ? <><Lock size={11} aria-hidden="true" /> Read-only</> : 'Writes enabled'}
                                 </span>
                             )}
+                            <span className="dbx-status-item dbx-status-muted">UTF-8</span>
                         </>
                     ) : (
                         <span className="dbx-status-item dbx-status-muted">No tab open</span>
@@ -570,6 +571,7 @@ export default function Databases() {
                         <span className="dbx-status-item">{activeStatus.rowCount} row{activeStatus.rowCount === 1 ? '' : 's'}{activeStatus.truncated ? ` of ${activeStatus.totalRows}` : ''}</span>
                     )}
                     {activeStatus?.execTime != null && <span className="dbx-status-item dbx-mono">{activeStatus.execTime}s</span>}
+                    {activeStatus && <span className="dbx-status-item is-connected">Connected</span>}
                 </div>
             </footer>
 

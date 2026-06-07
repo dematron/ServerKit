@@ -10,7 +10,7 @@ import { useMetrics } from '../hooks/useMetrics';
 import MetricsGraph from '../components/MetricsGraph';
 import useDashboardLayout from '../hooks/useDashboardLayout';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { MetricCard, Pill } from '@/components/ds';
 
 // Refresh interval options in seconds
 const REFRESH_OPTIONS = [
@@ -245,11 +245,11 @@ const Dashboard = () => {
                             <span className="conn-status__dot" aria-hidden="true"></span>
                             {isConnected ? 'Live' : 'Reconnecting'}
                         </span>
-                        <span className="detail-separator">|</span>
+                        <span className="detail-separator">·</span>
                         <span>IP: {ipAddress}</span>
-                        <span className="detail-separator">|</span>
+                        <span className="detail-separator">·</span>
                         <span>KERNEL: {kernelVersion}</span>
-                        <span className="detail-separator">|</span>
+                        <span className="detail-separator">·</span>
                         <span>UPTIME: {uptimeFormatted.days}d {String(uptimeFormatted.hours).padStart(2, '0')}h {String(uptimeFormatted.minutes).padStart(2, '0')}m</span>
                     </div>
                 </div>
@@ -297,61 +297,66 @@ const Dashboard = () => {
                 {widgets.filter(w => w.visible).map(w => {
                     const WIDGET_RENDERERS = {
                         cpu: () => (
-                            <div key="cpu" className="metric-tile">
-                                <div className="tile-head">
-                                    <span className="tile-title">CPU</span>
-                                    <Zap size={16} className="tile-icon cpu" />
+                            <MetricCard
+                                key="cpu"
+                                className="dash-kpi"
+                                tone="accent"
+                                icon={<Zap size={16} />}
+                                value={(metrics?.cpu?.percent || 0).toFixed(1)}
+                                unit="%"
+                                label="CPU"
+                            >
+                                <div className="sk-kpi__sub">
+                                    <span>Cores {metrics?.cpu?.count_logical || 0}</span>
                                 </div>
-                                <div className="tile-val">{(metrics?.cpu?.percent || 0).toFixed(1)}%</div>
-                                <div className="tile-sub">
-                                    <span>Cores: {metrics?.cpu?.count_logical || 0}</span>
-                                </div>
-                            </div>
+                            </MetricCard>
                         ),
                         ram: () => (
-                            <div key="ram" className="metric-tile">
-                                <div className="tile-head">
-                                    <span className="tile-title">RAM</span>
-                                    <Database size={16} className="tile-icon memory" />
+                            <MetricCard
+                                key="ram"
+                                className="dash-kpi"
+                                tone="green"
+                                icon={<Database size={16} />}
+                                value={metrics?.memory?.ram?.used_human || '0 GB'}
+                                label="RAM"
+                            >
+                                <div className="sk-kpi__sub">
+                                    <span>Total {metrics?.memory?.ram?.total_human || '0 GB'}</span>
+                                    <span>Cached {metrics?.memory?.ram?.cached_human || '0 GB'}</span>
                                 </div>
-                                <div className="tile-val">{metrics?.memory?.ram?.used_human || '0 GB'}</div>
-                                <div className="tile-sub">
-                                    <span>Total: {metrics?.memory?.ram?.total_human || '0 GB'}</span>
-                                    <span>Cached: {metrics?.memory?.ram?.cached_human || '0 GB'}</span>
-                                </div>
-                            </div>
+                            </MetricCard>
                         ),
                         network: () => (
-                            <div key="network" className="metric-tile">
-                                <div className="tile-head">
-                                    <span className="tile-title">Network</span>
-                                    <Activity size={16} className="tile-icon network" />
+                            <MetricCard
+                                key="network"
+                                className="dash-kpi"
+                                tone="cyan"
+                                icon={<Activity size={16} />}
+                                value={metrics?.network?.io?.bytes_sent_human || '0 B'}
+                                unit="sent"
+                                label="Network"
+                            >
+                                <div className="sk-kpi__sub">
+                                    <span>In {metrics?.network?.io?.bytes_recv_human || '0 B'}</span>
+                                    <span>Out {metrics?.network?.io?.bytes_sent_human || '0 B'}</span>
                                 </div>
-                                <div className="tile-val">
-                                    {metrics?.network?.io?.bytes_sent_human || '0 B'}
-                                    <span className="tile-val-unit">sent</span>
-                                </div>
-                                <div className="tile-sub">
-                                    <span>In: {metrics?.network?.io?.bytes_recv_human || '0 B'}</span>
-                                    <span>Out: {metrics?.network?.io?.bytes_sent_human || '0 B'}</span>
-                                </div>
-                            </div>
+                            </MetricCard>
                         ),
                         disk: () => (
-                            <div key="disk" className="metric-tile">
-                                <div className="tile-head">
-                                    <span className="tile-title">Disk</span>
-                                    <HardDrive size={16} className="tile-icon disk" />
+                            <MetricCard
+                                key="disk"
+                                className="dash-kpi"
+                                tone="amber"
+                                icon={<HardDrive size={16} />}
+                                value={(metrics?.disk?.partitions?.[0]?.percent || 0).toFixed(1)}
+                                unit="%"
+                                label="Disk"
+                            >
+                                <div className="sk-kpi__sub">
+                                    <span>Used {metrics?.disk?.partitions?.[0]?.used_human || '0 GB'}</span>
+                                    <span>Free {metrics?.disk?.partitions?.[0]?.free_human || '0 GB'}</span>
                                 </div>
-                                <div className="tile-val">
-                                    {(metrics?.disk?.partitions?.[0]?.percent || 0).toFixed(1)}%
-                                    <span className="tile-val-unit">used</span>
-                                </div>
-                                <div className="tile-sub">
-                                    <span>Used: {metrics?.disk?.partitions?.[0]?.used_human || '0 GB'}</span>
-                                    <span>Free: {metrics?.disk?.partitions?.[0]?.free_human || '0 GB'}</span>
-                                </div>
-                            </div>
+                            </MetricCard>
                         ),
                         chart: () => (
                             <div key="chart" className="chart-panel">
@@ -432,9 +437,9 @@ const Dashboard = () => {
                                                     </td>
                                                     <td>{app.app_type}</td>
                                                     <td>
-                                                        <Badge variant={app.status === 'running' ? 'success' : 'warning'}>
+                                                        <Pill kind={app.status === 'running' ? 'green' : 'amber'}>
                                                             {app.status?.toUpperCase()}
-                                                        </Badge>
+                                                        </Pill>
                                                     </td>
                                                     <td>{app.domains?.[0]?.name || '-'}</td>
                                                 </tr>

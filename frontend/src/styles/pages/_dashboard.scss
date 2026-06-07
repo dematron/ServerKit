@@ -152,6 +152,20 @@
     }
 }
 
+// KPI cards (redesign) use the shared `.sk-kpi` primitive; this just places
+// them on the dashboard's 12-col grid (4-up, like the old metric tiles).
+.dash-kpi {
+    grid-column: span 3;
+
+    @media (max-width: $breakpoint-xl) {
+        grid-column: span 6;
+    }
+
+    @media (max-width: $breakpoint-md) {
+        grid-column: span 12;
+    }
+}
+
 .tile-head {
     display: flex;
     justify-content: space-between;

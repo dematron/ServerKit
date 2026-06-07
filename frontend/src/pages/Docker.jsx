@@ -10,6 +10,7 @@ import EmptyState from '../components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { MetricCard } from '@/components/ds';
 import {
     Box, Layers, HardDrive, Network as NetworkIcon, Search, X, RefreshCw,
     Trash2, Play, Square, RotateCw, Terminal as TerminalLucide, FileText,
@@ -402,6 +403,16 @@ const Docker = () => {
                 </aside>
 
                 <main className="dx-main">
+                    <div className="dx-kpi-strip">
+                        <MetricCard tone="accent" icon={<Box size={16} />} value={stats.containers.total} label="Containers">
+                            <div className="sk-kpi__sub"><span>{stats.containers.running} running</span></div>
+                        </MetricCard>
+                        <MetricCard tone="cyan" icon={<Layers size={16} />} value={stats.images.total} label="Images">
+                            <div className="sk-kpi__sub"><span>{stats.images.size}</span></div>
+                        </MetricCard>
+                        <MetricCard tone="violet" icon={<HardDrive size={16} />} value={stats.volumes.total} label="Volumes" />
+                        <MetricCard tone="green" icon={<NetworkIcon size={16} />} value={stats.networks.total} label="Networks" />
+                    </div>
                     <div className="dx-workbar">
                         <div className="dx-workbar-title">
                             <span>Docker</span>

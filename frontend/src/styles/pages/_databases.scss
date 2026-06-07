@@ -344,8 +344,8 @@ $dbx-sqlite: #3d8fd1;
         color: $text-tertiary;
 
         .dbx-status-dot { width: 7px; height: 7px; border-radius: $radius-full; background: currentColor; }
-        &.is-active { color: $success; }
-        &.is-inactive { color: $warning; }
+        &.is-active { color: $success; .dbx-status-dot { box-shadow: 0 0 6px currentColor; } }
+        &.is-inactive { color: $warning; .dbx-status-dot { box-shadow: 0 0 6px currentColor; } }
         &.is-missing { color: $text-tertiary; }
     }
 
@@ -647,7 +647,7 @@ $dbx-sqlite: #3d8fd1;
         background: $bg-elevated;
         border-bottom: 1px solid $border-subtle;
         flex-shrink: 0;
-        .dbx-results-count { font-size: $font-size-xs; color: $text-secondary; }
+        .dbx-results-count { font-size: $font-size-xs; color: $success; font-weight: $font-weight-medium; }
         .dbx-results-time { font-family: $font-mono; font-size: $font-size-xs; color: $text-tertiary; }
     }
 
@@ -873,6 +873,20 @@ $dbx-sqlite: #3d8fd1;
         svg { color: $text-tertiary; }
         &.is-write { color: $warning; font-weight: $font-weight-medium; }
         &.dbx-status-muted { color: $text-tertiary; }
+
+        // Green "● Connected" segment (matches the prototype status bar)
+        &.is-connected {
+            color: $success;
+            font-family: $font-mono;
+            &::before {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: $radius-full;
+                background: currentColor;
+                box-shadow: 0 0 6px currentColor;
+            }
+        }
     }
 
     // ─── Context menu ─────────────────────────────────────

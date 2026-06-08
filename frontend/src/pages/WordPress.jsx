@@ -6,18 +6,18 @@ import { useResourceTier } from '../contexts/ResourceTierContext';
 import ResourceGate from '../components/ResourceGate';
 import Spinner from '../components/Spinner';
 import EmptyState from '../components/EmptyState';
-import { Globe } from 'lucide-react';
-import { PageTopbar } from '@/components/ds';
+import { Globe, ChevronRight } from 'lucide-react';
+import { PageTopbar, Pill, SegControl } from '@/components/ds';
 import { WORDPRESS_TABS } from '../components/wordpress/wordpressTabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 
 function WordPress() {
     const [sites, setSites] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeTag, setActiveTag] = useState(null); // null = show all
+    const [statusFilter, setStatusFilter] = useState('all'); // all | running | stopped
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [createLoading, setCreateLoading] = useState(false);
     const [createForm, setCreateForm] = useState({
@@ -196,105 +196,106 @@ function WordPress() {
                         </Button>
                     }
                 />
-            ) : (
-                <>
-                {(() => {
-                    const allTags = Array.from(new Set(sites.flatMap(s => s.tags || []))).sort();
-                    if (allTags.length === 0) return null;
-                    return (
-                        <div className="wp-tag-filter">
-                            <button
-                                className={`wp-tag-chip wp-tag-chip--filter ${activeTag === null ? 'is-active' : ''}`}
-                                onClick={() => setActiveTag(null)}
-                            >
-                                All
-                            </button>
-                            {allTags.map(tag => (
-                                <button
-                                    key={tag}
-                                    className={`wp-tag-chip wp-tag-chip--filter ${activeTag === tag ? 'is-active' : ''}`}
-                                    onClick={() => setActiveTag(tag)}
-                                >
-                                    {tag}
-                                </button>
-                            ))}
-                        </div>
-                    );
-                })()}
-                <div className="wp-sites-grid">
-                    {sites.filter(site => activeTag === null || (site.tags || []).includes(activeTag)).map(site => (
-                        <div
-                            key={site.id}
-                            className="wp-site-card"
-                            onClick={() => navigate(`/wordpress/${site.id}`)}
-                        >
-                            <div className="wp-site-card-header">
-                                <div className="wp-site-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <circle cx="12" cy="12" r="10"/>
-                                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                                        <path d="M2 12h20"/>
-                                    </svg>
-                                </div>
-                                <div className="wp-site-info">
-                                    <h3 className="wp-site-name">{site.name || site.application?.name || `Site ${site.id}`}</h3>
-                                    {site.port && (
-                                        <span className="wp-site-url">:{site.port}</span>
-                                    )}
-                                </div>
-                                <div className={`wp-site-status ${site.status === 'running' ? 'running' : 'stopped'}`}>
-                                    <span className="status-dot" />
-                                    {site.status === 'running' ? 'Running' : 'Stopped'}
-                                </div>
-                            </div>
-                            <div className="wp-site-card-body">
-                                <div className="wp-site-meta">
-                                    <div className="wp-site-meta-item">
-                                        <span className="meta-label">Version</span>
-                                        <span className="meta-value">{site.wp_version || '6.4'}</span>
-                                    </div>
-                                    <div className="wp-site-meta-item">
-                                        <span className="meta-label">Environments</span>
-                                        <span className="meta-value">{(site.environment_count || 0) + 1}</span>
-                                    </div>
-                                </div>
-                                {site.tags && site.tags.length > 0 && (
-                                    <div className="wp-site-tags">
-                                        {site.tags.map(tag => (
-                                            <span key={tag} className="wp-tag-chip">{tag}</span>
-                                        ))}
-                                    </div>
-                                )}
-                                {site.url && site.status === 'running' && (
-                                    <div className="wp-site-card-links">
-                                        <a
-                                            href={site.url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="wp-site-link"
-                                            onClick={e => e.stopPropagation()}
+            ) : (() => {
+                const allTags = Array.from(new Set(sites.flatMap(s => s.tags || []))).sort();
+                const shownSites = sites.filter(site => (
+                    (statusFilter === 'all'
+                        || (statusFilter === 'running' ? site.status === 'running' : site.status !== 'running'))
+                    && (activeTag === null || (site.tags || []).includes(activeTag))
+                ));
+                return (
+                    <div className="wp-list">
+                        <div className="wp-list__toolbar">
+                            <SegControl
+                                value={statusFilter}
+                                onChange={setStatusFilter}
+                                options={[
+                                    { value: 'all', label: 'All' },
+                                    { value: 'running', label: 'Running' },
+                                    { value: 'stopped', label: 'Stopped' },
+                                ]}
+                            />
+                            {allTags.length > 0 && (
+                                <div className="wp-tag-filter">
+                                    <button
+                                        className={`wp-tag-chip wp-tag-chip--filter ${activeTag === null ? 'is-active' : ''}`}
+                                        onClick={() => setActiveTag(null)}
+                                    >
+                                        All tags
+                                    </button>
+                                    {allTags.map(tag => (
+                                        <button
+                                            key={tag}
+                                            className={`wp-tag-chip wp-tag-chip--filter ${activeTag === tag ? 'is-active' : ''}`}
+                                            onClick={() => setActiveTag(tag)}
                                         >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                                            Open Site
-                                        </a>
-                                        <a
-                                            href={`${site.url}/wp-admin`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="wp-site-link"
-                                            onClick={e => e.stopPropagation()}
-                                        >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                                            WP Admin
-                                        </a>
-                                    </div>
-                                )}
-                            </div>
+                                            {tag}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                    ))}
-                </div>
-                </>
-            )}
+
+                        <div className="wp-list__card">
+                            <table className="sk-dtable">
+                                <thead>
+                                    <tr>
+                                        <th>Site</th>
+                                        <th>Environments</th>
+                                        <th>Version</th>
+                                        <th>Status</th>
+                                        <th>Tags</th>
+                                        <th style={{ width: 70 }} />
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {shownSites.map(site => (
+                                        <tr key={site.id} className="is-clickable" onClick={() => navigate(`/wordpress/${site.id}`)}>
+                                            <td>
+                                                <div className="sk-cell-name">
+                                                    <span className="wp-list__tile" aria-hidden="true">
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+                                                    </span>
+                                                    <span>
+                                                        <div>{site.name || site.application?.name || `Site ${site.id}`}</div>
+                                                        {site.port && <div className="sk-cell-sub">:{site.port}</div>}
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td className="sk-cell-mono">{(site.environment_count || 0) + 1}</td>
+                                            <td className="sk-cell-mono">WP {site.wp_version || '6.4'}</td>
+                                            <td>
+                                                <Pill kind={site.status === 'running' ? 'green' : 'gray'}>
+                                                    {site.status === 'running' ? 'Running' : 'Stopped'}
+                                                </Pill>
+                                            </td>
+                                            <td>
+                                                {site.tags?.length
+                                                    ? site.tags.map(tag => <span key={tag} className="sk-tag">{tag}</span>)
+                                                    : <span className="wp-list__dash">—</span>}
+                                            </td>
+                                            <td>
+                                                {site.url && site.status === 'running' ? (
+                                                    <div className="wp-list__links" onClick={e => e.stopPropagation()}>
+                                                        <a href={site.url} target="_blank" rel="noopener noreferrer" title="Open site" aria-label="Open site">
+                                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                                        </a>
+                                                        <a href={`${site.url}/wp-admin`} target="_blank" rel="noopener noreferrer" title="WP Admin" aria-label="WP Admin">
+                                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                                                        </a>
+                                                    </div>
+                                                ) : (
+                                                    <ChevronRight size={16} className="wp-list__chev" />
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Import Site Modal */}
             {showImportModal && (

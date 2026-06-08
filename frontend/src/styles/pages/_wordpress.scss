@@ -151,6 +151,56 @@
     padding: $space-4;
 }
 
+// Redesign: dense WordPress site table (replaces the .wp-site-card grid).
+.wp-list {
+    padding: $space-4;
+
+    &__toolbar {
+        display: flex;
+        align-items: center;
+        gap: $space-3;
+        flex-wrap: wrap;
+        margin-bottom: $space-3;
+
+        .wp-tag-filter { margin: 0; }
+    }
+
+    &__card {
+        background: var(--surface);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
+
+    &__tile {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        background: var(--accent-bg);
+        color: var(--accent-bright);
+    }
+
+    &__links {
+        display: inline-flex;
+        gap: $space-2;
+
+        a {
+            display: inline-flex;
+            color: var(--text-faint);
+            transition: color 0.14s;
+            &:hover { color: var(--accent-bright); }
+        }
+    }
+
+    &__dash { color: var(--text-ghost); font-family: var(--mono); font-size: 12px; }
+    &__chev { color: var(--text-ghost); }
+
+    .sk-tag + .sk-tag { margin-left: 4px; }
+}
+
 // Site tags / labels (chips + filter bar)
 .wp-tag-filter {
     display: flex;

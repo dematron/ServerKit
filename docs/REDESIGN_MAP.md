@@ -1,7 +1,9 @@
 # ServerKit Redesign Map
 
-> Status: **restyle COMPLETE (2026-06-11)** — all 22 view-groups + Applications + infra overlays shipped on `dev`;
-> remaining work is §5 backend gaps (build-on-demand) and the open §6 decisions 3/4/5/6. · Owner: Juan ·
+> Status: **pass 1 COMPLETE — pass 2 (parity) IN PROGRESS (2026-06-11)** — all 22 view-groups shipped a first
+> restyle on `dev`, but a fresh audit against the prototype (`_serverkit_design_extract`) found the pass-1 work
+> stops short of real parity on several pages. See **§8** for the ranked gap list. Remaining: §8 parity items,
+> §5 backend gaps, open §6 decisions 3/4/5/6. · Owner: Juan ·
 > Source design: clickable prototype (`ServerKit.zip` → `serverkit/view_*.jsx` + `styles.css`) · Target: the live
 > modular app under `frontend/src` + `backend/app`.
 
@@ -233,5 +235,84 @@ primitives, add API methods only where a §5 gap is being filled.
 
 ---
 
-*Generated from a 22-agent comparison of the prototype vs the live codebase. Update this file as decisions land
-and pages ship.*
+## 8. Parity pass 2 — gap audit (2026-06-11, vs `C:\Users\Juan\Downloads\_serverkit_design_extract`)
+
+Pass 1 shipped, but a per-page re-audit against the prototype shows several pages still *read* as the old design.
+Root causes recur: (a) **cardified layouts** where the demo is a flush full-height console, (b) **deferred items
+that carry most of the visual identity** (SQL highlighting, semantic tints, src-badges), (c) **two pages never
+migrated at all** (Agent Fleet, Fleet Monitor). Ranked by how loudly each page diverges:
+
+### 8.0 Chrome — Agent Fleet / Fleet Monitor (the "page reloads" complaint) — **WORST**
+Navigation is SPA-clean (`PageTopbar`→`NavLink`); the jarring jump from `/servers` → `/fleet` is purely visual:
+`AgentFleet.jsx` (39 hits) + `FleetMonitor.jsx` (24 hits) still use hard-coded Tailwind light-mode utilities
+(`bg-gray-200`, `bg-yellow-50`, `text-gray-600`, `bg-blue-600`, `bg-green-600`) + legacy `StatCard`/`StatsGrid`
++ shadcn `Tabs`, so they render as a different app (and break dark theme). Fix: retint to tokens, `StatCard`→
+`MetricCard`, statuses→`Pill`, tab strip→accent underline. (`Dashboard.jsx` has 1 stray `gray-*` too.)
+
+### 8.1 Databases — layout model is wrong (user's #1 complaint)
+Demo is a **flush, full-height, zero-padding 3-pane console** (topbar / tree-rail | main / statusbar joined by
+1px borders). Live `.db-explorer` is **padded floating cards** (`$space-3` padding + gaps + `$radius-lg` on
+toolbar/tree-panel/workspace/statusbar) — this alone makes it "not the demo". Then the deferred items:
+- **De-cardify** (STYLE): `_databases.scss` — `.db-explorer` (≈:14) padding/gap→0; `.dbx-toolbar` (≈:90),
+  `.dbx-tree-panel` (≈:187), `.dbx-workspace` (≈:377), `.dbx-statusbar` (≈:853) → borders-only, radius 0.
+- **SQL editor** (JSX, the big one): bare `<textarea>` (`ConsoleTab.jsx:164`) vs demo's line-number gutter +
+  `.kw`/`.num`/`.str` keyword tints + styled `.ro-badge`.
+- **Semantic cell tints** (JSX): port demo `cellEl` (`view_databases.jsx:24–31`) into `ResultsGrid.jsx` —
+  NULL ghost-italic, emails/URLs green, publish/running green, draft/stopped amber.
+- Small: tree status-dot glow (`box-shadow: 0 0 6px currentColor`), `+` new-tab pill, ctx-menu "Browse rows"
+  / "Export as SQL", bold green row count.
+
+### 8.2 Services list — structure diverged from the demo
+- List is a **flex-row layout, not the dense `.dtable`**; filters are **three native `<select>`s, not
+  `SegControl`** (`Services.jsx:196–226, 265–404`). This is the page's main "doesn't match" driver.
+- **`.src-badge` missing** (template/github/gitea/docker/scratch source tile per row).
+- Detail: no back-link ("‹ All services"), title row stacks instead of inline h1+Pill. NewService: demo's 4
+  method cards (Template/Git/Docker/Scratch) vs live 3 (Docker-image + scratch = §5 backend gap); 2-col
+  review-panel layout is a deliberate improvement — keep.
+- Backend (§5): metrics-history AreaCharts, real template catalog (live has 1 hardcoded template).
+
+### 8.3 Terminal / Console — biggest IA gap
+Demo is a **unified console**: persistent left target rail (server/WP/DBs/containers/services groups, glowing
+status dots) + Terminal⇄Logs mode toggle + **interactive terminal pane**. Live is 4 separate tabs with a
+modal TargetPicker and **no terminal shell at all** on this page. Pass-1 restyled the log wells, but the
+shape of the page is not the demo's. Needs the §5 unified-targets endpoint to be fully real; an interim
+win: host the existing SSH/xterm console (RemoteTerminal is built but unmounted) as a Terminal tab.
+
+### 8.4 WordPress — detail is close; list is thin
+- List: no bulk-select (demo: tri-state ckbox + bulk Start/Restart/Stop/Update/Backup bar) — JSX now,
+  fan-out or bulk route later; missing Plugins/Visits/Uptime/Server/Env columns = §5 `get_sites` enrichment.
+- Detail (mostly §5 data gaps, structure is right): security posture **ScoreGauge** (compute from existing
+  check rows — JSX-only), largest-tables **gauge bars**, PHP version in header subtitle, response-time chart,
+  referrers/devices bars, FilesDrawer w/ code viewer.
+
+### 8.5 Files — high parity; 3 visible gaps
+Syntax-highlighted preview (`PreviewDrawer.jsx:113` plain textarea vs `.pv-code` tokens — the planned
+`file-manager/highlight.js`), **Quick-access rail group** (Sites/Stack/Web config/Logs shortcuts), topbar
+subtitle (source host/OS). Cosmetic: breadcrumb `›` icons vs demo mono `/`, ext-badge hidden until hover.
+
+### 8.6 Docker — close; 4 small items
+KPI icon tone-wash not applying (verify `.sk-kpi__icon--*` rules actually color the lucide SVG), per-container
+accent dot in name cell, Projects KPI (compose-label count), logs modal→drawer (blocked on §6.3).
+
+### 8.7 Workspaces — list ≈ parity; detail page doesn't exist
+Card grid/typography/hover match the demo ✓. Missing: **`/workspaces/:id` WorkspaceDetail** (hero + plan &
+billing + resource usage + members/servers/services tabs — net-new, §5 data), per-card CPU/MEM `usebar`s +
+Servers/Services/Sites counts (§5 aggregation), `.ws-card.active` highlight for the active workspace.
+
+### 8.8 Marketplace — effectively done
+Matches the demo's spirit; intentional IA deltas (tabs, sidebar categories) preserve live capabilities.
+Optional: horizontal `.cat-chips` row above the grid, 3rd-party integration cards (§5 OAuth).
+
+### Recommended order
+1. **8.0 Agent Fleet + Fleet Monitor retint** — kills the "different app" jump. ✅ **done 2026-06-11**
+2. **8.1 Databases de-cardify + tints + editor** — the called-out page; mostly SCSS + small JSX. ✅ **flush
+   layout + cell tints + dot glow + `+` pill + ctx items done 2026-06-11; SQL gutter/highlight follow-up**
+3. **8.2 Services list → `.sk-dtable` + `SegControl` + src-badge.**
+4. **8.4 WP list bulk-select + detail ScoreGauge/gauges** (JSX-only parts).
+5. **8.5 Files highlight.js + quick-access.** 6. **8.6 Docker smalls.** 7. **8.3 Terminal IA** (needs §5).
+8. **8.7 WorkspaceDetail** (needs §5). 9. **8.8 Marketplace optionals.**
+
+---
+
+*Generated from a 22-agent comparison of the prototype vs the live codebase, re-audited 2026-06-11 (§8).
+Update this file as decisions land and pages ship.*

@@ -9,6 +9,7 @@ import LogFileList from '../components/log-viewer/LogFileList';
 import LogToolbar from '../components/log-viewer/LogToolbar';
 import LogContent from '../components/log-viewer/LogContent';
 import { formatBytes, logKindFromPath } from '../components/log-viewer/logHelpers';
+import { Pill } from '../components/ds';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -580,11 +581,7 @@ const JournalTab = () => {
                         </span>
                     )}
                     {!isJournalctl && source && (
-                        <span className="lv-header-hint" style={{
-                            background: 'rgba(59, 130, 246, 0.1)',
-                            borderColor: 'rgba(59, 130, 246, 0.25)',
-                            color: '#60a5fa',
-                        }}>
+                        <span className="lv-header-hint lv-header-hint--info">
                             <AlertCircle size={12} />
                             Reading from <strong>&nbsp;{sourceLabel}</strong>
                         </span>
@@ -739,13 +736,14 @@ const JournalTab = () => {
     );
 };
 
+// Journal priority dot tints — categorical, aligned to the redesign palette.
 function priorityColor(value) {
-    if (value === '0' || value === '1' || value === '2') return '#ef4444';
-    if (value === '3') return '#f87171';
-    if (value === '4') return '#f59e0b';
-    if (value === '5' || value === '6') return '#60a5fa';
-    if (value === '7') return '#94a3b8';
-    return '#71717a';
+    if (value === '0' || value === '1' || value === '2') return '#fb6f6f';
+    if (value === '3') return '#fc8d8d';
+    if (value === '4') return '#f5b945';
+    if (value === '5' || value === '6') return '#49c7f0';
+    if (value === '7') return '#9aa1af';
+    return '#646b7a';
 }
 
 const ProcessesTab = () => {
@@ -926,12 +924,12 @@ const ProcessesTab = () => {
                     ].map(c => (
                         <button
                             key={c.id}
-                            className={`filter-chip ${statusFilter === c.id ? 'active' : ''}`}
+                            className={`proc-chip ${statusFilter === c.id ? 'active' : ''}`}
                             onClick={() => setStatusFilter(c.id)}
                             disabled={c.id !== 'all' && c.count === 0}
                         >
                             <span>{c.label}</span>
-                            <span className="filter-chip-count">{c.count}</span>
+                            <span className="proc-chip-count">{c.count}</span>
                         </button>
                     ))}
                 </div>
@@ -985,7 +983,7 @@ const ProcessesTab = () => {
                             onClick={() => setUserFilter(null)}
                             style={{ gridTemplateColumns: '8px 1fr auto', gridTemplateAreas: '"dot name size" "dot name size"' }}
                         >
-                            <span className="lv-file-dot" style={{ background: '#6366f1' }} />
+                            <span className="lv-file-dot" style={{ background: 'var(--accent)' }} />
                             <span className="lv-file-name">All users</span>
                             <span className="lv-file-size">{processes.length}</span>
                         </button>
@@ -1074,10 +1072,7 @@ const ProcessesTab = () => {
                                                     </div>
                                                 </td>
                                                 <td>
-                                                    <span className={`proc-status status-${(p.status || '').toLowerCase()}`}>
-                                                        <span className="proc-status-dot" />
-                                                        {p.status}
-                                                    </span>
+                                                    <Pill kind={processStatusKind(p.status)}>{p.status}</Pill>
                                                 </td>
                                                 <td className="proc-actions" onClick={(e) => e.stopPropagation()}>
                                                     <button className="lv-icon-btn" onClick={() => handleKillProcess(p.pid)} title="Kill (SIGTERM)">
@@ -1179,14 +1174,18 @@ const ProcessesTab = () => {
     );
 };
 
-// Stable colour from a string — used to tag users by colour.
+// Stable colour from a string — used to tag users by colour (categorical
+// tints aligned to the redesign palette).
 function hashColor(str) {
-    if (!str) return '#71717a';
-    const palette = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#14b8a6', '#a855f7', '#0ea5e9', '#fb7185'];
+    if (!str) return '#646b7a';
+    const palette = ['#6d7cff', '#3ddc97', '#f5b945', '#ec4899', '#14b8a6', '#b07bf5', '#49c7f0', '#fb7185'];
     let h = 0;
     for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
     return palette[Math.abs(h) % palette.length];
 }
+
+// Map a service status kind onto a ds Pill tone.
+const SVC_PILL_KIND = { running: 'green', failed: 'red', stopped: 'gray', other: 'amber' };
 
 const ServicesTab = () => {
     const toast = useToast();
@@ -1366,12 +1365,12 @@ const ServicesTab = () => {
                     ].map(c => (
                         <button
                             key={c.id}
-                            className={`filter-chip ${statusFilter === c.id ? 'active' : ''}`}
+                            className={`proc-chip ${statusFilter === c.id ? 'active' : ''}`}
                             onClick={() => setStatusFilter(c.id)}
                             disabled={c.id !== 'all' && c.count === 0}
                         >
                             <span>{c.label}</span>
-                            <span className="filter-chip-count">{c.count}</span>
+                            <span className="proc-chip-count">{c.count}</span>
                         </button>
                     ))}
                 </div>
@@ -1414,9 +1413,9 @@ const ServicesTab = () => {
                                         <span className={`svc-status-dot status-${kind}`} />
                                         <h4>{service.name}</h4>
                                     </div>
-                                    <span className={`svc-status-pill status-${kind}`}>
+                                    <Pill kind={SVC_PILL_KIND[kind] || 'gray'}>
                                         {service.status || 'unknown'}
-                                    </span>
+                                    </Pill>
                                 </div>
                                 {service.description && (
                                     <p className="svc-card-desc" title={service.description}>
@@ -1610,19 +1609,21 @@ function formatMemory(bytes) {
     return `${bytes.toFixed(1)} ${units[i]}`;
 }
 
-function getStatusVariant(status) {
+// Map a process status onto a ds Pill tone.
+function processStatusKind(status) {
     switch (status?.toLowerCase()) {
         case 'running':
+            return 'green';
         case 'sleeping':
-            return 'success';
+            return 'cyan';
         case 'stopped':
         case 'zombie':
-            return 'destructive';
+            return 'red';
         case 'idle':
         case 'disk-sleep':
-            return 'warning';
+            return 'amber';
         default:
-            return 'secondary';
+            return 'gray';
     }
 }
 

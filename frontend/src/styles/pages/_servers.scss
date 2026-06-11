@@ -1966,8 +1966,9 @@
     display: flex;
     align-items: center;
     gap: $space-2;
-    font-size: $font-size-sm;
-    color: $text-secondary;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
     margin-bottom: $space-5;
 }
 
@@ -1976,10 +1977,11 @@
     height: 8px;
     border-radius: $radius-full;
     flex-shrink: 0;
+    background: var(--text-ghost);
 
     &.active {
-        background: $success;
-        box-shadow: 0 0 6px fade($success, 40%);
+        background: var(--green);
+        box-shadow: 0 0 6px var(--green);
     }
 }
 
@@ -2137,9 +2139,9 @@
 }
 
 .install-tab {
-    background: $bg-elevated;
-    border: 1px solid $border-subtle;
-    border-radius: $radius-lg;
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
     overflow: hidden;
 }
 
@@ -2148,11 +2150,11 @@
     align-items: center;
     gap: $space-3;
     padding: $space-3 $space-4;
-    background: $bg-hover;
-    border-bottom: 1px solid $border-subtle;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-soft);
 
     > svg {
-        color: $text-tertiary;
+        color: var(--text-faint);
         flex-shrink: 0;
     }
 }
@@ -2163,28 +2165,31 @@
 
     > span:first-child {
         display: block;
-        font-size: $font-size-sm;
-        font-weight: $font-weight-medium;
-        color: $text-primary;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        font-weight: $font-weight-semibold;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-dim);
     }
 }
 
 .install-tab-description {
     display: block;
-    font-size: $font-size-xs;
-    color: $text-tertiary;
+    font-size: 11px;
+    color: var(--text-faint);
     font-weight: $font-weight-normal;
-    margin-top: 1px;
+    margin-top: 2px;
 }
 
 .install-script {
     padding: $space-4 $space-5;
     margin: 0;
-    font-family: $font-mono;
-    font-size: $font-size-xs;
-    line-height: $line-height-relaxed;
-    color: $text-secondary;
-    background: $bg-body;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    background: var(--bg-code);
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-all;
@@ -2195,9 +2200,9 @@
 // scripts (which are now an "I haven't installed the agent yet" fallback).
 .connection-string-field {
     margin-top: $space-5;
-    border: 1px solid $border-subtle;
-    border-radius: $radius-lg;
-    background: $bg-elevated;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
     overflow: hidden;
 }
 
@@ -2206,25 +2211,33 @@
     align-items: center;
     gap: $space-3;
     padding: $space-3 $space-4;
-    background: $bg-card;
-    border-bottom: 1px solid $border-subtle;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-soft);
+
+    > svg {
+        color: var(--accent-bright);
+        flex-shrink: 0;
+    }
 
     > span {
         flex: 1;
-        font-size: $font-size-sm;
+        font-family: var(--mono);
+        font-size: 10.5px;
         font-weight: $font-weight-semibold;
-        color: $text-primary;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-dim);
     }
 }
 
 .connection-string-field__value {
     padding: $space-4 $space-5;
     margin: 0;
-    font-family: $font-mono;
-    font-size: $font-size-sm;
+    font-family: var(--mono);
+    font-size: 12.5px;
     line-height: $line-height-relaxed;
-    color: $text-primary;
-    background: $bg-body;
+    color: var(--text);
+    background: var(--bg-code);
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-all;

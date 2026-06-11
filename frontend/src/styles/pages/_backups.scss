@@ -116,17 +116,13 @@
         &--files { background: var(--amber-bg); color: var(--amber); }
     }
 
-    // mono type chip (application / database / files)
+    // mono type chip (application / database / files) — %sk-state shape
+    // (_design-system.scss) with local sizing + bordered per-type tints kept
     .bk-type {
-        display: inline-flex;
-        align-items: center;
+        @extend %sk-state;
         padding: 2px 7px;
         border-radius: 5px;
-        font-family: var(--mono);
         font-size: 10.5px;
-        font-weight: $font-weight-semibold;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
         background: var(--surface-2);
         border: 1px solid var(--border);
         color: var(--text-dim);

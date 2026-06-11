@@ -113,18 +113,10 @@
         letter-spacing: 0;
     }
 
-    // Severity / state chip (mono uppercase on a semantic wash)
+    // Severity / state chip (mono uppercase on a semantic wash) —
+    // shape from the shared %sk-state primitive (_design-system.scss)
     .sec-state {
-        display: inline-block;
-        padding: 3px 9px;
-        border-radius: 6px;
-        font-family: var(--mono);
-        font-size: 10px;
-        font-weight: $font-weight-semibold;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        white-space: nowrap;
-        flex-shrink: 0;
+        @extend %sk-state;
 
         &--red    { color: var(--red);    background: var(--red-bg); }
         &--amber  { color: var(--amber);  background: var(--amber-bg); }

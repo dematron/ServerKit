@@ -192,20 +192,14 @@
         letter-spacing: 0;
     }
 
-    // Mono category chip (private / fork / default / protected / rollback)
+    // Mono category chip (private / fork / default / protected / rollback) —
+    // %sk-state shape (_design-system.scss) with smaller local sizing kept
     .git-chip {
-        display: inline-flex;
-        align-items: center;
+        @extend %sk-state;
         vertical-align: middle;
         margin-left: 7px;
         padding: 1px 6px;
         border-radius: 5px;
-        font-family: var(--mono);
-        font-size: 10px;
-        font-weight: $font-weight-semibold;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        white-space: nowrap;
         color: var(--text-faint);
         background: var(--surface-3);
 

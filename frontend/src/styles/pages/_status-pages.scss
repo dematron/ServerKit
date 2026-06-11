@@ -407,17 +407,11 @@
         }
     }
 
-    // Incident state + impact chips (prototype .inc-state)
+    // Incident state + impact chips (prototype .inc-state) — shape from
+    // the shared %sk-state primitive (_design-system.scss)
     .inc-state,
     .inc-impact {
-        padding: 3px 9px;
-        border-radius: 6px;
-        font-family: var(--mono);
-        font-size: 10px;
-        font-weight: $font-weight-semibold;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        white-space: nowrap;
+        @extend %sk-state;
     }
 
     .inc-state {

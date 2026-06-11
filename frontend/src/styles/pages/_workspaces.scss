@@ -107,14 +107,30 @@
             }
         }
 
-        &__actions {
+        &.is-clickable { cursor: pointer; }
+
+        // the active (scoped) workspace — prototype `.ws-card.active`
+        &.active {
+            border-color: var(--accent-dim);
+            background:
+                linear-gradient(160deg, var(--accent-bg-soft), transparent 70%),
+                var(--surface);
+        }
+
+        // bottom-right "Open ›" affordance (prototype card footer)
+        &__open {
             display: flex;
-            flex-wrap: wrap;
-            gap: $space-2;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 5px;
             margin-top: auto; // pin to bottom → equal-height cards
             padding-top: 14px;
-            border-top: 1px solid var(--border-soft);
+            font-size: 12.5px;
+            color: var(--text-faint);
+            transition: color 0.14s;
         }
+
+        &:hover .ws-card__open { color: var(--accent-bright); }
     }
 
     // ── modals: mono eyebrow headings + soft separators ─────
@@ -243,6 +259,183 @@
             color: var(--text-ghost);
             transition: color 0.12s;
         }
+    }
+}
+
+// ============================================
+// WORKSPACE DETAIL (/workspaces/:id — prototype WorkspaceDetail)
+// ============================================
+.ws-detail {
+
+    &__back {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin: $space-4 0 $space-3;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-faint);
+        text-decoration: none;
+        transition: color 0.14s;
+
+        &:hover { color: var(--accent-bright); }
+    }
+
+    // hero header (prototype .site-header)
+    &__header {
+        display: flex;
+        align-items: center;
+        gap: $space-4;
+        padding: 18px 20px;
+        background: linear-gradient(135deg, var(--surface), var(--surface-2));
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+
+        .ws-detail__tile { border-radius: 14px; flex-shrink: 0; }
+    }
+
+    &__info { flex: 1; min-width: 0; }
+
+    &__title {
+        display: flex;
+        align-items: center;
+        gap: $space-3;
+
+        h1 {
+            margin: 0;
+            font-size: 21px;
+            font-weight: $font-weight-semibold;
+            letter-spacing: -0.01em;
+            color: var(--text);
+        }
+    }
+
+    &__meta {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: 5px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-faint);
+
+        .dotsep { color: var(--text-ghost); }
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: $space-2;
+        flex-shrink: 0;
+    }
+
+    &__desc {
+        margin: $space-3 0 0;
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--text-dim);
+        max-width: 720px;
+    }
+
+    // info + resources band (prototype dash-grid span-2 cards)
+    &__grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: $space-4;
+        margin: $space-4 0 $space-5;
+
+        @media (max-width: $breakpoint-md) { grid-template-columns: 1fr; }
+    }
+
+    &__card {
+        padding: 16px 18px;
+        background: var(--surface);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+
+        h3 {
+            margin: 0 0 $space-2;
+            font-family: var(--mono);
+            font-size: 10.5px;
+            font-weight: $font-weight-semibold;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+        }
+    }
+
+    &__stats { margin: $space-3 0 0; }
+
+    // tab strip (prototype wp-tabs: accent underline + mono counts)
+    &__tabs {
+        display: flex;
+        gap: 2px;
+        border-bottom: 1px solid var(--border-soft);
+    }
+
+    &__tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 9px 13px;
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+        font-size: 13px;
+        color: var(--text-dim);
+        cursor: pointer;
+        transition: color 0.14s, border-color 0.14s;
+
+        &:hover { color: var(--text); }
+
+        &.is-active {
+            color: var(--accent-bright);
+            border-bottom-color: var(--accent);
+            font-weight: $font-weight-medium;
+        }
+    }
+
+    &__tabcount {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-ghost);
+    }
+
+    &__pane { margin-top: $space-4; }
+
+    &__tablecard {
+        background: var(--surface);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
+
+    &__rowactions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: $space-2;
+    }
+
+    &__manage {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--text-faint);
+        cursor: pointer;
+        white-space: nowrap;
+        transition: color 0.14s;
+
+        &:hover { color: var(--accent-bright); }
+    }
+
+    @media (max-width: $breakpoint-md) {
+        &__header { flex-wrap: wrap; }
+        &__actions { width: 100%; }
+        &__tabs { overflow-x: auto; }
     }
 }
 

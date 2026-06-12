@@ -86,6 +86,52 @@ Severity counts: **3 High, 5 Medium, 7 Low/Informational.**
   system-management by default, run as root deliberately (revert `User=` in the
   build scripts) or configure passwordless sudo for the account.
 
+### Highs
+
+- **H1 — fixed (verification side).** `updater.go` now fails closed: an update
+  with no checksums URL is refused; `matchChecksum` errors when no entry matches
+  this platform (was a silent skip); the checksums fetch checks HTTP status; and
+  `requireSecureURL` rejects non-HTTPS update/checksum URLs (dev override via
+  `SERVERKIT_INSECURE_TLS`). Covered by `internal/updater/updater_test.go`
+  (6 tests). **Still recommended:** cryptographic release signing
+  (minisign/cosign) with a public key pinned in the agent — that needs the
+  project's signing key + a release-pipeline change, so it's the remaining H1
+  step. (Packaged installs are already protected: non-root agents can't
+  self-update, so updates go through the OS package manager.)
+- **H2 — fixed (made honest).** Removed the dead `get_agent_gateway()` calls in
+  `agent_plugin_service.py` and `server_template_service.py`. Plugin install now
+  reports `STATUS_ERROR` ("Agent-side plugin support is not implemented yet")
+  instead of hanging in `installing`; template drift-check/remediate report
+  `unknown` + an explanatory `drift_report.error`; local-only ops (disable,
+  uninstall, configure) just drop the dead dispatch. Covered by
+  `tests/test_agent_features_honest.py` (3 tests). Implementing the feature for
+  real (agent handlers + sandbox) remains future work, but it no longer lies.
+- **H3 — fixed** (earlier this session): `POST /<id>/agent/update` is now
+  `@developer_required`; test in `tests/test_agent_update_authz.py`.
+
+### Lows
+
+- **L1 — fixed.** Pairing `/claim` and `/lookup` now require developer role
+  (`tests/test_pairing_authz.py`), matching `POST /servers`.
+- **L2 — documented.** `SECURITY.md` now states explicitly that `agent.key`
+  encryption is off-host/tamper protection, not confidentiality against local
+  root, and that the `0600` perms are the real control.
+- **L3 — fixed.** Removed the dead "Add Version" / per-row Edit / Delete buttons
+  from `AgentFleet.jsx` (no backend edit/delete route exists); version list
+  intact, unused imports cleaned, no new lint errors.
+- **L4 — accepted (by design).** Capabilities are OR-merged and not cleared
+  until restart on purpose, to avoid feature flicker from transient probe
+  failures; reverting would reintroduce that bug.
+- **L5 — accepted (documented).** The single-worker requirement is stated in
+  `SECURITY.md`/`ARCHITECTURE.md`/`CLAUDE.md` and enforced by `run.py`'s
+  `-w 1`; reliable in-process detection of a multi-worker misconfig isn't
+  practical, so it stays a documented operational constraint.
+- **L6 — accepted (low).** The Windows updater builds a `.bat` via `fmt.Sprintf`
+  with local, non-attacker-controlled paths; not worth the churn.
+- **L7 — clarified.** The `verify_agent_auth` "TODO" is reworded to an accepted
+  limitation (per-message token validation is defence-in-depth, not a bug; the
+  channel is TLS-authenticated and connect is HMAC+nonce verified).
+
 ---
 
 ## HIGH

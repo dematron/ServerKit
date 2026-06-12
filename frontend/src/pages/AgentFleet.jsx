@@ -14,8 +14,6 @@ import {
     Server,
     Layers,
     Package,
-    Plus,
-    Trash2,
     Play,
     Pause,
     XCircle,
@@ -306,11 +304,8 @@ const AgentFleet = () => {
                 {/* ==================== Versions ==================== */}
                 {activeTab === 'versions' && (
                     <div className="card">
-                        <div className="card-header flex justify-between items-center">
+                        <div className="card-header">
                             <h2>Agent Versions</h2>
-                            <Button size="sm">
-                                <Plus size={16} /> Add Version
-                            </Button>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="table">
@@ -321,7 +316,6 @@ const AgentFleet = () => {
                                         <th>Published</th>
                                         <th>Panel Compatibility</th>
                                         <th>Status</th>
-                                        <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -338,15 +332,11 @@ const AgentFleet = () => {
                                                     {v.is_active ? 'Active' : 'Inactive'}
                                                 </Pill>
                                             </td>
-                                            <td className="actions">
-                                                <Button variant="ghost" size="sm" title="Edit"><RefreshCw size={14} /></Button>
-                                                <Button variant="ghost" size="sm" className="text-red-600" title="Delete"><Trash2 size={14} /></Button>
-                                            </td>
                                         </tr>
                                     ))}
                                     {versions.length === 0 && (
                                         <tr>
-                                            <td colSpan="6" className="text-center py-8 text-gray-500">
+                                            <td colSpan="5" className="text-center py-8 text-gray-500">
                                                 No agent versions registered in database.
                                             </td>
                                         </tr>

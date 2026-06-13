@@ -9,7 +9,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useLogsDrawer } from '../contexts/LogsDrawerContext';
 import { EnvironmentCard, SnapshotTable, GitConnectForm, CommitList, DiskUsageBar } from '../components/wordpress';
 import { HealthDot } from '../components/wordpress/HealthStatusPanel';
-import { Pill, EnvTag, MetricCard, SegControl, ScoreGauge } from '../components/ds';
+import { Pill, EnvTag, MetricCard, SegControl, ScoreGauge, ServiceTile } from '../components/ds';
 import { ErrorBoundary, ErrorState } from '../components/ErrorBoundary';
 import { useConfirm } from '../hooks/useConfirm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -17,6 +17,7 @@ import { DangerZone } from '../components/DangerZone';
 import EmptyState from '../components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -3097,6 +3098,7 @@ const PluginsTab = ({ siteId }) => {
     const [installing, setInstalling] = useState(false);
     const [updating, setUpdating] = useState(null); // plugin name being updated, or 'all'
     const [newPlugin, setNewPlugin] = useState('');
+    const [toggling, setToggling] = useState(null); // plugin name being activated/deactivated
 
     useEffect(() => {
         loadPlugins();
@@ -3148,6 +3150,26 @@ const PluginsTab = ({ siteId }) => {
             toast.error(err.message || 'Plugin update failed');
         } finally {
             setUpdating(null);
+        }
+    }
+
+    async function handleToggle(plugin) {
+        const activating = plugin.status !== 'active';
+        setToggling(plugin.name);
+        try {
+            const res = activating
+                ? await wordpressApi.activatePlugin(siteId, plugin.name)
+                : await wordpressApi.deactivatePlugin(siteId, plugin.name);
+            if (res && res.success === false) {
+                toast.error(res.error || `Failed to ${activating ? 'activate' : 'deactivate'} ${plugin.name}`);
+                return;
+            }
+            toast.success(`${plugin.title || plugin.name} ${activating ? 'activated' : 'deactivated'}`);
+            loadPlugins();
+        } catch (err) {
+            toast.error(err.message || `Failed to ${activating ? 'activate' : 'deactivate'} plugin`);
+        } finally {
+            setToggling(null);
         }
     }
 
@@ -3212,54 +3234,44 @@ const PluginsTab = ({ siteId }) => {
             {plugins.length === 0 ? (
                 <EmptyState icon={Package} title="No plugins installed" description="Install a plugin by entering its slug above." />
             ) : (
-                <div className="wp-table-card">
-                    <table className="sk-dtable wp-asset-table">
-                        <thead>
-                            <tr>
-                                <th>Plugin</th>
-                                <th>Version</th>
-                                <th>Status</th>
-                                <th className="wp-th-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {plugins.map(plugin => (
-                                <tr key={plugin.name}>
-                                    <td>
-                                        <div className="sk-cell-name">{plugin.title || plugin.name}</div>
-                                        {plugin.title && plugin.title !== plugin.name && (
-                                            <div className="sk-cell-sub">{plugin.name}</div>
-                                        )}
-                                    </td>
-                                    <td>
-                                        <span className="sk-cell-mono">{plugin.version}</span>
+                <div className="wp-asset-grid">
+                    {plugins.map(plugin => {
+                        const isActive = plugin.status === 'active';
+                        return (
+                            <div className={`wp-asset-card ${isActive ? 'is-active' : ''}`} key={plugin.name}>
+                                <ServiceTile name={plugin.title || plugin.name} size={42} />
+                                <div className="wp-asset-card__body">
+                                    <div className="wp-asset-card__name">{plugin.title || plugin.name}</div>
+                                    <div className="wp-asset-card__sub">{plugin.name}</div>
+                                    <div className="wp-asset-card__foot">
+                                        <span className="wp-asset-card__ver">v{plugin.version}</span>
                                         {plugin.update === 'available' && (
-                                            <span className="wp-update-badge">
-                                                Update{plugin.update_version ? `: ${plugin.update_version}` : ''}
-                                            </span>
-                                        )}
-                                    </td>
-                                    <td>
-                                        <Pill kind={plugin.status === 'active' ? 'green' : 'gray'}>
-                                            {plugin.status === 'active' ? 'Active' : 'Inactive'}
-                                        </Pill>
-                                    </td>
-                                    <td className="wp-cell-actions">
-                                        {plugin.update === 'available' && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
+                                            <button
+                                                type="button"
+                                                className="wp-update-flag"
                                                 onClick={() => handleUpdate(plugin.name)}
                                                 disabled={updating !== null}
                                             >
-                                                {updating === plugin.name ? 'Updating...' : 'Update'}
-                                            </Button>
+                                                <Download size={11} />
+                                                {updating === plugin.name ? 'Updating…' : `Update${plugin.update_version ? ` ${plugin.update_version}` : ''}`}
+                                            </button>
                                         )}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                                    </div>
+                                </div>
+                                <div className="wp-asset-card__toggle">
+                                    <Switch
+                                        checked={isActive}
+                                        disabled={toggling === plugin.name}
+                                        onCheckedChange={() => handleToggle(plugin)}
+                                        aria-label={isActive ? `Deactivate ${plugin.name}` : `Activate ${plugin.name}`}
+                                    />
+                                    <span className={`wp-asset-card__state ${isActive ? 'is-on' : ''}`}>
+                                        {isActive ? 'Active' : 'Inactive'}
+                                    </span>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -3275,6 +3287,7 @@ const ThemesTab = ({ siteId }) => {
     const [installing, setInstalling] = useState(false);
     const [updating, setUpdating] = useState(null); // theme name being updated, or 'all'
     const [newTheme, setNewTheme] = useState('');
+    const [activating, setActivating] = useState(null); // theme name being activated
 
     useEffect(() => {
         loadThemes();
@@ -3326,6 +3339,23 @@ const ThemesTab = ({ siteId }) => {
             toast.error(err.message || 'Theme update failed');
         } finally {
             setUpdating(null);
+        }
+    }
+
+    async function handleActivate(theme) {
+        setActivating(theme.name);
+        try {
+            const res = await wordpressApi.activateTheme(siteId, theme.name);
+            if (res && res.success === false) {
+                toast.error(res.error || `Failed to activate ${theme.name}`);
+                return;
+            }
+            toast.success(`${theme.title || theme.name} activated`);
+            loadThemes();
+        } catch (err) {
+            toast.error(err.message || 'Failed to activate theme');
+        } finally {
+            setActivating(null);
         }
     }
 
@@ -3390,54 +3420,46 @@ const ThemesTab = ({ siteId }) => {
             {themes.length === 0 ? (
                 <EmptyState icon={Palette} title="No themes installed" description="Install a theme by entering its slug above." />
             ) : (
-                <div className="wp-table-card">
-                    <table className="sk-dtable wp-asset-table">
-                        <thead>
-                            <tr>
-                                <th>Theme</th>
-                                <th>Version</th>
-                                <th>Status</th>
-                                <th className="wp-th-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {themes.map(theme => (
-                                <tr key={theme.name}>
-                                    <td>
-                                        <div className="sk-cell-name">{theme.title || theme.name}</div>
-                                        {theme.title && theme.title !== theme.name && (
-                                            <div className="sk-cell-sub">{theme.name}</div>
-                                        )}
-                                    </td>
-                                    <td>
-                                        <span className="sk-cell-mono">{theme.version}</span>
-                                        {theme.update === 'available' && (
-                                            <span className="wp-update-badge">
-                                                Update{theme.update_version ? `: ${theme.update_version}` : ''}
-                                            </span>
-                                        )}
-                                    </td>
-                                    <td>
-                                        <Pill kind={theme.status === 'active' ? 'green' : 'gray'}>
-                                            {theme.status === 'active' ? 'Active' : 'Inactive'}
-                                        </Pill>
-                                    </td>
-                                    <td className="wp-cell-actions">
-                                        {theme.update === 'available' && (
+                <div className="wp-theme-grid">
+                    {themes.map(theme => {
+                        const isActive = theme.status === 'active';
+                        return (
+                            <div className={`wp-theme-card ${isActive ? 'is-active' : ''}`} key={theme.name}>
+                                <div className="wp-theme-card__shot">
+                                    <Palette size={26} />
+                                    {isActive && <Pill kind="green">Active</Pill>}
+                                </div>
+                                <div className="wp-theme-card__meta">
+                                    <div className="wp-theme-card__name">{theme.title || theme.name}</div>
+                                    <div className="wp-theme-card__sub">{theme.name} · v{theme.version}</div>
+                                    <div className="wp-theme-card__actions">
+                                        {isActive ? (
+                                            <span className="wp-theme-card__current">Current theme</span>
+                                        ) : (
                                             <Button
                                                 variant="outline"
+                                                size="sm"
+                                                onClick={() => handleActivate(theme)}
+                                                disabled={activating === theme.name}
+                                            >
+                                                {activating === theme.name ? 'Activating…' : 'Activate'}
+                                            </Button>
+                                        )}
+                                        {theme.update === 'available' && (
+                                            <Button
+                                                variant="ghost"
                                                 size="sm"
                                                 onClick={() => handleUpdate(theme.name)}
                                                 disabled={updating !== null}
                                             >
-                                                {updating === theme.name ? 'Updating...' : 'Update'}
+                                                {updating === theme.name ? 'Updating…' : 'Update'}
                                             </Button>
                                         )}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>

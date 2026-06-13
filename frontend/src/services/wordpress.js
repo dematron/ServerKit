@@ -116,12 +116,26 @@ const wordpressApi = {
         body: data
     }),
 
+    // Activate / deactivate an installed plugin (WP-CLI).
+    activatePlugin: (siteId, plugin) => api.request(`${BASE_PATH}/${siteId}/plugins/${encodeURIComponent(plugin)}/activate`, {
+        method: 'POST'
+    }),
+
+    deactivatePlugin: (siteId, plugin) => api.request(`${BASE_PATH}/${siteId}/plugins/${encodeURIComponent(plugin)}/deactivate`, {
+        method: 'POST'
+    }),
+
     // Themes
     getThemes: (siteId) => api.request(`${BASE_PATH}/${siteId}/themes`),
 
     installTheme: (siteId, data) => api.request(`${BASE_PATH}/${siteId}/themes`, {
         method: 'POST',
         body: data
+    }),
+
+    // Activate an installed theme (WP-CLI).
+    activateTheme: (siteId, theme) => api.request(`${BASE_PATH}/${siteId}/themes/${encodeURIComponent(theme)}/activate`, {
+        method: 'POST'
     }),
 
     // WordPress Core Update

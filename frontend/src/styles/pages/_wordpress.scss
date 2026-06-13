@@ -2671,3 +2671,131 @@
 .ssl-action-btn {
     margin-top: $space-3;
 }
+
+// Plugin / Theme card grids (WP detail — replace the dense asset tables)
+.wp-detail-page {
+    .wp-asset-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 14px;
+    }
+
+    .wp-asset-card {
+        display: flex;
+        gap: 13px;
+        align-items: flex-start;
+        background: var(--surface);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 16px;
+        transition: border-color 0.15s;
+
+        &:hover { border-color: var(--border-strong); }
+        &.is-active { border-color: var(--accent-dim); }
+
+        &__body { flex: 1; min-width: 0; }
+        &__name { font-weight: 600; font-size: 14px; }
+        &__sub {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-faint);
+            margin-top: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        &__foot {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+        &__ver { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+        &__toggle {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        &__state {
+            font-family: var(--mono);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-faint);
+            &.is-on { color: var(--green); }
+        }
+    }
+
+    .wp-update-flag {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--amber);
+        background: var(--amber-bg);
+        padding: 2px 7px;
+        border-radius: 5px;
+        border: none;
+        cursor: pointer;
+        transition: opacity 0.12s;
+
+        &:hover { opacity: 0.85; }
+        &:disabled { opacity: 0.55; cursor: default; }
+    }
+
+    .wp-theme-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 14px;
+    }
+
+    .wp-theme-card {
+        background: var(--surface);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        overflow: hidden;
+        transition: border-color 0.15s, transform 0.15s;
+
+        &:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+        &.is-active { border-color: var(--accent-dim); }
+
+        &__shot {
+            position: relative;
+            height: 128px;
+            display: grid;
+            place-items: center;
+            border-bottom: 1px solid var(--border-soft);
+            background:
+                repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.018) 0 12px, transparent 12px 24px),
+                var(--surface-2);
+
+            svg { color: var(--text-ghost); }
+            .pill { position: absolute; top: 10px; right: 10px; }
+        }
+
+        &__meta { padding: 14px 16px; }
+        &__name { font-weight: 600; font-size: 14px; }
+        &__sub {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-faint);
+            margin-top: 3px;
+        }
+        &__actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        &__current {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--green);
+        }
+    }
+}

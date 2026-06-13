@@ -994,3 +994,52 @@
         margin: 0;
     }
 }
+
+// Fail2ban per-jail KPI cards
+.fail2ban-tab {
+    .f2b-jails {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .f2b-jail {
+        background: var(--surface);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+
+        &__name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 13.5px;
+            margin-bottom: 12px;
+
+            svg { color: var(--accent-bright); }
+        }
+
+        &__stats {
+            display: flex;
+            gap: 20px;
+        }
+
+        &__v {
+            font-family: var(--mono);
+            font-size: 18px;
+            font-weight: 600;
+
+            &--amber { color: var(--amber); }
+        }
+
+        &__l {
+            font-size: 10px;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-top: 2px;
+        }
+    }
+}

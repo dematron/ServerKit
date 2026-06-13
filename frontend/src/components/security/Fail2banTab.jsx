@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Ban } from 'lucide-react';
 import api from '../../services/api';
 import ConfirmDialog from '../ConfirmDialog';
 import { useToast } from '../../contexts/ToastContext';
@@ -12,6 +13,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 const Fail2banTab = () => {
     const [status, setStatus] = useState(null);
     const [bans, setBans] = useState([]);
+    const [jailStats, setJailStats] = useState({});
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
     const [showBanModal, setShowBanModal] = useState(false);
@@ -33,6 +35,21 @@ const Fail2banTab = () => {
             ]);
             setStatus(statusData);
             setBans(bansData.banned_ips || []);
+
+            if (statusData?.installed && statusData.jails?.length) {
+                const entries = await Promise.all(
+                    statusData.jails.map(async (jail) => {
+                        try {
+                            return [jail, await api.getFail2banJailStatus(jail)];
+                        } catch {
+                            return [jail, null];
+                        }
+                    })
+                );
+                setJailStats(Object.fromEntries(entries));
+            } else {
+                setJailStats({});
+            }
         } catch (error) {
             console.error('Failed to load Fail2ban data:', error);
         } finally {
@@ -151,6 +168,33 @@ const Fail2banTab = () => {
                             </div>
                         </div>
                     </div>
+
+                    {status.jails?.length > 0 && (
+                        <div className="f2b-jails">
+                            {status.jails.map((jail) => {
+                                const s = jailStats[jail] || {};
+                                return (
+                                    <div className="f2b-jail" key={jail}>
+                                        <div className="f2b-jail__name"><Ban size={15} />{jail}</div>
+                                        <div className="f2b-jail__stats">
+                                            <div className="f2b-jail__stat">
+                                                <div className="f2b-jail__v f2b-jail__v--amber">{s.currently_banned ?? '—'}</div>
+                                                <div className="f2b-jail__l">Banned</div>
+                                            </div>
+                                            <div className="f2b-jail__stat">
+                                                <div className="f2b-jail__v">{s.currently_failed ?? '—'}</div>
+                                                <div className="f2b-jail__l">Failed</div>
+                                            </div>
+                                            <div className="f2b-jail__stat">
+                                                <div className="f2b-jail__v">{s.total_banned ?? '—'}</div>
+                                                <div className="f2b-jail__l">Total banned</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
 
                     <div className="card sec-flush">
                         <div className="card-header">

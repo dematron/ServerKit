@@ -1,0 +1,513 @@
+// ============================================
+// CONNECTIONS HUB — Settings → Connections
+// A categorized catalog of external integrations (source hosts, DNS, email,
+// storage) that replaces the old GitHub-only tab. Visual language mirrors the
+// "connect a repository" surfaces (_git-connect.scss): brand marks, accent
+// tiles, and a scope-aware connect flow.
+// ============================================
+
+.connections-hub {
+    display: flex;
+    flex-direction: column;
+    gap: $space-6;
+
+    &__intro {
+        display: flex;
+        align-items: flex-start;
+        gap: $space-3;
+    }
+
+    &__intro-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 38px;
+        height: 38px;
+        border-radius: $radius-lg;
+        background: var(--accent-bg);
+        color: var(--accent-bright);
+    }
+
+    &__intro-text {
+        h2 {
+            margin: 0;
+            font-size: $font-size-lg;
+            font-weight: $font-weight-semibold;
+            color: $text-primary;
+        }
+
+        p {
+            margin: $space-1 0 0;
+            font-size: $font-size-sm;
+            color: $text-secondary;
+            max-width: 70ch;
+        }
+    }
+
+    &__loading {
+        padding: $space-8;
+        text-align: center;
+        color: $text-tertiary;
+        font-size: $font-size-sm;
+    }
+
+    &__category {
+        display: flex;
+        flex-direction: column;
+        gap: $space-3;
+    }
+
+    &__category-head {
+        h3 {
+            margin: 0;
+            font-size: $font-size-base;
+            font-weight: $font-weight-semibold;
+            color: $text-primary;
+        }
+
+        p {
+            margin: 2px 0 0;
+            font-size: $font-size-xs;
+            color: $text-tertiary;
+        }
+    }
+
+    &__grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: $space-3;
+    }
+}
+
+// ── Provider card ──
+.conn-card {
+    display: flex;
+    flex-direction: column;
+    gap: $space-3;
+    padding: $space-4;
+    background: $bg-card;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-lg;
+    transition: border-color $transition-fast, background $transition-fast;
+
+    &:hover {
+        border-color: $border-active;
+    }
+
+    &--soon {
+        opacity: 0.7;
+
+        &:hover {
+            border-color: $border-subtle;
+        }
+    }
+
+    &__top {
+        display: flex;
+        align-items: flex-start;
+        gap: $space-3;
+    }
+
+    &__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: $radius-md;
+        background: var(--surface-2);
+        color: $text-primary;
+    }
+
+    &__heading {
+        flex: 1;
+        min-width: 0;
+    }
+
+    &__name {
+        margin: 0;
+        font-size: $font-size-sm;
+        font-weight: $font-weight-semibold;
+        color: $text-primary;
+    }
+
+    &__blurb {
+        margin: 2px 0 0;
+        font-size: $font-size-xs;
+        color: $text-tertiary;
+        line-height: 1.45;
+    }
+
+    &__meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: $space-2;
+    }
+
+    &__subtitle {
+        font-size: $font-size-xs;
+        color: $text-secondary;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 100%;
+    }
+
+    &__scopes {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: $space-1;
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        margin-top: auto;
+
+        button {
+            display: inline-flex;
+            align-items: center;
+            gap: $space-1;
+        }
+    }
+
+    &__soon-tag {
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        color: $text-tertiary;
+    }
+}
+
+// ── Status pill (top-right of a card) ──
+.conn-status {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    padding: 2px $space-2;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-full;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-medium;
+    color: $text-tertiary;
+    white-space: nowrap;
+
+    &--ok {
+        color: $success;
+        background: $success-bg;
+        border-color: $success-border;
+    }
+}
+
+// ── Scope chip (access level) ──
+.conn-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px $space-2;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-full;
+    font-size: 11px;
+    font-weight: $font-weight-medium;
+    color: $text-secondary;
+
+    &--ok {
+        color: $success;
+        background: $success-bg;
+        border-color: $success-border;
+    }
+
+    &--warn {
+        color: $warning;
+        background: fade($warning, 12%);
+        border-color: fade($warning, 28%);
+    }
+
+    &--neutral {
+        color: $text-tertiary;
+    }
+}
+
+// ── Connect / manage modal ──
+.ui-dialog-content.conn-modal {
+    max-width: 560px;
+}
+
+.conn-modal {
+    &__title {
+        display: flex;
+        align-items: flex-start;
+        gap: $space-3;
+    }
+
+    &__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 38px;
+        height: 38px;
+        border-radius: $radius-md;
+        background: var(--surface-2);
+        color: $text-primary;
+    }
+
+    &__body {
+        display: flex;
+        flex-direction: column;
+        gap: $space-4;
+        margin-top: $space-2;
+        max-height: 62vh;
+        overflow-y: auto;
+    }
+
+    &__note {
+        display: flex;
+        align-items: center;
+        gap: $space-2;
+        margin: 0;
+        font-size: $font-size-sm;
+        color: $text-tertiary;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+}
+
+// GitHub: connected profile + not-connected CTA
+.conn-profile,
+.conn-empty {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: $space-3;
+    padding: $space-3 $space-4;
+    background: $bg-elevated;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-md;
+}
+
+.conn-profile {
+    img {
+        width: 40px;
+        height: 40px;
+        border-radius: $radius-full;
+    }
+
+    &__id {
+        min-width: 0;
+
+        strong {
+            display: block;
+            color: $text-primary;
+            font-size: $font-size-sm;
+            font-weight: $font-weight-semibold;
+        }
+
+        span {
+            display: block;
+            margin-top: 2px;
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+        }
+    }
+}
+
+.conn-empty {
+    &__icon {
+        display: inline-flex;
+        color: var(--accent-bright);
+    }
+
+    &__text {
+        min-width: 0;
+
+        strong {
+            display: block;
+            color: $text-primary;
+            font-size: $font-size-sm;
+            font-weight: $font-weight-semibold;
+        }
+
+        span {
+            display: block;
+            margin-top: 3px;
+            color: $text-tertiary;
+            font-size: $font-size-xs;
+            line-height: 1.45;
+        }
+    }
+}
+
+// DNS: existing connection rows
+.conn-list {
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+
+    &__row {
+        display: flex;
+        align-items: center;
+        gap: $space-3;
+        padding: $space-3;
+        background: $bg-elevated;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-md;
+    }
+
+    &__info {
+        flex: 1;
+        min-width: 0;
+
+        strong {
+            display: block;
+            color: $text-primary;
+            font-size: $font-size-sm;
+            font-weight: $font-weight-semibold;
+        }
+    }
+
+    &__key {
+        display: block;
+        margin-top: 2px;
+        font-family: $font-mono;
+        font-size: 11px;
+        color: $text-tertiary;
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        gap: $space-1;
+        flex-shrink: 0;
+    }
+}
+
+// Connect / add form (shared by GitHub config + DNS add)
+.conn-form {
+    display: flex;
+    flex-direction: column;
+    gap: $space-3;
+    padding: $space-4;
+    background: $bg-elevated;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-md;
+
+    &__heading {
+        display: flex;
+        align-items: center;
+        gap: $space-2;
+        font-size: $font-size-sm;
+        font-weight: $font-weight-semibold;
+        color: $text-primary;
+    }
+
+    &__grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: $space-3;
+    }
+
+    &__wide {
+        grid-column: 1 / -1;
+    }
+
+    &__callback {
+        display: flex;
+        align-items: center;
+        gap: $space-2;
+        flex-wrap: wrap;
+        font-size: $font-size-xs;
+        color: $text-tertiary;
+
+        code {
+            font-family: $font-mono;
+            color: $text-secondary;
+            overflow-wrap: anywhere;
+        }
+    }
+
+    &__doc {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-1;
+        width: max-content;
+        font-size: $font-size-xs;
+        color: var(--accent-bright);
+        text-decoration: none;
+
+        &:hover {
+            text-decoration: underline;
+        }
+    }
+
+    &__actions {
+        display: flex;
+        justify-content: flex-end;
+    }
+}
+
+// Access-level picker (Cloudflare scoped token vs global key)
+.conn-scope {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: $space-2;
+
+    &__opt {
+        display: flex;
+        flex-direction: column;
+        gap: $space-1;
+        padding: $space-3;
+        text-align: left;
+        background: $bg-card;
+        border: 1px solid $border-subtle;
+        border-radius: $radius-md;
+        cursor: pointer;
+        transition: border-color $transition-fast, background $transition-fast;
+
+        &:hover {
+            border-color: $border-active;
+        }
+
+        &.is-active {
+            border-color: var(--accent-dim);
+            background: var(--accent-bg);
+        }
+    }
+
+    &__head {
+        display: flex;
+        align-items: center;
+        gap: $space-1;
+        font-size: $font-size-sm;
+        font-weight: $font-weight-semibold;
+        color: $text-primary;
+    }
+
+    &__rec {
+        margin-left: auto;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-weight: $font-weight-semibold;
+        color: $success;
+    }
+
+    &__desc {
+        font-size: $font-size-xs;
+        color: $text-tertiary;
+        line-height: 1.45;
+    }
+}
+
+@media (max-width: $breakpoint-sm) {
+    .conn-scope,
+    .conn-form__grid {
+        grid-template-columns: 1fr;
+    }
+}

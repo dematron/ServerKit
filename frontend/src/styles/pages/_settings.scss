@@ -114,6 +114,10 @@
     gap: $space-5;
 
     .section-header {
+        // Reset the global `.section-header { @include flex-between(); }` from
+        // _cards.scss — settings sections stack their title over the description
+        // instead of pushing the description to the far right.
+        display: block;
         margin-bottom: $space-2;
 
         h2 {

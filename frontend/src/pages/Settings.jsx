@@ -13,7 +13,7 @@ import UsersTab from '../components/settings/UsersTab';
 import ActivityTab from '../components/settings/ActivityTab';
 import SiteSettingsTab from '../components/settings/SiteSettingsTab';
 import SSOConfigTab from '../components/settings/SSOConfigTab';
-import SourceConnectionsTab from '../components/settings/SourceConnectionsTab';
+import ConnectionsHub from '../components/settings/connections/ConnectionsHub';
 import ApiSettingsTab from '../components/settings/ApiSettingsTab';
 import MigrationHistoryTab from '../components/settings/MigrationHistoryTab';
 import IconReferenceTab from '../components/settings/IconReferenceTab';
@@ -262,7 +262,7 @@ const Settings = () => {
                 <div className="settings-content">
                     {activeTab === 'profile' && <ProfileTab />}
                     {activeTab === 'security' && <SecuritySettingsTab />}
-                    {activeTab === 'connections' && <SourceConnectionsTab />}
+                    {activeTab === 'connections' && <ConnectionsHub />}
                     {activeTab === 'appearance' && <AppearanceTab />}
                     {activeTab === 'sidebar' && <SidebarSettings />}
                     {activeTab === 'whitelabel' && <WhiteLabelTab />}

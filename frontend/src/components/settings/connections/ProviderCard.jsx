@@ -1,8 +1,10 @@
 // One provider tile in the Connections hub. Presentational only — the hub
-// computes a `summary` ({ connected, statusLabel, statusTone, subtitle, scopes })
-// and the card just renders it. "Coming soon" providers render dimmed with no
-// action so the catalog reads as complete without overpromising.
-import { ArrowRight } from 'lucide-react';
+// computes a `summary` ({ connected, statusLabel, statusTone, subtitle, scopes,
+// manageHref, manageLabel }) and the card just renders it. "Coming soon"
+// providers render dimmed with no action so the catalog reads as complete
+// without overpromising.
+import { ArrowRight, ArrowUpRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { ProviderBrandIcon } from '../../icons/ProviderBrands';
 import { Button } from '@/components/ui/button';
 
@@ -40,6 +42,12 @@ export default function ProviderCard({ provider, summary, onManage }) {
             )}
 
             <div className="conn-card__actions">
+                {connected && summary.manageHref ? (
+                    <Link className="conn-card__crosslink" to={summary.manageHref}>
+                        {summary.manageLabel || 'Open'} <ArrowUpRight size={14} />
+                    </Link>
+                ) : <span />}
+
                 {comingSoon ? (
                     <span className="conn-card__soon-tag">Coming soon</span>
                 ) : (

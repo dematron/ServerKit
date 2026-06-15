@@ -1,30 +1,61 @@
 // The Connections catalog — the declarative source of truth for the integrations
-// hub. Each provider belongs to a category and is either live (wired to a real
-// backend) or `comingSoon` (shown so the hub reads as a complete surface rather
-// than a one-provider page). Live providers map to one of two backends that
-// already exist:
-//   - kind 'github' → /source-connections   (per-user OAuth)
-//   - kind 'dns'    → /email/dns-providers   (admin API-key configs: Cloudflare, Route 53)
-//
-// Keeping this as plain data (no JSX) lets ConnectionsHub render every category
-// generically and makes adding a provider a one-line change.
+// hub. Each provider belongs to a category and maps to a backend by its `kind`:
+//   - kind 'source'    → /source-connections   (per-user OAuth: GitHub, GitLab)
+//   - kind 'cloud'     → /cloud                 (server provisioning: DO, Hetzner, Vultr, Linode)
+//   - kind 'dns'       → /email/dns-providers   (records + wildcard TLS: Cloudflare, Route 53, DO, GoDaddy)
+//   - kind 'registrar' → /registrars            (domain ownership + expiry: GoDaddy)
+//   - kind 'storage'   → /backups/storage       (offsite backups: S3-compatible, Backblaze B2)
+// `comingSoon: true` renders a dimmed, actionless tile so the catalog reads as a
+// complete surface. `manageHref` is the in-app page a live connection powers,
+// surfaced as a quiet cross-link on the card.
 
 export const CONNECTION_CATEGORIES = [
     { key: 'source', label: 'Source code', blurb: 'Create services straight from a repository instead of pasting clone URLs.' },
+    { key: 'infra', label: 'Infrastructure', blurb: 'Cloud accounts ServerKit can provision and manage servers in.' },
     { key: 'dns', label: 'DNS & domains', blurb: 'Let ServerKit manage DNS records and issue wildcard certificates automatically.' },
+    { key: 'registrar', label: 'Registrars & ownership', blurb: 'Track the domains you own and when their registration expires.' },
     { key: 'email', label: 'Email & delivery', blurb: 'Outbound relays and deliverability for the mail server.' },
     { key: 'storage', label: 'Storage & backups', blurb: 'Off-site destinations for backups and large assets.' },
 ];
 
 export const CONNECTION_PROVIDERS = [
+    // ── Source code ──
     {
-        id: 'github', category: 'source', name: 'GitHub', kind: 'github',
+        id: 'github', category: 'source', name: 'GitHub', kind: 'source', provider: 'github',
         blurb: 'List repositories over the GitHub API and import selected branches.',
-        docUrl: 'https://github.com/settings/developers',
+        docUrl: 'https://github.com/settings/developers', manageHref: '/services/new',
     },
     {
-        id: 'cloudflare', category: 'dns', name: 'Cloudflare', kind: 'dns', provider: 'cloudflare',
-        supportsScope: true,
+        id: 'gitlab', category: 'source', name: 'GitLab', kind: 'source', provider: 'gitlab',
+        blurb: 'Cloud GitLab repositories, imported the same way as GitHub.',
+        docUrl: 'https://gitlab.com/-/profile/applications', manageHref: '/services/new',
+    },
+
+    // ── Infrastructure (cloud servers) ──
+    {
+        id: 'digitalocean', category: 'infra', name: 'DigitalOcean', kind: 'cloud', providerType: 'digitalocean',
+        blurb: 'Provision and manage droplets as servers in your fleet.',
+        docUrl: 'https://cloud.digitalocean.com/account/api/tokens', manageHref: '/servers',
+    },
+    {
+        id: 'hetzner', category: 'infra', name: 'Hetzner Cloud', kind: 'cloud', providerType: 'hetzner',
+        blurb: 'Provision and manage Hetzner Cloud servers.',
+        docUrl: 'https://console.hetzner.cloud/', manageHref: '/servers',
+    },
+    {
+        id: 'vultr', category: 'infra', name: 'Vultr', kind: 'cloud', providerType: 'vultr',
+        blurb: 'Provision and manage Vultr instances.',
+        docUrl: 'https://my.vultr.com/settings/#settingsapi', manageHref: '/servers',
+    },
+    {
+        id: 'linode', category: 'infra', name: 'Linode', kind: 'cloud', providerType: 'linode',
+        blurb: 'Provision and manage Linodes (Akamai).',
+        docUrl: 'https://cloud.linode.com/profile/tokens', manageHref: '/servers',
+    },
+
+    // ── DNS & domains ──
+    {
+        id: 'cloudflare', category: 'dns', name: 'Cloudflare', kind: 'dns', provider: 'cloudflare', supportsScope: true,
         blurb: 'Auto-create DNS records and wildcard TLS for the domains you manage.',
         docUrl: 'https://dash.cloudflare.com/profile/api-tokens',
     },
@@ -33,21 +64,53 @@ export const CONNECTION_PROVIDERS = [
         blurb: 'Manage records in AWS hosted zones with an access-key pair.',
         docUrl: 'https://console.aws.amazon.com/iam/home#/security_credentials',
     },
-    { id: 'gitlab', category: 'source', name: 'GitLab', comingSoon: true, blurb: 'Cloud or self-managed GitLab repositories.' },
-    { id: 'digitalocean', category: 'dns', name: 'DigitalOcean DNS', comingSoon: true, blurb: 'Manage records in DigitalOcean-hosted domains.' },
-    { id: 'smtp', category: 'email', name: 'SMTP relay', comingSoon: true, blurb: 'Send outbound mail through a provider like Postmark or SES.' },
-    { id: 's3', category: 'storage', name: 'S3 / object storage', comingSoon: true, blurb: 'Stream backups to any S3-compatible bucket.' },
+    {
+        id: 'digitalocean_dns', category: 'dns', name: 'DigitalOcean DNS', kind: 'dns', provider: 'digitalocean',
+        blurb: 'Manage records in DigitalOcean-hosted domains with an API token.',
+        docUrl: 'https://cloud.digitalocean.com/account/api/tokens',
+    },
+    {
+        id: 'godaddy_dns', category: 'dns', name: 'GoDaddy DNS', kind: 'dns', provider: 'godaddy',
+        blurb: 'Manage DNS records in GoDaddy-hosted domains.',
+        docUrl: 'https://developer.godaddy.com/keys',
+    },
+
+    // ── Registrars & ownership ──
+    {
+        id: 'godaddy', category: 'registrar', name: 'GoDaddy', kind: 'registrar', provider: 'godaddy',
+        blurb: 'Track domains you own at GoDaddy and when they expire.',
+        docUrl: 'https://developer.godaddy.com/keys', manageHref: '/domains',
+    },
+    { id: 'namecheap', category: 'registrar', name: 'Namecheap', comingSoon: true, blurb: 'Domain ownership and expiry from Namecheap.' },
+
+    // ── Email & delivery ──
+    {
+        id: 'smtp', category: 'email', name: 'SMTP relay', kind: 'email',
+        blurb: 'Send outbound mail through a provider like Postmark, SES or Mailgun.',
+    },
+
+    // ── Storage & backups ──
+    {
+        id: 's3', category: 'storage', name: 'S3 / object storage', kind: 'storage', storageProvider: 's3',
+        blurb: 'Stream backups to any S3-compatible bucket (AWS, Wasabi, MinIO, Spaces).',
+        docUrl: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html', manageHref: '/backups',
+    },
+    {
+        id: 'b2', category: 'storage', name: 'Backblaze B2', kind: 'storage', storageProvider: 'b2',
+        blurb: 'Stream backups to a Backblaze B2 bucket via its S3 endpoint.',
+        docUrl: 'https://www.backblaze.com/docs/cloud-storage-application-keys', manageHref: '/backups',
+    },
 ];
 
 export function getProvider(id) {
     return CONNECTION_PROVIDERS.find((p) => p.id === id) || null;
 }
 
-// Access-level ("scope") derivation — the heart of the connect experience. A
-// Cloudflare config authenticated with an account email uses a Global API Key
-// (full account); without one it's a least-privilege scoped token. Route 53
-// access keys derive their scope from the attached IAM policy, which we can't
-// introspect, so we label them neutrally. Returns { label, tone, hint } or null.
+// Access-level ("scope") derivation for DNS-provider records. Cloudflare with an
+// account email uses a Global API Key (full account); without one it's a scoped
+// token. Route 53 / GoDaddy keys derive scope from IAM / account policy we can't
+// introspect, so they're labeled neutrally. DigitalOcean uses a single token.
+// Returns { label, tone, hint } or null.
 export function deriveScope(record) {
     if (!record) return null;
     if (record.provider === 'cloudflare') {
@@ -57,6 +120,12 @@ export function deriveScope(record) {
     }
     if (record.provider === 'route53') {
         return { label: 'Access key', tone: 'neutral', hint: 'Scope set by IAM policy' };
+    }
+    if (record.provider === 'digitalocean') {
+        return { label: 'API token', tone: 'ok', hint: 'DigitalOcean personal access token' };
+    }
+    if (record.provider === 'godaddy') {
+        return { label: 'API key', tone: 'neutral', hint: 'GoDaddy account API key' };
     }
     return null;
 }

@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select';
 import { PageTopbar, MetricCard, SegControl, Pill, Drawer } from '@/components/ds';
 import { DOMAIN_TABS } from '../components/domains/domainTabs';
+import RegistrarPortfolio from '../components/domains/RegistrarPortfolio';
 
 const Domains = () => {
     const toast = useToast();
@@ -241,6 +242,8 @@ const Domains = () => {
                     </>
                 )}
             />
+
+            <RegistrarPortfolio />
 
             {error && (
                 <div className="error-banner">

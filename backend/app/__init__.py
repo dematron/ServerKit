@@ -209,6 +209,10 @@ def create_app(config_name=None):
     from app.api.source_connections import source_connections_bp
     app.register_blueprint(source_connections_bp, url_prefix='/api/v1/source-connections')
 
+    # Register blueprints - Domain registrar connections (portfolio + expiry)
+    from app.api.registrars import registrars_bp
+    app.register_blueprint(registrars_bp, url_prefix='/api/v1/registrars')
+
     # Register blueprints - Database Migrations
     from app.api.migrations import migrations_bp
     app.register_blueprint(migrations_bp, url_prefix='/api/v1/migrations')

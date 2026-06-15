@@ -740,6 +740,12 @@ export async function deleteEmailDNSProvider(providerId) { return this.request(`
 export async function testEmailDNSProvider(providerId) { return this.request(`/email/dns-providers/${providerId}/test`, { method: 'POST' }); }
 export async function getEmailDNSZones(providerId) { return this.request(`/email/dns-providers/${providerId}/zones`); }
 
+// Outbound SMTP relay (smarthost)
+export async function getEmailRelay() { return this.request('/email/relay'); }
+export async function updateEmailRelay(data) { return this.request('/email/relay', { method: 'PUT', body: JSON.stringify(data) }); }
+export async function testEmailRelay(data) { return this.request('/email/relay/test', { method: 'POST', body: JSON.stringify(data) }); }
+export async function disableEmailRelay() { return this.request('/email/relay', { method: 'DELETE' }); }
+
 // SpamAssassin
 export async function getSpamConfig() { return this.request('/email/spam/config'); }
 export async function updateSpamConfig(data) { return this.request('/email/spam/config', { method: 'PUT', body: JSON.stringify(data) }); }

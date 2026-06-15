@@ -9,6 +9,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useLogsDrawer } from '../contexts/LogsDrawerContext';
 import { EnvironmentCard, SnapshotTable, GitConnectForm, CommitList, DiskUsageBar } from '../components/wordpress';
 import ChangeUrlModal from '../components/wordpress/ChangeUrlModal';
+import AttachDomainModal from '../components/wordpress/AttachDomainModal';
 import { HealthDot } from '../components/wordpress/HealthStatusPanel';
 import { Pill, EnvTag, MetricCard, SegControl, ScoreGauge, ServiceTile } from '../components/ds';
 import { ErrorBoundary, ErrorState } from '../components/ErrorBoundary';
@@ -156,6 +157,7 @@ const WordPressDetail = () => {
     const [autoLoggingIn, setAutoLoggingIn] = useState(false);
     const [showCloneModal, setShowCloneModal] = useState(false);
     const [showChangeUrl, setShowChangeUrl] = useState(false);
+    const [showAddDomain, setShowAddDomain] = useState(false);
     const [cloning, setCloning] = useState(false);
     const [cloneName, setCloneName] = useState('');
     const [clonedCreds, setClonedCreds] = useState(null);
@@ -338,6 +340,14 @@ const WordPressDetail = () => {
                     )}
                     <Button
                         variant="ghost"
+                        onClick={() => setShowAddDomain(true)}
+                        title="Point a custom domain you own at this site (auto-DNS + migrate)"
+                    >
+                        <Plus size={16} />
+                        Add Domain
+                    </Button>
+                    <Button
+                        variant="ghost"
                         onClick={() => setShowChangeUrl(true)}
                         title="Change this site's URL (serialization-safe database rewrite + re-point routing)"
                     >
@@ -501,6 +511,14 @@ const WordPressDetail = () => {
                 <ChangeUrlModal
                     site={site}
                     onClose={() => setShowChangeUrl(false)}
+                    onChanged={loadSite}
+                />
+            )}
+
+            {showAddDomain && (
+                <AttachDomainModal
+                    site={site}
+                    onClose={() => setShowAddDomain(false)}
                     onChanged={loadSite}
                 />
             )}

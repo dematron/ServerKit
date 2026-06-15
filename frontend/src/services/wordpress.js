@@ -41,6 +41,14 @@ const wordpressApi = {
         body: { new_url: newUrl, keep_old_redirect: keepOldRedirect }
     }),
 
+    // Attach a custom domain: auto-create DNS (or return the record to add) +
+    // optional HTTPS, then migrate the site to it.
+    attachDomain: (id, { domain, migrate = true, issueSsl = false, email } = {}) =>
+        api.request(`${BASE_PATH}/${id}/domain`, {
+            method: 'POST',
+            body: { domain, migrate, issue_ssl: issueSsl, email }
+        }),
+
     // Replace the tag list for a site (agency organization labels)
     setTags: (id, tags) => api.request(`${BASE_PATH}/${id}/tags`, {
         method: 'PATCH',

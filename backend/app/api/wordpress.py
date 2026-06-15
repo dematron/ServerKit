@@ -1121,6 +1121,28 @@ def change_site_url(app_id):
     return jsonify(result), 200 if result.get('success') else 400
 
 
+@wordpress_bp.route('/sites/<int:app_id>/domain', methods=['POST'])
+@jwt_required()
+@admin_required
+def attach_custom_domain(app_id):
+    """Attach a user-owned custom domain: auto-create the DNS A record (or return
+    it to add manually), optional Let's Encrypt cert, then migrate the site URL."""
+    app = _resolve_app(app_id)
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    data = request.get_json() or {}
+    domain = data.get('domain')
+    if not domain:
+        return jsonify({'error': 'domain is required'}), 400
+    result = WordPressService.attach_custom_domain(
+        app, domain,
+        migrate=data.get('migrate', True),
+        issue_ssl=data.get('issue_ssl', False),
+        email=data.get('email'),
+    )
+    return jsonify(result), 200 if result.get('success') else 400
+
+
 @wordpress_bp.route('/sites/<int:app_id>/optimize', methods=['POST'])
 @jwt_required()
 @admin_required

@@ -2913,4 +2913,32 @@
         font-size: 12.5px;
         color: var(--red);
     }
+
+    &__result {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-size: 13px;
+
+        svg { color: var(--green); flex-shrink: 0; }
+        code { font-family: var(--mono); color: var(--green); word-break: break-all; }
+    }
+
+    &__dns-manual {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 12.5px;
+    }
+
+    &__record {
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--surface-2);
+        border: 1px solid var(--border-soft);
+        color: var(--text);
+        word-break: break-all;
+    }
 }

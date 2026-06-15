@@ -931,6 +931,78 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
             return f'could not update domain rows: {e}'
 
     @classmethod
+    def attach_custom_domain(cls, app, domain: str, migrate: bool = True,
+                             issue_ssl: bool = False, email: str = None) -> Dict:
+        """Point a user-owned domain at a site, end to end.
+
+        Auto-creates the domain's A record via a connected DNS provider (or
+        returns the record to add manually), optionally obtains a Let's Encrypt
+        certificate, then migrates the site URL to the domain by reusing
+        ``change_site_url``. External steps (DNS, SSL) degrade to warnings rather
+        than failing the attach; only a requested migration that errors aborts.
+        """
+        from app import db
+        from app.models.domain import Domain
+        from app.services.site_domain_service import SiteDomainService
+        from app.services.dns_provider_service import DNSProviderService
+
+        if not app or not app.root_path:
+            return {'success': False, 'error': 'Site has no application/root path'}
+
+        # Accept a bare host or a full URL; reduce to the host.
+        host = cls._host_of(cls._normalize_url(domain) or '') or (domain or '').strip().lower().rstrip('/')
+        if not host or '.' not in host:
+            return {'success': False, 'error': 'A valid custom domain (e.g. example.com) is required'}
+
+        # 1) DNS: auto-create the A record, or report what to add manually.
+        dns = DNSProviderService.ensure_a_record(host, SiteDomainService.server_ip())
+
+        # 2) Optional HTTPS. certbot --nginx validates over the host's :80 vhost,
+        #    so the host must already be served before the cert is requested.
+        ssl_result = None
+        use_https = False
+        if issue_ssl:
+            from app.services.ssl_service import SSLService
+            if not Domain.query.filter_by(name=host).first():
+                db.session.add(Domain(name=host, is_primary=False, application_id=app.id))
+                db.session.commit()
+            cls._write_app_vhost(app)
+            ssl_result = SSLService.obtain_certificate([host], email or f'admin@{host}')
+            use_https = bool(ssl_result and ssl_result.get('success'))
+
+        # 3) Migrate the site URL to the domain (single rewrite to the final scheme).
+        scheme = 'https' if use_https else 'http'
+        migration = None
+        if migrate:
+            migration = cls.change_site_url(app, f'{scheme}://{host}', keep_old_redirect=True)
+            if not migration.get('success'):
+                return {'success': False,
+                        'error': f"DNS handled but moving the site to {host} failed: {migration.get('error')}",
+                        'dns': dns, 'ssl': ssl_result, 'migration': migration}
+        else:
+            # Attach the domain (primary + vhost) without rewriting WordPress.
+            cls._repoint_primary_domain(app, host, keep_old=True)
+            cls._write_app_vhost(app)
+
+        warnings = []
+        if not dns.get('created'):
+            warnings.append(dns.get('message') or 'Add the DNS record manually.')
+        if issue_ssl and not use_https:
+            warnings.append('HTTPS is not set up yet — enable SSL once DNS has propagated to this server.')
+        if migration and migration.get('warning'):
+            warnings.append(migration['warning'])
+
+        return {
+            'success': True,
+            'domain': host,
+            'url': (migration or {}).get('new_url') or f'{scheme}://{host}',
+            'dns': dns,
+            'ssl': ssl_result,
+            'migration': migration,
+            'warning': '; '.join(warnings) if warnings else None,
+        }
+
+    @classmethod
     def optimize_database(cls, path: str) -> Dict:
         """Optimize WordPress database."""
         result = cls.wp_cli(path, ['db', 'optimize'])

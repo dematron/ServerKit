@@ -151,6 +151,51 @@ class DNSProviderService:
             'message': 'All DNS records deployed' if all_ok else 'Some records failed',
         }
 
+    @classmethod
+    def find_zone_for_domain(cls, domain: str):
+        """Find a connected provider + zone that authoritatively covers ``domain``.
+
+        Picks the longest matching zone suffix across every configured provider
+        (so ``blog.example.com`` matches a zone ``example.com``). Returns
+        ``(config, zone_dict)`` or ``(None, None)`` when nothing manages it.
+        """
+        domain = (domain or '').strip().lower().rstrip('.')
+        best = None  # (config, zone, zone_name_length)
+        for config in DNSProviderConfig.query.all():
+            zres = cls.list_zones(config.id)
+            if not zres.get('success'):
+                continue
+            for zone in zres.get('zones', []):
+                zname = (zone.get('name') or '').strip().lower().rstrip('.')
+                if zname and (domain == zname or domain.endswith('.' + zname)):
+                    if best is None or len(zname) > best[2]:
+                        best = (config, zone, len(zname))
+        return (best[0], best[1]) if best else (None, None)
+
+    @classmethod
+    def ensure_a_record(cls, domain: str, ip: str) -> Dict:
+        """Upsert an ``A`` record ``domain -> ip`` via whichever connected provider
+        manages the zone. Degrades to manual instructions (``created: False`` with
+        the record to add) when there's no server IP, no provider, or an API error
+        — so the caller can always show the user what to do.
+        """
+        domain = (domain or '').strip().lower().rstrip('.')
+        record = {'type': 'A', 'name': domain, 'value': ip}
+        if not domain:
+            return {'created': False, 'reason': 'no_domain', 'record': record}
+        if not ip:
+            return {'created': False, 'reason': 'no_server_ip', 'record': record,
+                    'message': 'Set the server public IP in Settings to auto-create DNS records.'}
+        config, zone = cls.find_zone_for_domain(domain)
+        if not config:
+            return {'created': False, 'reason': 'no_provider', 'record': record,
+                    'message': f'No connected DNS provider manages {domain} — add this record manually.'}
+        res = cls.set_record(config.id, zone['id'], 'A', domain, ip)
+        if res.get('success'):
+            return {'created': True, 'provider': config.name, 'zone': zone.get('name'), 'record': record}
+        return {'created': False, 'reason': 'api_error', 'error': res.get('error'),
+                'provider': config.name, 'record': record}
+
     # ── Cloudflare Implementation ──
 
     @classmethod

@@ -164,6 +164,16 @@ export default function Databases() {
         }
         if (node.kind === 'database') {
             const d = await listTables(node.conn);
+            // A docker database reports `connected: false` when the container
+            // exec/auth fails — surface that as an error row instead of letting
+            // it masquerade as an empty database.
+            if (d && d.connected === false) {
+                const e = new Error(d.error || 'connection failed');
+                e.userMessage = d.error
+                    ? `Couldn't connect: ${d.error}`
+                    : `Couldn't connect to ${connLabel(node.conn)}. Is the container running?`;
+                throw e;
+            }
             return (d.tables || []).map((t) => ({
                 id: `${node.id}:t:${t.name}`, kind: 'table', engine: node.engine, label: t.name,
                 expandable: false, conn: node.conn, table: t.name,
@@ -180,7 +190,7 @@ export default function Databases() {
             setChildrenCache((c) => new Map(c).set(node.id, kids));
         } catch (err) {
             console.error('Failed to load tree node:', err);
-            setChildrenCache((c) => new Map(c).set(node.id, 'error'));
+            setChildrenCache((c) => new Map(c).set(node.id, { __error: err.userMessage || "Couldn't load. Right-click to retry." }));
         } finally {
             setLoadingNodes((s) => { const n = new Set(s); n.delete(node.id); return n; });
         }

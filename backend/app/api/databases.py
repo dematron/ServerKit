@@ -686,8 +686,12 @@ def get_docker_database_tables(container, database):
     user = request.args.get('user', 'root')
     password = request.headers.get('X-DB-Password')
 
-    tables = DatabaseService.docker_mysql_get_tables(container, database, user, password)
-    return jsonify({'tables': tables}), 200
+    result = DatabaseService.docker_mysql_get_tables(container, database, user, password)
+    return jsonify({
+        'tables': result['tables'],
+        'connected': result['connected'],
+        'error': result['error'],
+    }), 200
 
 
 @databases_bp.route('/docker/<container>/<database>/query', methods=['POST'])

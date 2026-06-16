@@ -76,7 +76,7 @@ const DetailPageSkeleton = () => (
     </div>
 );
 
-const VALID_TABS = ['overview', 'environments', 'database', 'plugins', 'themes', 'git', 'backups', 'uptime', 'analytics', 'vulnerabilities', 'security', 'updates', 'reports'];
+const VALID_TABS = ['overview', 'environments', 'database', 'plugins', 'themes', 'git', 'backups', 'uptime', 'analytics', 'vulnerabilities', 'security', 'updates', 'php', 'reports'];
 
 // Environment-type → dot tint for the header environment switcher.
 const ENV_DOT_COLORS = {
@@ -494,6 +494,12 @@ const WordPressDetail = () => {
                     <RefreshCw size={14} /> Updates
                 </div>
                 <div
+                    className={`app-detail-tab ${activeTab === 'php' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('php')}
+                >
+                    <Settings size={14} /> PHP
+                </div>
+                <div
                     className={`app-detail-tab ${activeTab === 'reports' ? 'active' : ''}`}
                     onClick={() => setActiveTab('reports')}
                 >
@@ -562,6 +568,7 @@ const WordPressDetail = () => {
                     {activeTab === 'vulnerabilities' && <VulnerabilitiesTab siteId={site.id} />}
                     {activeTab === 'security' && <SecurityTab siteId={site.id} />}
                     {activeTab === 'updates' && <UpdatesTab siteId={site.id} />}
+                    {activeTab === 'php' && <PhpTab siteId={site.id} />}
                     {activeTab === 'reports' && <ReportsTab siteId={site.id} />}
                 </ErrorBoundary>
             </div>
@@ -569,19 +576,38 @@ const WordPressDetail = () => {
     );
 };
 
+// Friendly labels for the editable php.ini directives (#24 limits panel).
+const PHP_LIMIT_LABELS = {
+    memory_limit: 'Memory Limit',
+    upload_max_filesize: 'Upload Max Filesize',
+    post_max_size: 'Post Max Size',
+    max_execution_time: 'Max Execution Time',
+    max_input_time: 'Max Input Time',
+    max_input_vars: 'Max Input Vars',
+};
+
 // PHP Tab — live PHP version + ini limits for the Docker (apache/mod_php) site.
 // Version is the image tag; switching recreates the container (volumes persist).
+// Limits are written as a durable conf.d drop-in (bind-mounted), editable below.
 const PhpTab = ({ siteId }) => {
     const toast = useToast();
     const [php, setPhp] = useState(null);
     const [loading, setLoading] = useState(true);
     const [switching, setSwitching] = useState(false);
+    const [form, setForm] = useState({});
+    const [saving, setSaving] = useState(false);
 
     const load = React.useCallback(async () => {
         setLoading(true);
         try {
             const data = await wordpressApi.getPhpInfo(siteId);
-            setPhp(data.php || data);
+            const info = data.php || data;
+            setPhp(info);
+            // Seed the edit form from live values for the editable directives.
+            const lim = info?.limits || {};
+            const seed = {};
+            (info?.editable_limits || []).forEach(k => { seed[k] = lim[k] || ''; });
+            setForm(seed);
         } catch (err) {
             toast.error(err.message || 'Failed to load PHP info');
         } finally {
@@ -607,11 +633,35 @@ const PhpTab = ({ siteId }) => {
         }
     }
 
+    async function handleSaveLimits() {
+        // Send only the directives that changed from the live value (partial update).
+        const live = php?.limits || {};
+        const changed = {};
+        Object.entries(form).forEach(([k, v]) => {
+            const val = (v ?? '').toString().trim();
+            if (val && val !== (live[k] || '')) changed[k] = val;
+        });
+        if (Object.keys(changed).length === 0) { toast.info('No changes to save'); return; }
+        if (!window.confirm('Apply these PHP limits? The container reloads (brief downtime; database and files are preserved).')) return;
+        setSaving(true);
+        try {
+            const res = await wordpressApi.setPhpLimits(siteId, changed);
+            if (res.success === false) { toast.error(res.error || 'Failed to update PHP limits'); return; }
+            toast.success(res.message || 'PHP limits updated');
+            await load();
+        } catch (err) {
+            toast.error(err.message || 'Failed to update PHP limits');
+        } finally {
+            setSaving(false);
+        }
+    }
+
     if (loading) return <div className="tab-loading"><p className="hint">Loading PHP info...</p></div>;
 
     const limits = php?.limits || {};
     const current = php?.php_version || 'Unknown';
     const versions = php?.available_versions || [];
+    const editableKeys = php?.editable_limits || [];
 
     return (
         <div className="app-overview-grid">
@@ -659,6 +709,25 @@ const PhpTab = ({ siteId }) => {
                                         {current.startsWith(v) ? `PHP ${v} (current)` : `PHP ${v}`}
                                     </Button>
                                 ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {editableKeys.length > 0 && (
+                    <div className="app-panel">
+                        <div className="app-panel-header">Edit PHP Limits</div>
+                        <div className="app-panel-body">
+                            <p className="hint">Saved as a durable conf.d drop-in bind-mounted into the container, so limits survive a container recreate. Saving reloads the container (brief downtime).</p>
+                            {editableKeys.map(k => (
+                                <div className="form-group" key={k}>
+                                    <Label>{PHP_LIMIT_LABELS[k] || k}</Label>
+                                    <Input value={form[k] ?? ''} placeholder={limits[k] || ''} disabled={saving}
+                                        onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} />
+                                </div>
+                            ))}
+                            <div className="app-detail-actions">
+                                <Button size="sm" onClick={handleSaveLimits} disabled={saving}>{saving ? 'Saving…' : 'Save limits'}</Button>
                             </div>
                         </div>
                     </div>

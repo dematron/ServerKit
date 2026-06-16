@@ -389,6 +389,8 @@ def get_php(app_id):
         return jsonify({'error': 'Access denied'}), 403
     info = WordPressService.get_php_info(app.root_path)
     info['available_versions'] = WordPressService.get_available_php_versions()
+    # The directives the limits panel may edit (#24 write side).
+    info['editable_limits'] = list(WordPressService.get_php_limit_spec().keys())
     return jsonify({'php': info}), 200
 
 
@@ -407,6 +409,25 @@ def set_php(app_id):
     if not version:
         return jsonify({'error': 'version is required'}), 400
     result = WordPressService.set_php_version(app.root_path, version)
+    return jsonify(result), 200 if result.get('success') else 400
+
+
+@wordpress_bp.route('/sites/<int:app_id>/php/limits', methods=['POST'])
+@jwt_required()
+@admin_required
+def set_php_limits(app_id):
+    """Durably set per-site PHP ini limits (#24): writes a conf.d drop-in,
+    bind-mounts it, and reloads the container. Body: {limits: {key: value, ...}}."""
+    app = _resolve_app(app_id)
+    data = request.get_json() or {}
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    if app.app_type not in ('wordpress', 'docker'):
+        return jsonify({'error': 'Application is not a WordPress site'}), 400
+    limits = data.get('limits')
+    if not isinstance(limits, dict) or not limits:
+        return jsonify({'error': 'limits object is required'}), 400
+    result = WordPressService.set_php_limits(app.root_path, limits)
     return jsonify(result), 200 if result.get('success') else 400
 
 

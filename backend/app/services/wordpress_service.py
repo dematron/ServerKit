@@ -285,6 +285,121 @@ define('WP_AUTO_UPDATE_CORE', 'minor');
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    # --- Per-site PHP ini limits (#24 write side) -------------------------------
+    # The official wordpress:*-apache image is Apache + mod_php and scans
+    # /usr/local/etc/php/conf.d for *.ini drop-ins. We persist a host-side ini and
+    # BIND-MOUNT it into conf.d so it survives container recreate — a plain
+    # `docker exec` write would be lost on the next `compose up`. Every directive is
+    # whitelisted + regex-validated because the value is written as a raw php.ini line.
+    PHP_LIMIT_SPEC = {
+        'memory_limit':        r'^(-1|\d{1,5}[KMGkmg]?)$',
+        'upload_max_filesize': r'^\d{1,5}[KMGkmg]?$',
+        'post_max_size':       r'^\d{1,5}[KMGkmg]?$',
+        'max_execution_time':  r'^\d{1,5}$',
+        'max_input_time':      r'^-?\d{1,5}$',
+        'max_input_vars':      r'^\d{1,6}$',
+    }
+    PHP_CONF_DIR = 'php-conf'
+    PHP_CONF_FILE = 'zz-serverkit.ini'
+    PHP_CONF_CONTAINER = '/usr/local/etc/php/conf.d/zz-serverkit.ini'
+
+    @classmethod
+    def get_php_limit_spec(cls) -> Dict:
+        """The editable php.ini directives (key -> validation regex) the limits
+        panel may set. Exposed so the frontend renders exactly the safe set."""
+        return dict(cls.PHP_LIMIT_SPEC)
+
+    @staticmethod
+    def _read_php_ini(ini_path: str) -> Dict:
+        """Parse a simple `key = value` ini into a dict (comments/blank lines skipped).
+        Never raises — a missing/garbled file just yields {}."""
+        out = {}
+        if os.path.exists(ini_path):
+            try:
+                with open(ini_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith(';') or '=' not in line:
+                            continue
+                        k, v = line.split('=', 1)
+                        out[k.strip()] = v.strip()
+            except Exception:
+                pass
+        return out
+
+    @classmethod
+    def set_php_limits(cls, path: str, limits: Dict) -> Dict:
+        """Durably set per-site PHP ini limits for a Docker WP site.
+
+        Writes a host-side conf.d drop-in, bind-mounts it into the container's
+        php conf.d (so it survives recreate), then reloads: a newly-added mount is
+        applied via `compose up -d` (recreates the app container); a content-only
+        change restarts the `wordpress` service so mod_php re-reads php.ini.
+        Partial updates merge with any previously-set directives.
+        """
+        import re as _re
+        import yaml
+        from app.services.docker_service import DockerService
+
+        compose_file = os.path.join(path, 'docker-compose.yml')
+        if not os.path.exists(compose_file):
+            return {'success': False, 'error': 'Not a Docker-stack site (no docker-compose.yml)'}
+
+        # 1) Validate + sanitize against the whitelist (values become raw ini lines).
+        clean = {}
+        for k, v in (limits or {}).items():
+            if k not in cls.PHP_LIMIT_SPEC:
+                return {'success': False, 'error': f'Unknown PHP limit: {k}'}
+            val = str(v).strip()
+            # fullmatch (not match) so a value like "256M\nevil = 1" can never
+            # smuggle an extra ini directive past the `$` anchor into the file.
+            if not _re.fullmatch(cls.PHP_LIMIT_SPEC[k], val):
+                return {'success': False, 'error': f'Invalid value for {k}: {val}'}
+            clean[k] = val
+        if not clean:
+            return {'success': False, 'error': 'No valid limits provided'}
+
+        try:
+            # 2) Write the host ini FIRST — a single-file bind-mount needs the
+            #    source to exist before `compose up`, else Docker makes a dir.
+            conf_dir = os.path.join(path, cls.PHP_CONF_DIR)
+            os.makedirs(conf_dir, exist_ok=True)
+            ini_path = os.path.join(conf_dir, cls.PHP_CONF_FILE)
+            merged = cls._read_php_ini(ini_path)
+            merged.update(clean)
+            body = ['; Managed by ServerKit (#24) — per-site PHP limits. Do not edit by hand.']
+            body += [f'{k} = {v}' for k, v in merged.items()]
+            with open(ini_path, 'w') as f:
+                f.write('\n'.join(body) + '\n')
+
+            # 3) Ensure the wordpress service bind-mounts the ini into conf.d.
+            with open(compose_file, 'r') as f:
+                compose = yaml.safe_load(f) or {}
+            wp = (compose.get('services') or {}).get('wordpress')
+            if not isinstance(wp, dict):
+                return {'success': False, 'error': 'wordpress service not found in compose file'}
+            mount = f'./{cls.PHP_CONF_DIR}/{cls.PHP_CONF_FILE}:{cls.PHP_CONF_CONTAINER}:ro'
+            vols = wp.get('volumes') or []
+            mount_added = mount not in vols
+            if mount_added:
+                vols.append(mount)
+                wp['volumes'] = vols
+                with open(compose_file, 'w') as f:
+                    yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
+
+            # 4) Apply: recreate if the mount is new, else restart so php.ini reloads.
+            if mount_added:
+                res = DockerService.compose_up(path, detach=True, build=False)
+            else:
+                res = DockerService.compose_restart(path, service='wordpress')
+            if not res.get('success'):
+                return {'success': False, 'error': res.get('error') or 'Failed to apply PHP limits'}
+            cls._wait_for_wp_ready(path)
+            return {'success': True, 'message': 'PHP limits updated', 'limits': merged,
+                    'applied': cls.get_php_info(path).get('limits', {})}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     @classmethod
     def is_multisite(cls, path: str) -> bool:
         """Return True if the WordPress install at ``path`` is a multisite network.

@@ -175,6 +175,12 @@ const wordpressApi = {
         body: { version }
     }),
 
+    // Durably set per-site PHP ini limits (conf.d drop-in + bind-mount; #24).
+    setPhpLimits: (siteId, limits) => api.request(`${BASE_PATH}/${siteId}/php/limits`, {
+        method: 'POST',
+        body: { limits }
+    }),
+
     // Update plugins. Pass an array of slugs to update specific ones, omit for all.
     updatePlugins: (siteId, plugins) => api.request(`${BASE_PATH}/${siteId}/plugins/update`, {
         method: 'POST',

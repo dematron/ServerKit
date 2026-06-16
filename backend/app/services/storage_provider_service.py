@@ -84,7 +84,14 @@ class StorageProviderService:
     def save_config(cls, config: Dict) -> Dict:
         """Save storage provider configuration."""
         try:
-            os.makedirs(paths.SERVERKIT_CONFIG_DIR, exist_ok=True)
+            # Ensure the parent of the file we actually write exists. Using
+            # cls.CONFIG_FILE (not the hardcoded SERVERKIT_CONFIG_DIR) honors a
+            # CONFIG_FILE override — e.g. tests pointing it at a tmp dir — and
+            # is identical in production, where CONFIG_FILE lives in
+            # SERVERKIT_CONFIG_DIR. Previously this tried to create the real
+            # config dir unconditionally, which raised on a sandboxed CI runner
+            # and (because the except below swallows it) left the file unwritten.
+            os.makedirs(os.path.dirname(cls.CONFIG_FILE) or '.', exist_ok=True)
 
             # Merge with existing config to preserve unmasked secrets
             existing = cls.get_config()

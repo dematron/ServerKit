@@ -32,6 +32,17 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
+      # The agent embeds the desktop UI via //go:embed all:dist, so the
+      # React app must be built into agent/internal/agentui/dist before any
+      # `go` command — otherwise the embed fails with "no matching files".
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: agent/ui/package-lock.json
+      - name: Build agent UI (required by //go:embed)
+        working-directory: agent/ui
+        run: npm ci && npm run build
       - name: go vet
         run: go vet ./...
       - name: go test
@@ -61,6 +72,16 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
+      # Build the embedded desktop UI before `go build` (see //go:embed
+      # all:dist in internal/agentui/embed.go).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: agent/ui/package-lock.json
+      - name: Build agent UI (required by //go:embed)
+        working-directory: agent/ui
+        run: npm ci && npm run build
       - name: go build
         env:
           GOOS: ${{ matrix.goos }}

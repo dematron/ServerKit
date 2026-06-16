@@ -15,6 +15,7 @@ import * as pairingMethods from './pairing.js';
 import * as sourceConnectionMethods from './sourceConnections.js';
 import * as connectionMethods from './connections.js';
 import * as aiMethods from './ai.js';
+import * as tunnelMethods from './tunnels.js';
 
 class ApiService extends ApiClient {
     constructor() {
@@ -37,6 +38,7 @@ class ApiService extends ApiClient {
             sourceConnectionMethods,
             connectionMethods,
             aiMethods,
+            tunnelMethods,
         ];
         for (const mod of modules) {
             for (const [key, fn] of Object.entries(mod)) {

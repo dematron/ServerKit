@@ -94,6 +94,7 @@ def create_app(config_name=None):
     # Register blueprints - Core
     from app.api.apps import apps_bp
     from app.api.domains import domains_bp
+    from app.api.tunnels import tunnels_bp
     from app.api.private_urls import private_urls_bp
     app.register_blueprint(apps_bp, url_prefix='/api/v1/apps')
     app.register_blueprint(domains_bp, url_prefix='/api/v1/domains')
@@ -290,6 +291,9 @@ def create_app(config_name=None):
     # Register blueprints - Cloud Provisioning
     from app.api.cloud_provisioning import cloud_provisioning_bp
     app.register_blueprint(cloud_provisioning_bp, url_prefix='/api/v1/cloud')
+
+    # Register blueprints - Remote Access (WireGuard tunnels; imported above)
+    app.register_blueprint(tunnels_bp, url_prefix='/api/v1/tunnels')
 
     # Register blueprints - Performance
     from app.api.performance import performance_bp

@@ -43,6 +43,7 @@ import SSOCallback from './pages/SSOCallback';
 import SourceConnectionCallback from './pages/SourceConnectionCallback';
 import DatabaseMigration from './pages/DatabaseMigration';
 import ServerTemplates from './pages/ServerTemplates';
+import RemoteAccess from './pages/RemoteAccess';
 import Workspaces from './pages/Workspaces';
 import WorkspaceDetail from './pages/WorkspaceDetail';
 import DNSZones from './pages/DNSZones';
@@ -258,6 +259,7 @@ function AppRoutes() {
                 <Route path="deployments/:jobId" element={<Deployments />} />
                 <Route path="workflow" element={<WorkflowBuilder />} />
                 <Route path="domains" element={<Domains />} />
+                <Route path="remote-access" element={<RemoteAccess />} />
                 <Route path="databases" element={<Databases />} />
                 <Route path="databases/:tab" element={<Databases />} />
                 <Route path="ssl" element={<SSLCertificates />} />

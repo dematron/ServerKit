@@ -153,6 +153,36 @@ class NginxService:
 }}
 '''
 
+    # Reverse proxy to a service reached over a WireGuard tunnel (roadmap
+    # #12). The upstream is a peer's WG IP:port; the private agent forwards
+    # it to the real service. proxy_buffering off keeps media/streaming
+    # (e.g. Jellyfin) responsive.
+    REMOTE_UPSTREAM_TEMPLATE = '''server {{
+    listen 80;
+    listen [::]:80;
+    server_name {domains};
+
+    access_log /var/log/nginx/{name}.access.log;
+    error_log /var/log/nginx/{name}.error.log;
+
+    location / {{
+        proxy_pass http://{upstream};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_buffering off;
+        proxy_read_timeout 86400;
+        proxy_connect_timeout 60;
+        proxy_send_timeout 60;
+    }}
+}}
+'''
+
     SSL_BLOCK = '''
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -390,7 +420,8 @@ location /p/ {{
     @classmethod
     def create_site(cls, name: str, app_type: str, domains: List[str],
                     root_path: str, port: int = None, php_version: str = '8.2',
-                    ssl_cert: str = None, ssl_key: str = None) -> Dict:
+                    ssl_cert: str = None, ssl_key: str = None,
+                    upstream: str = None) -> Dict:
         """Create a new site configuration.
 
         When ``ssl_cert``/``ssl_key`` are given the generated vhost serves HTTPS
@@ -437,6 +468,14 @@ location /p/ {{
                 name=name,
                 domains=domains_str,
                 port=port
+            )
+        elif app_type == 'remote':
+            if not upstream:
+                return {'success': False, 'error': 'upstream (host:port) is required for remote apps'}
+            config = cls.REMOTE_UPSTREAM_TEMPLATE.format(
+                name=name,
+                domains=domains_str,
+                upstream=upstream,
             )
         elif app_type == 'static':
             config = cls.STATIC_SITE_TEMPLATE.format(

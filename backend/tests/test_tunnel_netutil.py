@@ -53,3 +53,27 @@ def test_validate_endpoint_host():
     assert tn.validate_endpoint_host('0.0.0.0') is False       # unspecified
     assert tn.validate_endpoint_host('') is False
     assert tn.validate_endpoint_host('not-an-ip') is False
+
+
+def test_pick_listen_port():
+    assert tn.pick_listen_port([]) == 51820
+    assert tn.pick_listen_port([51820]) == 51821
+    assert tn.pick_listen_port([51820, 51821, 51823]) == 51822  # fills the gap
+
+
+def test_pick_listen_port_exhausted():
+    used = list(range(tn.DEFAULT_LISTEN_PORT, tn.DEFAULT_LISTEN_PORT + tn.LISTEN_PORT_RANGE))
+    try:
+        tn.pick_listen_port(used)
+        assert False, "expected RuntimeError on exhausted port pool"
+    except RuntimeError:
+        pass
+
+
+def test_diagnose_reachability():
+    assert tn.diagnose_reachability(0, None, False)['state'] == 'interface_down'
+    assert tn.diagnose_reachability(1_700_000_000, 999, True)['state'] == 'ok'
+    assert tn.diagnose_reachability(0, 5, True)['state'] == 'connecting'
+    d = tn.diagnose_reachability(0, 600, True)
+    assert d['state'] == 'no_handshake'
+    assert 'blocked' in d['hint'].lower()

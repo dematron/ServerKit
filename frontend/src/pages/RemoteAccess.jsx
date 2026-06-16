@@ -231,6 +231,11 @@ const RemoteAccess = () => {
                                             {t.subnet} · {t.interface_name} · UDP {t.listen_port}
                                             {t.last_handshake_at ? ` · handshake ${new Date(t.last_handshake_at).toLocaleString()}` : ' · no handshake yet'}
                                         </div>
+                                        {!t.last_handshake_at && t.status !== 'up' && (
+                                            <p className="text-xs text-yellow-600 mt-1">
+                                                No handshake yet — if this persists, the private host&apos;s outbound UDP to the edge may be blocked (a relay is needed).
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                         <Button variant="outline" size="sm" onClick={() => openWizard(t)}>

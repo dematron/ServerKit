@@ -16,6 +16,15 @@ TUNNEL_POOL = "10.88.0.0/16"
 # rehandshakes well inside it when persistent-keepalive is 25s.
 HANDSHAKE_FRESH_SECONDS = 180
 
+# WireGuard listen ports are allocated per edge (#20) so ONE edge can front
+# many private peers — each tunnel needs its own UDP port. 51820..52019.
+DEFAULT_LISTEN_PORT = 51820
+LISTEN_PORT_RANGE = 200
+
+# A tunnel with both interfaces up but no handshake after this long likely
+# has its outbound UDP blocked (#21).
+HANDSHAKE_GRACE_SECONDS = 45
+
 
 def pick_subnet(used_subnets):
     """Return (subnet_cidr, edge_ip, private_ip) for the first free /24 in
@@ -69,3 +78,41 @@ def validate_endpoint_host(ip_address):
     except ValueError:
         return False
     return not (ip.is_loopback or ip.is_unspecified)
+
+
+def pick_listen_port(used_ports):
+    """First free WireGuard listen port for an edge, starting at
+    DEFAULT_LISTEN_PORT. ``used_ports`` is the ports already taken by other
+    tunnels on the SAME edge — so one edge can front many private peers (#20).
+    Raises RuntimeError if the per-edge pool is exhausted.
+    """
+    used = set(used_ports or [])
+    for port in range(DEFAULT_LISTEN_PORT, DEFAULT_LISTEN_PORT + LISTEN_PORT_RANGE):
+        if port not in used:
+            return port
+    raise RuntimeError(
+        "listen-port pool exhausted on this edge (%d..%d)"
+        % (DEFAULT_LISTEN_PORT, DEFAULT_LISTEN_PORT + LISTEN_PORT_RANGE - 1)
+    )
+
+
+def diagnose_reachability(latest_handshake_epoch, age_seconds, both_interfaces_up):
+    """Near-term #21: classify why a tunnel isn't passing traffic, with an
+    actionable hint. The actual relay data plane is deferred.
+
+    - 'interface_down' — an agent hasn't brought its interface up
+    - 'ok'             — a handshake has happened
+    - 'connecting'     — interfaces up, still within the handshake grace window
+    - 'no_handshake'   — up + past grace + no handshake → outbound UDP likely blocked
+    """
+    if not both_interfaces_up:
+        return {'state': 'interface_down',
+                'hint': 'One or both agents have not brought the WireGuard interface up.'}
+    if latest_handshake_epoch and latest_handshake_epoch > 0:
+        return {'state': 'ok'}
+    if age_seconds is not None and age_seconds < HANDSHAKE_GRACE_SECONDS:
+        return {'state': 'connecting', 'hint': 'Waiting for the first WireGuard handshake.'}
+    return {'state': 'no_handshake',
+            'hint': ("No WireGuard handshake yet — the private host's outbound UDP to the "
+                     "edge may be blocked by its network. A relay (roadmap #21) would be "
+                     "needed to traverse it.")}

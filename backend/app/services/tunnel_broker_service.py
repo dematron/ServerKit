@@ -19,7 +19,6 @@ from app.services import tunnel_netutil
 logger = logging.getLogger(__name__)
 
 KEEPALIVE_SECONDS = 25
-DEFAULT_LISTEN_PORT = 51820
 
 
 class TunnelBrokerError(Exception):
@@ -103,6 +102,16 @@ class TunnelBrokerService:
         except RuntimeError as e:
             raise TunnelBrokerError(str(e), code='POOL_EXHAUSTED', status=409)
 
+        # Allocate a listen port unique to this edge (#20) so one edge can
+        # front multiple private peers without UDP-port conflicts.
+        used_ports = [t.listen_port for t in Tunnel.query
+                      .with_entities(Tunnel.listen_port)
+                      .filter(Tunnel.edge_server_id == edge_server_id).all()]
+        try:
+            listen_port = tunnel_netutil.pick_listen_port(used_ports)
+        except RuntimeError as e:
+            raise TunnelBrokerError(str(e), code='PORT_POOL_EXHAUSTED', status=409)
+
         tunnel = Tunnel(
             name=name or ("%s → %s" % (edge.name, private.name)),
             edge_server_id=edge_server_id,
@@ -110,7 +119,7 @@ class TunnelBrokerService:
             subnet=subnet,
             edge_wg_ip=edge_ip,
             private_wg_ip=private_ip,
-            listen_port=DEFAULT_LISTEN_PORT,
+            listen_port=listen_port,
             status='pending',
         )
         db.session.add(tunnel)
@@ -192,7 +201,16 @@ class TunnelBrokerService:
         if latest:
             tunnel.last_handshake_at = datetime.utcfromtimestamp(latest)
         db.session.commit()
-        return {'tunnel': tunnel.to_dict(), 'edge': edge_status, 'private': private_status}
+        # Reachability diagnostic (#21): flag a likely blocked-UDP case.
+        age = None
+        if tunnel.created_at:
+            try:
+                age = now - tunnel.created_at.timestamp()
+            except Exception:
+                age = None
+        diagnostic = tunnel_netutil.diagnose_reachability(latest, age, iface_up)
+        return {'tunnel': tunnel.to_dict(), 'edge': edge_status,
+                'private': private_status, 'diagnostic': diagnostic}
 
     @classmethod
     def _safe_status(cls, server_id, iface, user_id):

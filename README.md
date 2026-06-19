@@ -50,9 +50,13 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 **Node.js** — PM2-managed applications with log streaming
 
+**Manual & Zip Deploys** — Deploy from a local/manual path or a zip upload, alongside Git and Docker sources
+
 **Workflow Builder** — Node-based visual automation for server tasks, deployments, and CI/CD
 
 **Environment Pipeline** — Multi-environment management for WordPress (Prod/Staging/Dev) with code/DB promotion
+
+**WordPress Publishing** — Publish managed sites at a real subdomain (not `localhost:port`), safely swap a site's URL with preview, and attach a custom domain with automatic DNS and wildcard HTTPS
 
 **Docker** — Full container and Docker Compose management with real-time log streaming and terminal access
 
@@ -74,11 +78,13 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 **Cloud Provisioning** — Provision servers on DigitalOcean, Hetzner, Vultr, and Linode with cost tracking
 
+**Connections** — One place to link every external account: source (GitHub/GitLab), cloud infrastructure, DNS providers, domain registrars with expiry tracking, SMTP relays, and S3/B2 storage — credentials encrypted at rest
+
 **Firewall** — UFW/firewalld with visual rule management and port presets
 
 **Cron Jobs** — Schedule tasks with a visual editor
 
-**File Manager** — Browse, edit, upload, and download files via web interface
+**File Manager** — Browse, edit, upload, and download files via web interface, including browsing and previewing S3 / Backblaze B2 buckets
 
 **FTP Server** — Manage vsftpd users and access
 
@@ -128,6 +134,8 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 **Remote Docker** — Agent-backed Docker operations for connected servers; remote app/site deployment is still evolving
 
+**Remote Service Tunnels** — Expose a private or NAT'd service (e.g. a home media server) through an edge server over an agent-managed WireGuard tunnel, reusing nginx, DNS, and certificates
+
 **API Key Rotation** — Secure credential rotation with acknowledgment handshake
 
 **Cross-Server Metrics** — Historical metrics with comparison charts and retention policies
@@ -163,8 +171,6 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 **Webhook Subscriptions** — Event-driven webhooks with HMAC signatures, retry logic, and custom headers
 
 ### 🎨 Customization
-
-**Layout Switcher** — Switch the app shell between full sidebar, compact rail, and top-bar layouts
 
 **Sidebar Presets** — Switch between Full, Web Hosting, Email Admin, DevOps, and Minimal views with one click
 
@@ -328,6 +334,9 @@ See the [Installation Guide](docs/INSTALLATION.md) for step-by-step instructions
 - [x] Container lifecycle — Image-update apply, auto-sleep, horizontal auto-scaling
 - [x] TLS hardening — Optional HTTPS, Cloudflare-aware configs, automatic CAA
 - [x] Secrets manager & inbound webhook gateway
+- [x] Remote access — Expose private/NAT'd services via agent-managed WireGuard tunnels
+- [x] Connections hub — Unified external accounts (source, cloud, DNS, registrars, SMTP, storage)
+- [x] WordPress publishing — Real subdomains, URL-swap, custom domains, wildcard HTTPS
 
 Full details: [ROADMAP.md](ROADMAP.md)
 

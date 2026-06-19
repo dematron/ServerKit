@@ -57,7 +57,14 @@ awaiting a stable release:
   inbound webhook endpoints for triggering automation.
 - **Passkeys / WebAuthn** — passwordless and second-factor authentication with
   hardware keys, Touch ID, and Windows Hello.
-- **Layout switcher** — full sidebar, compact rail, and top-bar shell variants.
+- **Remote service tunnels** — expose a private or NAT'd service through an edge
+  server over an agent-managed, NAT-traversing WireGuard tunnel, reusing nginx,
+  DNS, and certificates.
+- **Connections hub** — a single place to link external accounts (source code,
+  cloud, DNS, domain registrars with expiry tracking, SMTP relays, and S3/B2
+  storage), with credentials encrypted at rest.
+- **WordPress publishing** — publish managed sites at a real subdomain, swap a
+  site's URL safely with preview, and attach a custom domain with automatic DNS.
 - **Guided installer / updater** — health-checked install and update flow with
   automatic rollback.
 

@@ -13,6 +13,7 @@ from app.services.git_service import GitService
 from app.services.repository_manifest_service import RepositoryManifestService
 from app.services.source_connection_service import SourceConnectionService
 from app.services.remote_docker_service import RemoteDockerService
+from app.services.image_update_service import ImageUpdateService
 from app.services.log_service import LogService
 from app.services.process_service import ProcessService
 from app.services.upload_service import (
@@ -1160,6 +1161,53 @@ def start_app(app_id):
     return jsonify({
         'message': 'Application started',
         'app': app.to_dict()
+    }), 200
+
+
+@apps_bp.route('/<int:app_id>/image-update/apply', methods=['POST'])
+@jwt_required()
+def apply_image_update(app_id):
+    """Pull the newest image for a compose-managed app and recreate it."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    app = Application.query.get(app_id)
+
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    if not _can_edit_app(user, app):
+        return jsonify({'error': 'Access denied'}), 403
+
+    # Auto-apply is only safe for compose-managed apps; recreating a standalone
+    # container would need its full run spec, which we don't store.
+    if app.app_type != 'docker' or not app.root_path or not app.compose_file:
+        return jsonify({'error': 'Automatic update is only supported for docker-compose apps. '
+                                 'Pull and recreate this container manually.'}), 400
+
+    # Pull the newest images for the project, then recreate changed containers.
+    if app.server_id:
+        pull = RemoteDockerService.compose_pull(app.server_id, _compose_target(app), user_id=current_user_id)
+        if not pull.get('success') or _agent_result_failed(pull):
+            return jsonify({'error': _agent_result_error(pull, 'Failed to pull image')}), 400
+        up = RemoteDockerService.compose_up(app.server_id, _compose_target(app), detach=True, user_id=current_user_id)
+    else:
+        pull = DockerService.compose_pull(app.root_path, compose_file=_local_compose_file(app))
+        if not pull.get('success'):
+            return jsonify({'error': pull.get('error', 'Failed to pull image')}), 400
+        up = DockerService.compose_up(app.root_path, detach=True, compose_file=_local_compose_file(app))
+
+    if not up.get('success') or _agent_result_failed(up):
+        return jsonify({'error': _agent_result_error(up, 'Failed to recreate containers')}), 400
+
+    app.status = 'running'
+    app.last_deployed_at = datetime.utcnow()
+    db.session.commit()
+
+    # Refresh the update badge now that we're on the new image.
+    ImageUpdateService.check_application(app_id)
+
+    return jsonify({
+        'message': 'Image updated and containers recreated',
+        'app': app.to_dict(),
     }), 200
 
 

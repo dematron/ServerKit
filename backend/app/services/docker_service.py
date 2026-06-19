@@ -324,54 +324,59 @@ class DockerService:
             return None
 
     @staticmethod
-    def get_app_container_id(app):
+    def _app_attr(app, name):
+        """Read an attribute from a model instance or dict."""
+        if isinstance(app, dict):
+            return app.get(name)
+        return getattr(app, name, None)
+
+    @classmethod
+    def get_app_container_id(cls, app):
         """Get the main container ID for an application.
 
         For apps with container_id set, use that directly.
         For compose apps, query docker compose ps to find container.
 
         Args:
-            app: Application model instance (or dict with container_id and root_path)
+            app: Application model instance (or dict with container_id, root_path, compose_file)
 
         Returns:
             str: Container ID or name, or None if not found
         """
-        # Handle both model instances and dicts
-        container_id = getattr(app, 'container_id', None) or (app.get('container_id') if isinstance(app, dict) else None)
-        root_path = getattr(app, 'root_path', None) or (app.get('root_path') if isinstance(app, dict) else None)
+        container_id = cls._app_attr(app, 'container_id')
+        root_path = cls._app_attr(app, 'root_path')
+        compose_file = cls._app_attr(app, 'compose_file')
 
         if container_id:
             return container_id
 
         if root_path:
-            # Get containers from docker compose
-            containers = DockerService.compose_ps(root_path)
+            containers = cls.compose_ps(root_path, compose_file=compose_file)
             if containers:
-                # Return first container (main service)
-                # Docker compose ps returns 'ID' or 'Name' depending on version
                 return containers[0].get('ID') or containers[0].get('Name') or containers[0].get('id')
 
         return None
 
-    @staticmethod
-    def get_all_app_containers(app):
+    @classmethod
+    def get_all_app_containers(cls, app):
         """Get all container IDs for a compose application.
 
         Args:
-            app: Application model instance (or dict with root_path)
+            app: Application model instance (or dict with root_path, compose_file)
 
         Returns:
             list: List of container info dicts with 'id', 'name', 'service', 'state'
         """
-        root_path = getattr(app, 'root_path', None) or (app.get('root_path') if isinstance(app, dict) else None)
+        root_path = cls._app_attr(app, 'root_path')
+        compose_file = cls._app_attr(app, 'compose_file')
 
         if not root_path:
-            container_id = getattr(app, 'container_id', None) or (app.get('container_id') if isinstance(app, dict) else None)
+            container_id = cls._app_attr(app, 'container_id')
             if container_id:
                 return [{'id': container_id, 'name': container_id, 'service': 'main', 'state': 'unknown'}]
             return []
 
-        containers = DockerService.compose_ps(root_path)
+        containers = cls.compose_ps(root_path, compose_file=compose_file)
         result = []
         for c in containers:
             result.append({
@@ -753,6 +758,16 @@ class DockerService:
     # ==================== DOCKER COMPOSE ====================
 
     @classmethod
+    def _compose_base_cmd(cls, compose_file=None):
+        """Build the base docker compose command, optionally targeting a
+        specific compose file. The file path may be absolute or relative to
+        the project directory."""
+        cmd = cls._get_compose_cmd()
+        if compose_file:
+            cmd = cmd + ['-f', compose_file]
+        return cmd
+
+    @classmethod
     def compose_list(cls):
         """List Docker Compose projects known to the Docker CLI."""
         try:
@@ -843,10 +858,10 @@ class DockerService:
             return []
 
     @classmethod
-    def compose_up(cls, project_path, detach=True, build=False):
+    def compose_up(cls, project_path, detach=True, build=False, compose_file=None):
         """Start Docker Compose services."""
         try:
-            cmd = cls._get_compose_cmd() + ['up']
+            cmd = cls._compose_base_cmd(compose_file) + ['up']
             if detach:
                 cmd.append('-d')
             if build:
@@ -863,10 +878,10 @@ class DockerService:
             return {'success': False, 'error': str(e)}
 
     @classmethod
-    def compose_down(cls, project_path, volumes=False, remove_orphans=True):
+    def compose_down(cls, project_path, volumes=False, remove_orphans=True, compose_file=None):
         """Stop Docker Compose services."""
         try:
-            cmd = cls._get_compose_cmd() + ['down']
+            cmd = cls._compose_base_cmd(compose_file) + ['down']
             if volumes:
                 cmd.append('-v')
             if remove_orphans:
@@ -883,7 +898,7 @@ class DockerService:
             return {'success': False, 'error': str(e)}
 
     @classmethod
-    def compose_ps(cls, project_path):
+    def compose_ps(cls, project_path, compose_file=None):
         """List Docker Compose services.
 
         Handles multiple output formats from docker compose ps --format json:
@@ -895,7 +910,7 @@ class DockerService:
         """
         try:
             result = subprocess.run(
-                cls._get_compose_cmd() + ['ps', '--format', 'json'],
+                cls._compose_base_cmd(compose_file) + ['ps', '--format', 'json'],
                 cwd=project_path,
                 capture_output=True, text=True
             )
@@ -925,10 +940,10 @@ class DockerService:
             return []
 
     @classmethod
-    def compose_logs(cls, project_path, service=None, tail=100):
+    def compose_logs(cls, project_path, service=None, tail=100, compose_file=None):
         """Get Docker Compose logs."""
         try:
-            cmd = cls._get_compose_cmd() + ['logs', '--tail', str(tail)]
+            cmd = cls._compose_base_cmd(compose_file) + ['logs', '--tail', str(tail)]
             if service:
                 cmd.append(service)
 
@@ -941,10 +956,10 @@ class DockerService:
             return {'success': False, 'error': str(e)}
 
     @classmethod
-    def compose_restart(cls, project_path, service=None):
+    def compose_restart(cls, project_path, service=None, compose_file=None):
         """Restart Docker Compose services."""
         try:
-            cmd = cls._get_compose_cmd() + ['restart']
+            cmd = cls._compose_base_cmd(compose_file) + ['restart']
             if service:
                 cmd.append(service)
 
@@ -959,10 +974,10 @@ class DockerService:
             return {'success': False, 'error': str(e)}
 
     @classmethod
-    def compose_pull(cls, project_path, service=None):
+    def compose_pull(cls, project_path, service=None, compose_file=None):
         """Pull Docker Compose images."""
         try:
-            cmd = cls._get_compose_cmd() + ['pull']
+            cmd = cls._compose_base_cmd(compose_file) + ['pull']
             if service:
                 cmd.append(service)
 
@@ -977,11 +992,11 @@ class DockerService:
             return {'success': False, 'error': str(e)}
 
     @classmethod
-    def validate_compose_file(cls, project_path):
+    def validate_compose_file(cls, project_path, compose_file=None):
         """Validate a Docker Compose file."""
         try:
             result = subprocess.run(
-                cls._get_compose_cmd() + ['config', '--quiet'],
+                cls._compose_base_cmd(compose_file) + ['config', '--quiet'],
                 cwd=project_path,
                 capture_output=True, text=True
             )
@@ -989,14 +1004,14 @@ class DockerService:
                 return {'valid': True}
             return {'valid': False, 'error': result.stderr}
         except Exception as e:
-            return {'valid': False, 'error': str(e)}
+            return {'success': False, 'error': str(e)}
 
     @classmethod
-    def get_compose_config(cls, project_path):
+    def get_compose_config(cls, project_path, compose_file=None):
         """Get parsed Docker Compose configuration."""
         try:
             result = subprocess.run(
-                cls._get_compose_cmd() + ['config'],
+                cls._compose_base_cmd(compose_file) + ['config'],
                 cwd=project_path,
                 capture_output=True, text=True
             )

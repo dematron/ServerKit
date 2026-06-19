@@ -214,11 +214,17 @@ class LogService:
         return cls.read_log(filepath, lines)
 
     @classmethod
-    def get_docker_app_logs(cls, app_name: str, app_dir: str, lines: int = 100) -> Dict:
+    def get_docker_app_logs(cls, app_name: str, app_dir: str, lines: int = 100,
+                            compose_file: str = None) -> Dict:
         """Get logs for a Docker Compose application."""
         try:
+            cmd = ['docker', 'compose']
+            if compose_file:
+                cmd.extend(['-f', compose_file])
+            cmd.extend(['logs', '--tail', str(lines), '--no-color'])
+
             result = subprocess.run(
-                ['docker', 'compose', 'logs', '--tail', str(lines), '--no-color'],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -230,8 +236,12 @@ class LogService:
                 return {**sourced_result(log_lines, 'docker', 'Docker Compose'), 'app_dir': app_dir}
             else:
                 # Try with docker-compose (older syntax) as fallback
+                cmd = ['docker-compose']
+                if compose_file:
+                    cmd.extend(['-f', compose_file])
+                cmd.extend(['logs', '--tail', str(lines), '--no-color'])
                 result = subprocess.run(
-                    ['docker-compose', 'logs', '--tail', str(lines), '--no-color'],
+                    cmd,
                     capture_output=True,
                     text=True,
                     timeout=30,

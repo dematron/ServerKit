@@ -18,7 +18,7 @@ import CommandsTab from '../components/service-detail/CommandsTab';
 import GitConnectModal from '../components/service-detail/GitConnectModal';
 import OverviewTab from '../components/service-detail/OverviewTab';
 import EmptyState from '../components/EmptyState';
-import { Layers } from 'lucide-react';
+import { Layers, FileArchive, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Pill, ServiceTile } from '@/components/ds';
 
@@ -55,6 +55,9 @@ const ServiceDetail = () => {
     const [showMoreMenu, setShowMoreMenu] = useState(false);
     const [showGitModal, setShowGitModal] = useState(false);
     const [actionLoading, setActionLoading] = useState(null);
+    const [versions, setVersions] = useState([]);
+    const [currentVersion, setCurrentVersion] = useState(null);
+    const [versionsLoading, setVersionsLoading] = useState(false);
     const deployMenuRef = useRef(null);
     const moreMenuRef = useRef(null);
 
@@ -64,6 +67,19 @@ const ServiceDetail = () => {
             navigate(`/wordpress/${id}`, { replace: true });
         }
     }, [service, id, navigate]);
+
+    // Load upload versions
+    useEffect(() => {
+        if (!isUpload || !id) return;
+        setVersionsLoading(true);
+        api.getAppVersions(id)
+            .then(data => {
+                setVersions(data.versions || []);
+                setCurrentVersion(data.current);
+            })
+            .catch(() => toast.error('Failed to load versions'))
+            .finally(() => setVersionsLoading(false));
+    }, [isUpload, id, toast]);
 
     // Close menus on outside click
     useEffect(() => {
@@ -119,6 +135,45 @@ const ServiceDetail = () => {
         }
     }
 
+    async function handleRollback(version) {
+        setActionLoading(`rollback-${version}`);
+        try {
+            await api.rollbackAppVersion(service.id, version);
+            toast.success(`Rolled back to version ${version}`);
+            await reload();
+            const data = await api.getAppVersions(service.id);
+            setVersions(data.versions || []);
+            setCurrentVersion(data.current);
+        } catch (err) {
+            toast.error(err.message || 'Failed to rollback');
+        } finally {
+            setActionLoading(null);
+        }
+    }
+
+    async function handleUploadNewVersion(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        setActionLoading('upload-version');
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('name', service.name);
+            formData.append('app_type', 'auto');
+            formData.append('auto_deploy', 'true');
+            await api.uploadAppZip(formData);
+            toast.success('New version uploaded');
+            await reload();
+            const data = await api.getAppVersions(service.id);
+            setVersions(data.versions || []);
+            setCurrentVersion(data.current);
+        } catch (err) {
+            toast.error(err.message || 'Failed to upload new version');
+        } finally {
+            setActionLoading(null);
+        }
+    }
+
     async function handleDelete() {
         const firstConfirm = await confirm({ title: 'Delete Service', message: `Delete ${service.name}? This action cannot be undone.` });
         if (!firstConfirm) return;
@@ -151,6 +206,9 @@ const ServiceDetail = () => {
     }
 
     const availableTabs = getTabsForType(service.app_type);
+    const isGitBased = service.source !== 'manual' && service.source !== 'upload';
+    const isUpload = service.source === 'upload';
+    const isManual = service.source === 'manual';
 
     return (
         <div className="page-container svc-detail">
@@ -216,7 +274,7 @@ const ServiceDetail = () => {
                                     </svg>
                                     Manual Deploy (Restart)
                                 </button>
-                                {deployConfig && (
+                                {isGitBased && deployConfig && (
                                     <button onClick={handleDeployLatest} disabled={actionLoading === 'deploy-latest'}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                             <circle cx="18" cy="18" r="3"/>
@@ -310,7 +368,31 @@ const ServiceDetail = () => {
 
             {/* Repo Connection Pill */}
             <div className="svc-detail__repo-bar">
-                {deployConfig ? (
+                {isUpload ? (
+                    <span className="svc-detail__repo-pill svc-detail__repo-pill--static">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        <span className="svc-detail__repo-url">Upload</span>
+                        <span className="svc-detail__repo-arrow">&rarr;</span>
+                        <span className="svc-detail__repo-branch">Version {service.version || 1}</span>
+                    </span>
+                ) : isManual ? (
+                    <span className="svc-detail__repo-pill svc-detail__repo-pill--static">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        <span className="svc-detail__repo-url">{service.root_path || 'Local service'}</span>
+                        {service.managed_by && (
+                            <>
+                                <span className="svc-detail__repo-arrow">&rarr;</span>
+                                <span className="svc-detail__repo-branch">{service.managed_by === 'docker_compose' ? 'Docker Compose' : 'systemd'}</span>
+                            </>
+                        )}
+                    </span>
+                ) : deployConfig ? (
                     <div className="svc-detail__repo-pill" onClick={() => setShowGitModal(true)}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <circle cx="18" cy="18" r="3"/>
@@ -335,6 +417,50 @@ const ServiceDetail = () => {
                     </button>
                 )}
             </div>
+
+            {/* Upload versions panel */}
+            {isUpload && (
+                <div className="svc-detail__versions">
+                    <div className="svc-detail__versions-header">
+                        <h3>Versions</h3>
+                        <label className="svc-detail__upload-label">
+                            <input
+                                type="file"
+                                accept=".zip,application/zip,application/x-zip-compressed"
+                                onChange={handleUploadNewVersion}
+                                disabled={actionLoading === 'upload-version'}
+                            />
+                            <FileArchive size={14} />
+                            {actionLoading === 'upload-version' ? 'Uploading...' : 'Upload New Version'}
+                        </label>
+                    </div>
+                    {versionsLoading ? (
+                        <div className="svc-detail__versions-loading">Loading versions...</div>
+                    ) : (
+                        <ul className="svc-detail__versions-list">
+                            {versions.slice().reverse().map(v => (
+                                <li key={v.version} className={v.version === currentVersion ? 'is-current' : ''}>
+                                    <span className="svc-detail__version-name">v{v.version}</span>
+                                    <span className="svc-detail__version-date">{new Date(v.created_at).toLocaleString()}</span>
+                                    {v.version === currentVersion ? (
+                                        <span className="svc-detail__version-current">Current</span>
+                                    ) : (
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => handleRollback(v.version)}
+                                            disabled={actionLoading === `rollback-${v.version}`}
+                                        >
+                                            <RotateCcw size={14} />
+                                            Rollback
+                                        </Button>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
 
             {/* Tab Bar */}
             <div className="svc-detail__tabs">
@@ -371,7 +497,7 @@ const ServiceDetail = () => {
             </div>
 
             {/* Git Connect Modal */}
-            {showGitModal && (
+            {showGitModal && isGitBased && (
                 <GitConnectModal
                     appId={service.id}
                     deployConfig={deployConfig}

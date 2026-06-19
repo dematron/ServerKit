@@ -208,6 +208,15 @@
             border-color: var(--accent-dim);
             background: var(--surface-2);
         }
+
+        &--static {
+            cursor: default;
+
+            &:hover {
+                border-color: var(--border);
+                background: var(--surface);
+            }
+        }
     }
 
     &__repo-url {
@@ -255,6 +264,99 @@
             color: var(--accent-bright);
             background: var(--accent-bg-soft);
         }
+    }
+
+    &__versions {
+        margin-bottom: $space-5;
+        padding: $space-4;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: $radius-lg;
+    }
+
+    &__versions-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-3;
+        margin-bottom: $space-3;
+
+        h3 {
+            margin: 0;
+            font-size: $font-size-sm;
+            font-weight: $font-weight-semibold;
+            color: var(--text-primary);
+        }
+    }
+
+    &__upload-label {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-2;
+        padding: 6px $space-3;
+        background: var(--accent-bg-soft);
+        border: 1px solid var(--accent-dim);
+        border-radius: $radius-md;
+        color: var(--accent-bright);
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        cursor: pointer;
+        transition: background $transition-fast;
+
+        &:hover {
+            background: var(--accent-bg);
+        }
+
+        input {
+            display: none;
+        }
+    }
+
+    &__versions-list {
+        display: grid;
+        gap: $space-2;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+
+        li {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: $space-3;
+            padding: $space-3;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: $radius-md;
+
+            &.is-current {
+                border-color: rgba(61, 220, 151, 0.35);
+                background: rgba(61, 220, 151, 0.06);
+            }
+        }
+    }
+
+    &__version-name {
+        font-family: var(--mono);
+        font-size: $font-size-sm;
+        font-weight: $font-weight-semibold;
+        color: var(--text-primary);
+    }
+
+    &__version-date {
+        margin-left: auto;
+        color: var(--text-faint);
+        font-size: $font-size-xs;
+    }
+
+    &__version-current {
+        padding: 3px $space-2;
+        background: rgba(61, 220, 151, 0.1);
+        border: 1px solid rgba(61, 220, 151, 0.2);
+        border-radius: $radius-full;
+        color: #3ddc97;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
     }
 
     // Tab strip — accent wash on the active chip

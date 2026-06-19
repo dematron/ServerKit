@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Box, Layers, Plus, Activity, Square, Clock, Play, RotateCw, GitBranch, Github } from 'lucide-react';
+import { Box, Layers, Plus, Activity, Square, Clock, Play, RotateCw, GitBranch, Github, FolderOpen, FileArchive } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { getServiceType, getStatusConfig, formatRelativeTime } from '../utils/serviceTypes';
@@ -333,6 +333,16 @@ const Services = () => {
                                                 <span className="services-page__src-badge" title={app.deploy_repo_url}>
                                                     {isGithub ? <Github size={12} /> : <GitBranch size={12} />}
                                                     {extractRepoName(app.deploy_repo_url)}
+                                                </span>
+                                            ) : app.source === 'manual' ? (
+                                                <span className="services-page__src-badge services-page__src-badge--manual" title={app.root_path || ''}>
+                                                    <FolderOpen size={12} />
+                                                    Local
+                                                </span>
+                                            ) : app.source === 'upload' ? (
+                                                <span className="services-page__src-badge services-page__src-badge--upload" title={app.upload_path || ''}>
+                                                    <FileArchive size={12} />
+                                                    Upload v{app.version || 1}
                                                 </span>
                                             ) : (
                                                 <span className="services-page__nil">—</span>

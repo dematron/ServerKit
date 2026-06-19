@@ -1,9 +1,10 @@
 # New Features — Endpoint & Page Reference
 
-Reference for the features added on `dev` (12 feature commits, `cd16d9a … 70883d5`).
-All endpoints are under `/api/v1`. "admin" = requires `user.is_admin`; "edit" =
-`_can_edit_app` (owner or admin); "auth" = any valid JWT. Tables auto-create on
-startup via `db.create_all()`.
+Reference for the features added on `dev` — the 12 UI/Docker/WAF feature commits
+(`cd16d9a … 70883d5`) plus the SSL/TLS hardening follow-up (`02afdec … a09bf0f`,
+see §6). All endpoints are under `/api/v1`. "admin" = requires `user.is_admin`;
+"edit" = `_can_edit_app` (owner or admin); "auth" = any valid JWT. Tables
+auto-create on startup via `db.create_all()`.
 
 ---
 
@@ -119,7 +120,58 @@ Requires a scale-capable compose service (no fixed host port / `container_name`)
 
 ---
 
-## 6. Known follow-ups
+## 6. SSL/TLS hardening & optional HTTPS (security follow-up — `02afdec … a09bf0f`)
+
+HTTPS is **optional and best-effort** — the installer never blocks on SSL, and the
+panel never forces it. Hardening is applied so that *when* TLS is served, it's
+strong; it stays inert in HTTP-only mode.
+
+**Install/update (`install.sh`, `scripts/update.sh`)**
+- Best-effort cert: tries Let's Encrypt (webroot); on failure falls back to plain
+  HTTP instead of failing the install. `SERVERKIT_SKIP_SSL=1` forces HTTP.
+- Two panel vhosts: `serverkit.conf` (HTTPS + HTTP→HTTPS redirect) and
+  `serverkit-insecure.conf` (HTTP-only). The choice persists to
+  `/etc/serverkit/ssl-mode` and is preserved across updates.
+- **Server-wide TLS floor**: `harden_global_tls()` rewrites/injects
+  `ssl_protocols TLSv1.2 TLSv1.3` + AEAD-only `ssl_ciphers` in the system
+  `nginx.conf` `http{}`, so the default server and any non-ServerKit vhost are
+  covered too. Edited in place to avoid nginx's duplicate-directive error on
+  Debian/Ubuntu. `update.sh` re-applies it to existing installs.
+- Cloudflare-aware configs (Origin CA option + dashboard guidance) in
+  `nginx/sites-available/*`.
+
+**Per-app vhosts (`services/nginx_service.py` `SSL_BLOCK`)** — HSTS
+(`includeSubDomains; preload`), CSP, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, and `ssl_ecdh_curve`, in addition to the TLS 1.2/1.3 + AEAD set.
+
+**Auto-CAA on certificate issuance** — `ssl_service.obtain_certificate` calls
+`DNSProviderService.ensure_caa_record(domain)` (best-effort, never fails the cert).
+It creates `CAA 0 issue "letsencrypt.org"` at the **zone apex** via whichever
+connected provider manages the domain (Cloudflare / DigitalOcean / Route53), and
+degrades to manual instructions otherwise. Cloudflare/DigitalOcean need CAA's
+structured `data` object (not a flat string) — handled. The cert response gains a
+`caa: {created, provider, zone, record, …}` field. The default DNS zone
+`web-hosting` preset also seeds a CAA record.
+
+**HSTS gating (panel)** — the Flask security middleware emits HSTS **only when the
+deployment terminates real HTTPS**, resolved as `SSL_MODE` / `HSTS_ENABLED` in
+`config.py`. Behind nginx/Cloudflare, Flask can't tell real TLS from a Cloudflare
+Flexible edge via `X-Forwarded-Proto`, so it trusts the operator's recorded choice
+rather than the request scheme. The nginx edge emits HSTS independently in its
+secure server block.
+
+| Setting | Where | Purpose |
+|---|---|---|
+| `SERVERKIT_SKIP_SSL=1` | env (installer) | Skip HTTPS entirely; run on plain HTTP. |
+| `SERVERKIT_SSL_MODE` | env / `.env` | `secure`\|`insecure` — gates the panel's HSTS header. |
+| `/etc/serverkit/ssl-mode` | file | Persisted SSL mode (read by installer, updater, and `config._resolve_ssl_mode`). |
+| `/etc/serverkit/panel-domain` | file | Persisted panel domain so `update.sh` re-applies the cert path without the old (broken) `.env` scrape. |
+
+Proving tests: `backend/tests/test_dns_caa.py`, `backend/tests/test_security_headers.py`.
+
+---
+
+## 7. Known follow-ups
 
 - Migration import (cPanel/CyberPanel) — not started; needs real archive samples.
 - Backups: additional remote targets (WebDAV/Azure/Dropbox/SFTP), streaming

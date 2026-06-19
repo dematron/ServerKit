@@ -56,15 +56,19 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 **Docker** — Full container and Docker Compose management with real-time log streaming and terminal access
 
+**Container Lifecycle** — Image-update detection with one-click apply, auto-sleep for idle containers, and CPU-driven horizontal auto-scaling
+
 **Marketplace** — Over 60+ one-click templates for popular apps (Immich, Ghost, Authelia, etc.)
 
 ### 🏗️ Infrastructure
 
 **Domain Management** — Nginx virtual hosts with easy configuration
 
-**DNS Zone Management** — Full DNS record management with propagation checking (A, AAAA, CNAME, MX, TXT, etc.)
+**DNS Zone Management** — Full DNS record management with propagation checking (A, AAAA, CNAME, MX, TXT, CAA, etc.)
 
-**SSL Certificates** — Automatic Let's Encrypt with auto-renewal
+**Dynamic DNS** — Token-authenticated A/AAAA updates for home servers and changing IPs, synced through your DNS provider
+
+**SSL / TLS** — Automatic Let's Encrypt with auto-renewal, optional (best-effort) HTTPS that never blocks an install, hardened TLS 1.2+/AEAD ciphers, Cloudflare-aware configs, and automatic CAA records
 
 **Databases** — MySQL/MariaDB and PostgreSQL with user management and query interface
 
@@ -78,13 +82,19 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 **FTP Server** — Manage vsftpd users and access
 
-**Backup & Restore** — Automated backups to S3, Backblaze B2, or local storage with scheduling, retention policies, and one-click restore
+**Backup & Restore** — Automated backups to S3, Backblaze B2, or local storage with scheduling, retention policies, one-click restore, and optional client-side encryption
+
+**Secrets & Webhook Gateway** — Encrypted secrets store plus an inbound webhook gateway for triggering automation from external events
 
 **Email Server** — Postfix + Dovecot with DKIM/SPF/DMARC, SpamAssassin, Roundcube webmail, email forwarding rules
 
 ### 🔒 Security
 
 **Two-Factor Auth** — TOTP-based with backup codes
+
+**Passkeys / WebAuthn** — Passwordless and second-factor sign-in with hardware keys, Touch ID, and Windows Hello
+
+**Web Application Firewall** — Per-app ModSecurity v3 + OWASP Core Rule Set with detect/block modes, tunable paranoia, and audit-log events
 
 **Malware Scanning** — ClamAV integration with quarantine
 
@@ -93,6 +103,10 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 **Fail2ban & SSH** — Brute force protection, SSH key management, IP allowlist/blocklist
 
 **Vulnerability Scanning** — Lynis security audits with reports and recommendations
+
+**Container CVE Scanning & SBOM** — Per-image vulnerability scanning with grype and software bill-of-materials generation with syft
+
+**Encrypted Secrets at Rest** — Provider credentials and system-setting secrets sealed with Fernet encryption
 
 **Automatic Updates** — unattended-upgrades / dnf-automatic for OS-level patching
 
@@ -122,6 +136,8 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 
 **Real-time Metrics** — CPU, RAM, disk, network monitoring via WebSocket
 
+**GPU Monitoring** — NVIDIA GPU utilization, memory, temperature, and power, with per-process and per-container usage
+
 **Uptime Tracking** — Historical server uptime data and visualization
 
 **Status Pages** — Public status pages with HTTP/TCP/DNS/Ping health checks, component monitoring, and incident management
@@ -147,6 +163,8 @@ English | [Español](docs/README.es.md) | [中文版](docs/README.zh-CN.md) | [P
 **Webhook Subscriptions** — Event-driven webhooks with HMAC signatures, retry logic, and custom headers
 
 ### 🎨 Customization
+
+**Layout Switcher** — Switch the app shell between full sidebar, compact rail, and top-bar layouts
 
 **Sidebar Presets** — Switch between Full, Web Hosting, Email Admin, DevOps, and Minimal views with one click
 
@@ -302,6 +320,14 @@ See the [Installation Guide](docs/INSTALLATION.md) for step-by-step instructions
 - [x] Status pages — Public status pages with health checks, incident management
 - [x] Cloud provisioning — DigitalOcean, Hetzner, Vultr, Linode with cost tracking
 - [x] Customizable sidebar — Collapsible groups, view presets, accent colors, white-label branding
+- [x] Web Application Firewall — Per-app ModSecurity v3 + OWASP CRS
+- [x] Container security — Image CVE scanning (grype) + SBOM (syft)
+- [x] Passwordless auth — WebAuthn / passkeys
+- [x] Dynamic DNS — Token-authenticated A/AAAA updates
+- [x] GPU monitoring — NVIDIA utilization, memory, and processes
+- [x] Container lifecycle — Image-update apply, auto-sleep, horizontal auto-scaling
+- [x] TLS hardening — Optional HTTPS, Cloudflare-aware configs, automatic CAA
+- [x] Secrets manager & inbound webhook gateway
 
 Full details: [ROADMAP.md](ROADMAP.md)
 
@@ -317,6 +343,7 @@ Full details: [ROADMAP.md](ROADMAP.md)
 | [Agent](agent/README.md) | Install & run the multi-server agent (Linux/Windows/macOS) |
 | [Agent Pairing](docs/pairing.md) | Secure short-code agent enrollment |
 | [API Reference](docs/API.md) | REST API endpoints |
+| [New Features](docs/NEW_FEATURES.md) | Endpoint & page reference for the latest `dev` features |
 | [Changelog](CHANGELOG.md) | Release history and notable changes |
 | [Roadmap](ROADMAP.md) | Development roadmap and planned features |
 | [Contributing](CONTRIBUTING.md) | How to contribute |
@@ -332,8 +359,8 @@ Full details: [ROADMAP.md](ROADMAP.md)
 | Database | SQLite / PostgreSQL |
 | Web Server | Nginx, Gunicorn (GeventWebSocket) |
 | Containers | Docker, Docker Compose |
-| Security | ClamAV, Lynis, Fail2ban, TOTP (pyotp), Fernet encryption |
-| Auth | JWT, OAuth 2.0, OIDC, SAML 2.0 |
+| Security | ClamAV, Lynis, Fail2ban, ModSecurity v3 + OWASP CRS, grype, syft, TOTP (pyotp), Fernet encryption |
+| Auth | JWT, OAuth 2.0, OIDC, SAML 2.0, WebAuthn / passkeys |
 | Email | Postfix, Dovecot, SpamAssassin, Roundcube |
 | Agent | Go (multi-server), HMAC-SHA256, WebSocket |
 

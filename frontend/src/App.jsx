@@ -57,6 +57,8 @@ import StyleGuide from './pages/StyleGuide';
 import AppMap from './pages/AppMap';
 import Documentation from './pages/Documentation';
 import Deployments from './pages/Deployments';
+import GpuMonitor from './pages/GpuMonitor';
+import DynamicDns from './pages/DynamicDns';
 import useExtensionRoutes from './plugins/ExtensionRoutes';
 import { useContributions } from './plugins/contributions';
 
@@ -105,6 +107,8 @@ const PAGE_TITLES = {
     '/style-guide': 'Style Guide',
     '/app-map': 'App Map',
     '/documentation': 'Documentation',
+    '/gpu': 'GPU Monitor',
+    '/dynamic-dns': 'Dynamic DNS',
 };
 
 function PageTitleUpdater() {
@@ -296,6 +300,8 @@ function AppRoutes() {
                 <Route path="ftp/:tab" element={<FTPServer />} />
                 <Route path="monitoring" element={<Monitoring />} />
                 <Route path="monitoring/:tab" element={<Monitoring />} />
+                <Route path="gpu" element={<GpuMonitor />} />
+                <Route path="dynamic-dns" element={<DynamicDns />} />
                 <Route path="backups" element={<Backups />} />
                 <Route path="backups/:tab" element={<Backups />} />
                 <Route path="cron" element={<CronJobs />} />

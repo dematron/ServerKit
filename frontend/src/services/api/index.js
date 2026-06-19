@@ -17,6 +17,7 @@ import * as connectionMethods from './connections.js';
 import * as aiMethods from './ai.js';
 import * as tunnelMethods from './tunnels.js';
 import * as secretsWebhooksMethods from './secretsWebhooks.js';
+import * as containerOpsMethods from './containerOps.js';
 
 class ApiService extends ApiClient {
     constructor() {
@@ -41,6 +42,7 @@ class ApiService extends ApiClient {
             aiMethods,
             tunnelMethods,
             secretsWebhooksMethods,
+            containerOpsMethods,
         ];
         for (const mod of modules) {
             for (const [key, fn] of Object.entries(mod)) {

@@ -13,6 +13,7 @@ import EnvironmentVariables from '../components/EnvironmentVariables';
 import PrivateURLSection from '../components/PrivateURLSection';
 import LinkedAppsSection from '../components/LinkedAppsSection';
 import LinkAppModal from '../components/LinkAppModal';
+import ContainerOpsPanel from '../components/apps/ContainerOpsPanel';
 import { getServiceType, getStatusConfig } from '../utils/serviceTypes';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,7 +21,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Pill, EnvTag } from '@/components/ds';
 
-const VALID_TABS = ['overview', 'environment', 'packages', 'gunicorn', 'commands', 'build', 'deploy', 'logs', 'settings'];
+const VALID_TABS = ['overview', 'environment', 'packages', 'gunicorn', 'commands', 'ops', 'build', 'deploy', 'logs', 'settings'];
 
 // statusInfo.dotClass → ds Pill kind
 const STATUS_PILL = {
@@ -209,6 +210,9 @@ const ApplicationDetail = () => {
                             <TabsTrigger value="commands">Commands</TabsTrigger>
                         </>
                     )}
+                    {isDockerApp && (
+                        <TabsTrigger value="ops">Container Ops</TabsTrigger>
+                    )}
                     <TabsTrigger value="build">Build</TabsTrigger>
                     <TabsTrigger value="deploy">Deploy</TabsTrigger>
                     <TabsTrigger value="logs">Logs</TabsTrigger>
@@ -235,6 +239,11 @@ const ApplicationDetail = () => {
                                 <CommandsTab appId={app.id} appType={app.app_type} />
                             </TabsContent>
                         </>
+                    )}
+                    {isDockerApp && (
+                        <TabsContent value="ops">
+                            <ContainerOpsPanel app={app} onChanged={loadApp} />
+                        </TabsContent>
                     )}
                     <TabsContent value="build">
                         <BuildTab appId={app.id} appPath={app.path} />

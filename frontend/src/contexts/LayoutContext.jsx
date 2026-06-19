@@ -5,7 +5,7 @@ const LayoutContext = createContext(null);
 // Shell geometry options, kept in sync with the switcher in Sidebar and the
 // [data-layout="..."] rules in styles/layout/_sidebar.scss. 'topbar' is reserved
 // for a later phase; any unknown or stale stored value falls back to 'sidebar'.
-const LAYOUTS = ['sidebar', 'rail'];
+const LAYOUTS = ['sidebar', 'rail', 'topbar'];
 const DEFAULT_LAYOUT = 'sidebar';
 
 const normalize = (value) => (LAYOUTS.includes(value) ? value : DEFAULT_LAYOUT);

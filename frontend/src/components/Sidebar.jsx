@@ -3,7 +3,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useLayout } from '../contexts/LayoutContext';
-import { Star, Settings, LogOut, Sun, Moon, Monitor, ChevronRight, ChevronDown, ChevronUp, Layers, Palette, PanelLeft, PanelLeftClose, Check, X, Server } from 'lucide-react';
+import { Star, Settings, LogOut, Sun, Moon, Monitor, ChevronRight, ChevronDown, ChevronUp, Layers, Palette, PanelLeft, PanelLeftClose, PanelTop, Check, X, Server } from 'lucide-react';
 import { api } from '../services/api';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
 import { SIDEBAR_CATEGORIES, CATEGORY_LABELS, SIDEBAR_PRESETS, getHiddenItemIds, getVisibleItems } from './sidebarItems';
@@ -402,6 +402,16 @@ const Sidebar = ({ mobileOpen = false, isMobile = false, onMobileClose = () => {
                                     title="Compact"
                                 >
                                     <PanelLeftClose size={14} aria-hidden="true" />
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`theme-btn ${layout === 'topbar' ? 'active' : ''}`}
+                                    onClick={() => setLayout('topbar')}
+                                    aria-label="Top bar layout"
+                                    aria-pressed={layout === 'topbar'}
+                                    title="Top bar"
+                                >
+                                    <PanelTop size={14} aria-hidden="true" />
                                 </button>
                             </div>
                         </div>

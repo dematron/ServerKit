@@ -54,6 +54,12 @@
         margin-bottom: $space-4;
     }
 
+    @media (max-width: $breakpoint-md) {
+        &__method-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
     &__method-card {
         display: block;
         position: relative;
@@ -871,6 +877,37 @@
         justify-content: flex-end;
         gap: $space-2;
         padding-top: $space-1;
+    }
+
+    &__upload-drop {
+        display: grid;
+        place-items: center;
+        gap: $space-3;
+        min-height: 160px;
+        padding: $space-5;
+        background: $bg-elevated;
+        border: 2px dashed $border-subtle;
+        border-radius: $radius-lg;
+        color: $text-tertiary;
+        text-align: center;
+        cursor: pointer;
+        transition: border-color $transition-fast, background $transition-fast, color $transition-fast;
+
+        &:hover,
+        &--over {
+            background: var(--accent-bg, rgba(109, 124, 255, 0.08));
+            border-color: var(--accent-dim, $accent-primary);
+            color: $text-secondary;
+        }
+
+        span {
+            font-size: $font-size-sm;
+            font-weight: $font-weight-medium;
+        }
+
+        input {
+            display: none;
+        }
     }
 }
 

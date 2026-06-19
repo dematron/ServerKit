@@ -49,6 +49,32 @@ export async function createAppFromRepository(appData) {
     });
 }
 
+export async function createManualApp(appData) {
+    return this.request('/apps/manual', {
+        method: 'POST',
+        body: appData,
+    });
+}
+
+export async function uploadAppZip(formData) {
+    return this.request('/apps/upload', {
+        method: 'POST',
+        body: formData,
+        headers: {},
+    });
+}
+
+export async function getAppVersions(appId) {
+    return this.request(`/apps/${appId}/versions`);
+}
+
+export async function rollbackAppVersion(appId, version) {
+    return this.request(`/apps/${appId}/rollback`, {
+        method: 'POST',
+        body: { version },
+    });
+}
+
 export async function updateApp(id, appData) {
     return this.request(`/apps/${id}`, {
         method: 'PUT',

@@ -20,6 +20,19 @@ class Application(db.Model):
     docker_image = db.Column(db.String(200), nullable=True)
     container_id = db.Column(db.String(100), nullable=True)
 
+    # Source / lifecycle: github (repo clone), template (built-in template),
+    # manual (local path already on server), upload (zip upload managed by ServerKit)
+    source = db.Column(db.String(20), default='github', nullable=False)
+
+    # Manual / local service configuration
+    compose_file = db.Column(db.String(200), nullable=True)
+    systemd_unit = db.Column(db.String(100), nullable=True)
+    managed_by = db.Column(db.String(20), nullable=True)  # 'docker_compose', 'systemd'
+
+    # Upload versioning
+    version = db.Column(db.Integer, default=0, nullable=False)
+    upload_path = db.Column(db.String(500), nullable=True)
+
     # Private URL feature
     private_slug = db.Column(db.String(50), unique=True, nullable=True, index=True)
     private_url_enabled = db.Column(db.Boolean, default=False)
@@ -60,6 +73,12 @@ class Application(db.Model):
             'root_path': self.root_path,
             'docker_image': self.docker_image,
             'container_id': self.container_id,
+            'source': self.source,
+            'compose_file': self.compose_file,
+            'systemd_unit': self.systemd_unit,
+            'managed_by': self.managed_by,
+            'version': self.version,
+            'upload_path': self.upload_path,
             'private_slug': self.private_slug,
             'private_url_enabled': self.private_url_enabled,
             'environment_type': self.environment_type,

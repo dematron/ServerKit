@@ -4,6 +4,8 @@ import {
     ArrowRight,
     CheckCircle2,
     ChevronDown,
+    FileArchive,
+    FolderOpen,
     GitBranch,
     Link2,
     Lock,
@@ -138,6 +140,16 @@ const NewService = () => {
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const [submitting, setSubmitting] = useState(false);
 
+    // Manual / local service fields
+    const [localPath, setLocalPath] = useState('');
+    const [composeFile, setComposeFile] = useState('');
+    const [systemdUnit, setSystemdUnit] = useState('');
+    const [managedBy, setManagedBy] = useState('auto');
+
+    // Upload fields
+    const [uploadFile, setUploadFile] = useState(null);
+    const [uploadDragOver, setUploadDragOver] = useState(false);
+
     const githubConnection = githubStatus?.connection;
     const githubConfigured = githubStatus?.configured;
     const normalizedManualRepo = useMemo(() => normalizeManualRepo(manualRepoUrl), [manualRepoUrl]);
@@ -153,7 +165,11 @@ const NewService = () => {
         ? Boolean(githubConnection && selectedRepo && serviceName?.length >= 2)
         : sourceMode === 'template'
             ? Boolean(selectedTemplate && serviceName?.length >= 2)
-            : Boolean(normalizedManualRepo && serviceName?.length >= 2);
+            : sourceMode === 'local'
+                ? Boolean(serviceName?.length >= 2 && localPath?.length >= 1)
+                : sourceMode === 'upload'
+                    ? Boolean(serviceName?.length >= 2 && uploadFile)
+                    : Boolean(normalizedManualRepo && serviceName?.length >= 2);
     const buildSummary = buildMethod === 'auto' && recommended.build_method
         ? `Auto -> ${formatBuildMethod(recommended.build_method)}`
         : formatBuildMethod(buildMethod);
@@ -267,6 +283,12 @@ const NewService = () => {
         if (mode === 'template' && !selectedTemplate) {
             handleSelectTemplate(SERVICE_TEMPLATES[0]);
         }
+        if (mode === 'local') {
+            setAppType('docker');
+        }
+        if (mode === 'upload') {
+            setAppType('auto');
+        }
     }
 
     function handleSelectTemplate(template) {
@@ -293,44 +315,72 @@ const NewService = () => {
     async function handleSubmit(e) {
         e.preventDefault();
         if (!canSubmit) {
-            toast.error(sourceMode === 'github'
+            const msg = sourceMode === 'github'
                 ? 'Select a GitHub repository'
                 : sourceMode === 'template'
                     ? 'Select a service template'
-                    : 'Repository URL is required');
+                    : sourceMode === 'local'
+                        ? 'Service name and server path are required'
+                        : sourceMode === 'upload'
+                            ? 'Service name and a zip file are required'
+                            : 'Repository URL is required';
+            toast.error(msg);
             return;
-        }
-
-        const payload = {
-            name: serviceName,
-            branch: branch.trim() || null,
-            app_type: appType,
-            build_method: buildMethod,
-            port: port ? Number(port) : null,
-            auto_deploy: autoDeploy,
-        };
-        if (recommended.dockerfile_path) payload.dockerfile_path = recommended.dockerfile_path;
-        if (recommended.custom_build_cmd) payload.custom_build_cmd = recommended.custom_build_cmd;
-        if (recommended.custom_start_cmd) payload.custom_start_cmd = recommended.custom_start_cmd;
-
-        if (sourceMode === 'github') {
-            payload.source_connection_id = githubConnection.id;
-            payload.repository_full_name = selectedRepo.full_name;
-            payload.repo_url = `https://github.com/${selectedRepo.full_name}.git`;
-        } else if (sourceMode === 'template') {
-            payload.template_id = selectedTemplate.id;
-            payload.repo_url = selectedTemplate.repoUrl;
-        } else {
-            payload.repo_url = normalizedManualRepo;
         }
 
         setSubmitting(true);
         try {
-            const result = await api.createAppFromRepository(payload);
-            toast.success('Repository service created');
-            navigate(`/services/${result.app.id}`);
+            if (sourceMode === 'local') {
+                const payload = {
+                    name: serviceName,
+                    app_type: appType,
+                    root_path: localPath.trim(),
+                    compose_file: composeFile.trim() || undefined,
+                    systemd_unit: systemdUnit.trim() || undefined,
+                    managed_by: managedBy === 'auto' ? undefined : managedBy,
+                };
+                const result = await api.createManualApp(payload);
+                toast.success('Manual service registered');
+                navigate(`/services/${result.app.id}`);
+            } else if (sourceMode === 'upload') {
+                const formData = new FormData();
+                formData.append('file', uploadFile);
+                formData.append('name', serviceName);
+                formData.append('app_type', appType);
+                formData.append('auto_deploy', autoDeploy ? 'true' : 'false');
+                const result = await api.uploadAppZip(formData);
+                toast.success('Upload service created');
+                navigate(`/services/${result.app.id}`);
+            } else {
+                const payload = {
+                    name: serviceName,
+                    branch: branch.trim() || null,
+                    app_type: appType,
+                    build_method: buildMethod,
+                    port: port ? Number(port) : null,
+                    auto_deploy: autoDeploy,
+                };
+                if (recommended.dockerfile_path) payload.dockerfile_path = recommended.dockerfile_path;
+                if (recommended.custom_build_cmd) payload.custom_build_cmd = recommended.custom_build_cmd;
+                if (recommended.custom_start_cmd) payload.custom_start_cmd = recommended.custom_start_cmd;
+
+                if (sourceMode === 'github') {
+                    payload.source_connection_id = githubConnection.id;
+                    payload.repository_full_name = selectedRepo.full_name;
+                    payload.repo_url = `https://github.com/${selectedRepo.full_name}.git`;
+                } else if (sourceMode === 'template') {
+                    payload.template_id = selectedTemplate.id;
+                    payload.repo_url = selectedTemplate.repoUrl;
+                } else {
+                    payload.repo_url = normalizedManualRepo;
+                }
+
+                const result = await api.createAppFromRepository(payload);
+                toast.success('Repository service created');
+                navigate(`/services/${result.app.id}`);
+            }
         } catch (err) {
-            toast.error(err.message || 'Failed to create repository service');
+            toast.error(err.message || 'Failed to create service');
         } finally {
             setSubmitting(false);
         }
@@ -376,6 +426,28 @@ const NewService = () => {
                     <span className="new-service-page__method-sub">GitLab, Bitbucket, Gitea, or SSH</span>
                 </button>
                 <button
+                    className={`new-service-page__method-card ${sourceMode === 'local' ? 'new-service-page__method-card--on' : ''}`}
+                    type="button"
+                    onClick={() => handleSourceModeChange('local')}
+                >
+                    <span className="new-service-page__method-icon">
+                        <FolderOpen size={21} />
+                    </span>
+                    <span className="new-service-page__method-title">Manual / Local</span>
+                    <span className="new-service-page__method-sub">Register an app that already exists on the server</span>
+                </button>
+                <button
+                    className={`new-service-page__method-card ${sourceMode === 'upload' ? 'new-service-page__method-card--on' : ''}`}
+                    type="button"
+                    onClick={() => handleSourceModeChange('upload')}
+                >
+                    <span className="new-service-page__method-icon">
+                        <FileArchive size={21} />
+                    </span>
+                    <span className="new-service-page__method-title">Upload ZIP</span>
+                    <span className="new-service-page__method-sub">Deploy or update from a zip archive</span>
+                </button>
+                <button
                     className={`new-service-page__method-card ${sourceMode === 'template' ? 'new-service-page__method-card--on' : ''}`}
                     type="button"
                     onClick={() => handleSourceModeChange('template')}
@@ -392,7 +464,17 @@ const NewService = () => {
                 <section className="new-service-page__panel new-service-page__provider-panel">
                     <div className="new-service-page__section-heading">
                         <Link2 size={16} />
-                        <h2>{sourceMode === 'github' ? 'Pick Repository' : sourceMode === 'template' ? 'Choose Template' : 'Connect Source'}</h2>
+                        <h2>
+                            {sourceMode === 'github'
+                                ? 'Pick Repository'
+                                : sourceMode === 'template'
+                                    ? 'Choose Template'
+                                    : sourceMode === 'local'
+                                        ? 'Local Service'
+                                        : sourceMode === 'upload'
+                                            ? 'Upload Archive'
+                                            : 'Connect Source'}
+                        </h2>
                     </div>
 
                     {sourceMode === 'github' ? (
@@ -516,6 +598,112 @@ const NewService = () => {
                                 </Button>
                             </div>
                         </div>
+                    ) : sourceMode === 'local' ? (
+                        <div className="new-service-page__connect-box">
+                            <div className="new-service-page__connect-heading">
+                                <span className="new-service-page__connect-icon">
+                                    <FolderOpen size={18} />
+                                </span>
+                                <div>
+                                    <strong>Register an existing service</strong>
+                                    <span>Point ServerKit at a directory or systemd unit that is already on the server.</span>
+                                </div>
+                            </div>
+                            <div className="new-service-page__field">
+                                <Label htmlFor="local-path">Path on server</Label>
+                                <Input
+                                    id="local-path"
+                                    value={localPath}
+                                    onChange={(e) => setLocalPath(e.target.value)}
+                                    placeholder="/opt/my-service"
+                                    autoComplete="off"
+                                    required={sourceMode === 'local'}
+                                />
+                            </div>
+                            <div className="new-service-page__field">
+                                <Label htmlFor="compose-file">Compose file (optional)</Label>
+                                <Input
+                                    id="compose-file"
+                                    value={composeFile}
+                                    onChange={(e) => setComposeFile(e.target.value)}
+                                    placeholder="docker-compose.yml"
+                                    autoComplete="off"
+                                />
+                            </div>
+                            <div className="new-service-page__field">
+                                <Label htmlFor="systemd-unit">systemd unit (optional)</Label>
+                                <Input
+                                    id="systemd-unit"
+                                    value={systemdUnit}
+                                    onChange={(e) => setSystemdUnit(e.target.value)}
+                                    placeholder="my-service"
+                                    autoComplete="off"
+                                />
+                            </div>
+                            <div className="new-service-page__field">
+                                <Label htmlFor="managed-by">Managed by</Label>
+                                <select
+                                    id="managed-by"
+                                    value={managedBy}
+                                    onChange={(e) => setManagedBy(e.target.value)}
+                                >
+                                    <option value="auto">Auto-detect</option>
+                                    <option value="docker_compose">Docker Compose</option>
+                                    <option value="systemd">systemd</option>
+                                </select>
+                            </div>
+                        </div>
+                    ) : sourceMode === 'upload' ? (
+                        <div className="new-service-page__connect-box">
+                            <div className="new-service-page__connect-heading">
+                                <span className="new-service-page__connect-icon">
+                                    <FileArchive size={18} />
+                                </span>
+                                <div>
+                                    <strong>Upload a zip archive</strong>
+                                    <span>ServerKit will extract the archive, detect the runtime, and deploy it for you.</span>
+                                </div>
+                            </div>
+                            <div
+                                className={`new-service-page__upload-drop ${uploadDragOver ? 'new-service-page__upload-drop--over' : ''}`}
+                                onDragOver={(e) => { e.preventDefault(); setUploadDragOver(true); }}
+                                onDragLeave={() => setUploadDragOver(false)}
+                                onDrop={(e) => {
+                                    e.preventDefault();
+                                    setUploadDragOver(false);
+                                    const file = e.dataTransfer.files[0];
+                                    if (file) {
+                                        setUploadFile(file);
+                                        if (!nameTouched) {
+                                            setName(slugify(file.name.replace(/\.zip$/i, '')));
+                                        }
+                                    }
+                                }}
+                                onClick={() => document.getElementById('upload-zip')?.click()}
+                            >
+                                <FileArchive size={32} />
+                                <span>
+                                    {uploadFile
+                                        ? uploadFile.name
+                                        : 'Drag a zip here or click to browse'}
+                                </span>
+                                <input
+                                    id="upload-zip"
+                                    type="file"
+                                    accept=".zip,application/zip,application/x-zip-compressed"
+                                    className="sr-only"
+                                    onChange={(e) => {
+                                        const file = e.target.files[0];
+                                        if (file) {
+                                            setUploadFile(file);
+                                            if (!nameTouched) {
+                                                setName(slugify(file.name.replace(/\.zip$/i, '')));
+                                            }
+                                        }
+                                    }}
+                                />
+                            </div>
+                        </div>
                     ) : (
                         <div className="new-service-page__connect-box">
                             <div className="new-service-page__connect-heading">
@@ -541,19 +729,27 @@ const NewService = () => {
                         </div>
                     )}
 
-                    {(selectedRepo || sourceMode === 'manual' || selectedTemplate) && (
+                    {(selectedRepo || sourceMode === 'manual' || sourceMode === 'local' || sourceMode === 'upload' || selectedTemplate) && (
                         <div className="new-service-page__repo-preview">
                             <div>
                                 <span>Service</span>
-                                <strong>{serviceName || 'Auto-named from repo'}</strong>
+                                <strong>{serviceName || 'Auto-named'}</strong>
                             </div>
+                            {sourceMode !== 'local' && sourceMode !== 'upload' && (
+                                <div>
+                                    <span>Branch</span>
+                                    <strong>{branch || 'main'}</strong>
+                                </div>
+                            )}
+                            {sourceMode === 'local' && (
+                                <div>
+                                    <span>Path</span>
+                                    <strong>{localPath || '—'}</strong>
+                                </div>
+                            )}
                             <div>
-                                <span>Branch</span>
-                                <strong>{branch || 'main'}</strong>
-                            </div>
-                            <div>
-                                <span>Build</span>
-                                <strong>{buildSummary}</strong>
+                                <span>Type</span>
+                                <strong>{sourceMode === 'upload' && appType === 'auto' ? 'Auto-detect' : formatAppType(appType)}</strong>
                             </div>
                         </div>
                     )}
@@ -565,15 +761,27 @@ const NewService = () => {
                             <Rocket size={18} />
                         </span>
                         <div>
-                            <h2>Ready to Import</h2>
-                            <p>ServerKit clones the selected repository, detects the runtime, configures builds, and records deployment settings.</p>
+                            <h2>
+                                {sourceMode === 'local'
+                                    ? 'Register Local Service'
+                                    : sourceMode === 'upload'
+                                        ? 'Deploy from Archive'
+                                        : 'Ready to Import'}
+                            </h2>
+                            <p>
+                                {sourceMode === 'local'
+                                    ? 'ServerKit will link to the existing path or systemd unit and poll its real status.'
+                                    : sourceMode === 'upload'
+                                        ? 'ServerKit will extract the archive, detect the runtime, and deploy the service.'
+                                        : 'ServerKit clones the selected repository, detects the runtime, configures builds, and records deployment settings.'}
+                            </p>
                         </div>
                     </div>
 
                     <div className="new-service-page__flow">
                         <div>
-                            <SiGithub size={16} />
-                            <span>Connect</span>
+                            {sourceMode === 'local' ? <FolderOpen size={16} /> : sourceMode === 'upload' ? <FileArchive size={16} /> : <SiGithub size={16} />}
+                            <span>{sourceMode === 'local' ? 'Path' : sourceMode === 'upload' ? 'Upload' : 'Connect'}</span>
                         </div>
                         <ArrowRight size={14} />
                         <div>
@@ -637,20 +845,38 @@ const NewService = () => {
                     <div className="new-service-page__summary">
                         <div>
                             <span>Source</span>
-                            <strong>{sourceMode === 'github' ? 'GitHub API' : sourceMode === 'template' ? 'Template' : 'Git remote'}</strong>
+                            <strong>
+                                {sourceMode === 'github'
+                                    ? 'GitHub API'
+                                    : sourceMode === 'template'
+                                        ? 'Template'
+                                        : sourceMode === 'local'
+                                            ? 'Manual / Local'
+                                            : sourceMode === 'upload'
+                                                ? 'Upload'
+                                                : 'Git remote'}
+                            </strong>
                         </div>
                         <div>
-                            <span>Repository</span>
-                            <strong>{selectedRepo?.full_name || selectedTemplate?.repoUrl || normalizedManualRepo || 'Not selected'}</strong>
+                            <span>{sourceMode === 'local' ? 'Path' : sourceMode === 'upload' ? 'Archive' : 'Repository'}</span>
+                            <strong>
+                                {sourceMode === 'local'
+                                    ? localPath || 'Not set'
+                                    : sourceMode === 'upload'
+                                        ? uploadFile?.name || 'Not selected'
+                                        : selectedRepo?.full_name || selectedTemplate?.repoUrl || normalizedManualRepo || 'Not selected'}
+                            </strong>
                         </div>
                         <div>
-                            <span>Build</span>
-                            <strong>{buildSummary}</strong>
+                            <span>{sourceMode === 'upload' ? 'Detection' : 'Build'}</span>
+                            <strong>{sourceMode === 'upload' ? (appType === 'auto' ? 'Auto-detect' : formatAppType(appType)) : buildSummary}</strong>
                         </div>
-                        <div>
-                            <span>Auto-deploy</span>
-                            <strong>{autoDeploy ? 'On' : 'Off'}</strong>
-                        </div>
+                        {sourceMode !== 'local' && (
+                            <div>
+                                <span>Auto-deploy</span>
+                                <strong>{autoDeploy ? 'On' : 'Off'}</strong>
+                            </div>
+                        )}
                     </div>
 
                     <button
@@ -669,28 +895,30 @@ const NewService = () => {
                     {advancedOpen && (
                         <div className="new-service-page__advanced">
                             <div className="new-service-page__two-col">
-                                <div className="new-service-page__field">
-                                    <Label htmlFor="branch">Branch</Label>
-                                    {sourceMode === 'github' && branches.length > 0 ? (
-                                        <select
-                                            id="branch"
-                                            value={branch}
-                                            onChange={(e) => setBranch(e.target.value)}
-                                            disabled={branchesLoading}
-                                        >
-                                            {branches.map(option => (
-                                                <option key={option.name} value={option.name}>{option.name}</option>
-                                            ))}
-                                        </select>
-                                    ) : (
-                                        <Input
-                                            id="branch"
-                                            value={branch}
-                                            onChange={(e) => setBranch(e.target.value)}
-                                            placeholder="main"
-                                        />
-                                    )}
-                                </div>
+                                {sourceMode !== 'local' && sourceMode !== 'upload' && (
+                                    <div className="new-service-page__field">
+                                        <Label htmlFor="branch">Branch</Label>
+                                        {sourceMode === 'github' && branches.length > 0 ? (
+                                            <select
+                                                id="branch"
+                                                value={branch}
+                                                onChange={(e) => setBranch(e.target.value)}
+                                                disabled={branchesLoading}
+                                            >
+                                                {branches.map(option => (
+                                                    <option key={option.name} value={option.name}>{option.name}</option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <Input
+                                                id="branch"
+                                                value={branch}
+                                                onChange={(e) => setBranch(e.target.value)}
+                                                placeholder="main"
+                                            />
+                                        )}
+                                    </div>
+                                )}
                                 <div className="new-service-page__field">
                                     <Label htmlFor="service-name">Service name</Label>
                                     <Input
@@ -715,23 +943,26 @@ const NewService = () => {
                                         value={appType}
                                         onChange={(e) => setAppType(e.target.value)}
                                     >
-                                        {APP_TYPE_OPTIONS.map(option => (
+                                        {sourceMode === 'upload' && <option value="auto">Auto-detect</option>}
+                                        {APP_TYPE_OPTIONS.filter(o => o.value !== 'auto').map(option => (
                                             <option key={option.value} value={option.value}>{option.label}</option>
                                         ))}
                                     </select>
                                 </div>
-                                <div className="new-service-page__field">
-                                    <Label htmlFor="build-method">Build method</Label>
-                                    <select
-                                        id="build-method"
-                                        value={buildMethod}
-                                        onChange={(e) => setBuildMethod(e.target.value)}
-                                    >
-                                        {BUILD_METHOD_OPTIONS.map(option => (
-                                            <option key={option.value} value={option.value}>{option.label}</option>
-                                        ))}
-                                    </select>
-                                </div>
+                                {sourceMode !== 'local' && sourceMode !== 'upload' && (
+                                    <div className="new-service-page__field">
+                                        <Label htmlFor="build-method">Build method</Label>
+                                        <select
+                                            id="build-method"
+                                            value={buildMethod}
+                                            onChange={(e) => setBuildMethod(e.target.value)}
+                                        >
+                                            {BUILD_METHOD_OPTIONS.map(option => (
+                                                <option key={option.value} value={option.value}>{option.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="new-service-page__two-col">
@@ -747,13 +978,15 @@ const NewService = () => {
                                         max="65535"
                                     />
                                 </div>
-                                <div className="new-service-page__toggle">
-                                    <div>
-                                        <Label>Auto-deploy</Label>
-                                        <span>Webhook deployment for this branch.</span>
+                                {sourceMode !== 'local' && (
+                                    <div className="new-service-page__toggle">
+                                        <div>
+                                            <Label>Auto-deploy</Label>
+                                            <span>{sourceMode === 'upload' ? 'Deploy immediately after upload.' : 'Webhook deployment for this branch.'}</span>
+                                        </div>
+                                        <Switch checked={autoDeploy} onCheckedChange={setAutoDeploy} />
                                     </div>
-                                    <Switch checked={autoDeploy} onCheckedChange={setAutoDeploy} />
-                                </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -761,11 +994,17 @@ const NewService = () => {
                     <div className="new-service-page__notes">
                         <div className="new-service-page__note">
                             <ShieldCheck size={16} />
-                            <span>ServerKit checks serverkit.json, Docker Compose, Render, Railway, app.json, Dockerfile, and Nixpacks signals.</span>
+                            <span>
+                                {sourceMode === 'local'
+                                    ? 'ServerKit will read status from Docker Compose or systemd without modifying the original path.'
+                                    : sourceMode === 'upload'
+                                        ? 'Uploaded archives are versioned, so you can roll back to a previous release.'
+                                        : 'ServerKit checks serverkit.json, Docker Compose, Render, Railway, app.json, Dockerfile, and Nixpacks signals.'}
+                            </span>
                         </div>
                         <div className="new-service-page__note">
                             <Lock size={16} />
-                            <span>Secret values from manifests stay empty until you add them to the service environment.</span>
+                            <span>{sourceMode === 'upload' ? 'Existing .env files are preserved when uploading a new version.' : 'Secret values from manifests stay empty until you add them to the service environment.'}</span>
                         </div>
                     </div>
 
@@ -775,7 +1014,9 @@ const NewService = () => {
                         </Button>
                         <Button type="submit" disabled={!canSubmit || submitting}>
                             <Rocket size={16} />
-                            {submitting ? 'Importing...' : 'Import Repository'}
+                            {submitting
+                                ? (sourceMode === 'local' ? 'Registering...' : sourceMode === 'upload' ? 'Uploading...' : 'Importing...')
+                                : (sourceMode === 'local' ? 'Register Service' : sourceMode === 'upload' ? 'Upload & Deploy' : 'Import Repository')}
                         </Button>
                     </div>
                 </aside>

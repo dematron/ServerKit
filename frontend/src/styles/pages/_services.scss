@@ -146,6 +146,18 @@
         white-space: nowrap;
 
         svg { flex-shrink: 0; color: var(--text-faint); }
+
+        &--manual {
+            background: rgba(245, 185, 69, 0.08);
+            border-color: rgba(245, 185, 69, 0.2);
+            color: #f5b945;
+        }
+
+        &--upload {
+            background: rgba(176, 123, 245, 0.08);
+            border-color: rgba(176, 123, 245, 0.2);
+            color: #b07bf5;
+        }
     }
 
     &__nil { color: var(--text-ghost); }

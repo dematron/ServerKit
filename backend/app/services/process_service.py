@@ -174,3 +174,45 @@ class ProcessService:
         """Get recent logs for a service via LogService fallback chain."""
         from app.services.log_service import LogService
         return LogService.get_journalctl_logs(unit=service_name, lines=lines)
+
+    @classmethod
+    def get_systemd_unit_status(cls, unit_name: str) -> Dict:
+        """Check whether a systemd unit is active using systemctl."""
+        system = platform.system()
+        if system != 'Linux':
+            return {'success': True, 'status': 'unknown', 'active': False}
+
+        try:
+            result = subprocess.run(
+                ['systemctl', 'is-active', unit_name],
+                capture_output=True, text=True, timeout=10
+            )
+            active = result.returncode == 0 and result.stdout.strip() == 'active'
+            status = result.stdout.strip() if result.stdout else 'unknown'
+            return {'success': True, 'status': status, 'active': active}
+        except FileNotFoundError:
+            return {'success': False, 'error': 'systemctl not found'}
+        except subprocess.TimeoutExpired:
+            return {'success': False, 'error': 'Command timed out'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    @classmethod
+    def get_compose_project_status(cls, project_path: str, compose_file: str = None) -> Dict:
+        """Return running/stopped status for a Docker Compose project directory."""
+        from app.services.docker_service import DockerService
+        containers = DockerService.compose_ps(project_path, compose_file=compose_file)
+        running = sum(
+            1 for c in containers
+            if (c.get('Status', c.get('status', '')).startswith('Up'))
+        )
+        total = len(containers)
+        if total == 0:
+            actual = 'stopped'
+        elif running == total:
+            actual = 'running'
+        elif running > 0:
+            actual = 'partial'
+        else:
+            actual = 'stopped'
+        return {'success': True, 'status': actual, 'running': running, 'total': total, 'containers': containers}

@@ -20,8 +20,17 @@ Write-Host "  Binary:  $BinaryPath"
 $wixPath = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wixPath) {
     Write-Host "WiX Toolset not found. Please install it first:"
-    Write-Host "  winget install WixToolset.WixToolset"
+    Write-Host "  dotnet tool install --global wix --version 5.0.2"
     Write-Host "  or download from: https://wixtoolset.org/"
+    exit 1
+}
+
+# The Product.wxs file requires the WiX Util extension. Verify it is installed
+# so the failure message is actionable instead of the raw WiX WIX0144 error.
+$extensionList = wix extension list --global 2>&1
+if (-not ($extensionList -match "WixToolset\.Util\.wixext")) {
+    Write-Host "WiX Util extension not found. Install it with:"
+    Write-Host "  wix extension add --global WixToolset.Util.wixext/5.0.2"
     exit 1
 }
 
@@ -128,14 +137,22 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\par
     try {
         Write-Host "Running WiX build..."
         wix build -arch $Arch Product.wxs -ext WixToolset.Util.wixext -o "$absOutputDir\serverkit-agent-$Version-$Arch.msi" -define Version=$Version
+        if ($LASTEXITCODE -ne 0) {
+            throw "WiX build failed with exit code $LASTEXITCODE"
+        }
     }
     finally {
         Pop-Location
     }
 
+    $msiPath = "$absOutputDir\serverkit-agent-$Version-$Arch.msi"
+    if (-not (Test-Path $msiPath)) {
+        throw "MSI output not found at $msiPath"
+    }
+
     Write-Host ""
     Write-Host "MSI built successfully!"
-    Write-Host "Output: $absOutputDir\serverkit-agent-$Version-$Arch.msi"
+    Write-Host "Output: $msiPath"
 }
 finally {
     # Cleanup

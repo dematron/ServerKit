@@ -2,6 +2,7 @@ import os
 import json
 import re
 import shutil
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
@@ -13,15 +14,53 @@ from app.services.repository_manifest_service import RepositoryManifestService
 from app.services.source_connection_service import SourceConnectionService
 from app.services.remote_docker_service import RemoteDockerService
 from app.services.log_service import LogService
+from app.services.process_service import ProcessService
+from app.services.upload_service import (
+    ensure_app_dirs,
+    validate_zip,
+    extract_version,
+    preserve_existing_env,
+    switch_current_version,
+    backup_current,
+    save_upload_zip,
+    detect_app_type,
+    get_app_storage_dir,
+    list_versions,
+    get_current_version,
+)
 from app import paths
 
 apps_bp = Blueprint('apps', __name__)
 
 
 def _compose_target(app):
+    """Return the effective compose file path for remote agent deployments."""
     if app.server_id and app.root_path:
-        return os.path.join(app.root_path, 'docker-compose.yml')
-    return app.root_path
+        return os.path.join(app.root_path, app.compose_file or 'docker-compose.yml')
+    return os.path.join(app.root_path, app.compose_file or 'docker-compose.yml') if app.root_path else None
+
+
+def _local_compose_file(app):
+    """Return the compose file to pass to DockerService for local deployments."""
+    return app.compose_file if app.compose_file else None
+
+
+def _sync_manual_app_status(app):
+    """Update app.status from the real runtime for manual/local apps."""
+    if app.source != 'manual':
+        return
+    if app.managed_by == 'systemd' and app.systemd_unit:
+        status = ProcessService.get_systemd_unit_status(app.systemd_unit)
+        actual = 'running' if status.get('active') else 'stopped'
+    elif app.managed_by == 'docker_compose' and app.root_path:
+        status = ProcessService.get_compose_project_status(app.root_path, compose_file=app.compose_file)
+        actual = status.get('status', 'stopped')
+    else:
+        return
+
+    if actual in ('running', 'stopped') and app.status != actual:
+        app.status = actual
+        db.session.commit()
 
 
 def _agent_result_failed(result):
@@ -663,6 +702,10 @@ def create_app():
         port=data.get('port'),
         root_path=data.get('root_path'),
         docker_image=data.get('docker_image'),
+        source=data.get('source') or 'github',
+        compose_file=data.get('compose_file'),
+        systemd_unit=data.get('systemd_unit'),
+        managed_by=data.get('managed_by'),
         user_id=current_user_id,
         workspace_id=ws_id
     )
@@ -674,6 +717,299 @@ def create_app():
         'message': 'Application created successfully',
         'app': app.to_dict()
     }), 201
+
+
+@apps_bp.route('/manual', methods=['POST'])
+@jwt_required()
+def create_manual_app():
+    """Register an app that already exists on the server (manual/local)."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.get_json() or {}
+    name = _service_slug(data.get('name'))
+    app_type = (data.get('app_type') or 'docker').strip().lower()
+    root_path = (data.get('root_path') or '').strip()
+    compose_file = (data.get('compose_file') or '').strip() or None
+    systemd_unit = (data.get('systemd_unit') or '').strip() or None
+    managed_by = (data.get('managed_by') or '').strip().lower() or None
+
+    if not name or len(name) < 2:
+        return jsonify({'error': 'Service name must be at least 2 characters'}), 400
+
+    valid_types = ['docker', 'flask', 'django', 'php', 'static', 'wordpress']
+    if app_type not in valid_types:
+        return jsonify({'error': f'Invalid app_type. Must be one of: {", ".join(valid_types)}'}), 400
+
+    if not root_path:
+        return jsonify({'error': 'root_path is required'}), 400
+
+    root_path = os.path.abspath(root_path)
+    if not os.path.isdir(root_path):
+        return jsonify({'error': f'Path does not exist: {root_path}'}), 400
+
+    # Auto-detect managed_by if not provided
+    if not managed_by:
+        if compose_file or os.path.exists(os.path.join(root_path, 'docker-compose.yml')):
+            managed_by = 'docker_compose'
+        elif systemd_unit:
+            managed_by = 'systemd'
+        else:
+            managed_by = 'docker_compose'
+
+    if managed_by not in ('docker_compose', 'systemd'):
+        return jsonify({'error': "managed_by must be 'docker_compose' or 'systemd'"}), 400
+
+    if managed_by == 'docker_compose' and not compose_file:
+        if not os.path.exists(os.path.join(root_path, 'docker-compose.yml')):
+            return jsonify({'error': 'docker-compose.yml not found and no compose_file provided'}), 400
+        compose_file = 'docker-compose.yml'
+
+    if Application.query.filter_by(name=name).first():
+        return jsonify({'error': f'An application named "{name}" already exists'}), 400
+
+    from app.services.workspace_service import WorkspaceService
+    ws_id = WorkspaceService.resolve_workspace_id(
+        user, request.headers.get('X-Workspace-Id') or request.args.get('workspace_id'))
+    if ws_id is None:
+        ws_id = WorkspaceService.ensure_default_workspace().id
+
+    app = Application(
+        name=name,
+        app_type=app_type,
+        status='stopped',
+        source='manual',
+        root_path=root_path,
+        compose_file=compose_file,
+        systemd_unit=systemd_unit,
+        managed_by=managed_by,
+        user_id=current_user_id,
+        workspace_id=ws_id,
+    )
+
+    db.session.add(app)
+    db.session.commit()
+
+    # Sync status immediately so the UI reflects reality
+    _sync_manual_app_status(app)
+
+    return jsonify({
+        'message': 'Manual service registered',
+        'app': _attach_deploy_config(app.to_dict(include_linked=True))
+    }), 201
+
+
+@apps_bp.route('/upload', methods=['POST'])
+@jwt_required()
+def upload_app_archive():
+    """Create or update an app by uploading a zip archive."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    uploaded = request.files['file']
+    if not uploaded or uploaded.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    name = _service_slug(request.form.get('name') or uploaded.filename.rsplit('.', 1)[0])
+    app_type = (request.form.get('app_type') or 'auto').strip().lower()
+    auto_deploy = request.form.get('auto_deploy', 'true').lower() == 'true'
+
+    if not name or len(name) < 2:
+        return jsonify({'error': 'Service name must be at least 2 characters'}), 400
+
+    valid_types = ['auto', 'docker', 'flask', 'django', 'php', 'static', 'node']
+    if app_type not in valid_types:
+        return jsonify({'error': f'Invalid app_type. Must be one of: {", ".join(valid_types)}'}), 400
+
+    from app.services.workspace_service import WorkspaceService
+    ws_id = WorkspaceService.resolve_workspace_id(
+        user, request.headers.get('X-Workspace-Id') or request.args.get('workspace_id'))
+    if ws_id is None:
+        ws_id = WorkspaceService.ensure_default_workspace().id
+
+    existing = Application.query.filter_by(name=name).first()
+    is_update = existing is not None and existing.source == 'upload'
+
+    temp_dir = os.path.join(paths.SERVERKIT_CACHE_DIR, 'uploads')
+    os.makedirs(temp_dir, exist_ok=True)
+    timestamp = datetime.utcnow().strftime('%Y%m%d-%H%M%S-%f')
+    zippath = os.path.join(temp_dir, f'{name}-{timestamp}.zip')
+    uploaded.save(zippath)
+
+    validation = validate_zip(zippath)
+    if not validation.get('success'):
+        os.remove(zippath)
+        return jsonify({'error': validation.get('error', 'Invalid zip')}), 400
+
+    try:
+        app_dir = ensure_app_dirs(name)
+
+        if is_update:
+            app = existing
+            new_version = (app.version or 0) + 1
+            backup_path = backup_current(app_dir)
+        else:
+            if existing:
+                os.remove(zippath)
+                return jsonify({'error': f'An application named "{name}" already exists'}), 400
+            new_version = 1
+
+        version_dir = extract_version(app_dir, zippath, new_version)
+        upload_archive_path = save_upload_zip(app_dir, zippath, new_version)
+
+        if is_update:
+            preserve_existing_env(os.path.join(app_dir, 'current'), version_dir)
+
+        current_dir = switch_current_version(app_dir, new_version)
+
+        if app_type == 'auto':
+            detected = detect_app_type(current_dir)
+        else:
+            detected = app_type
+
+        if detected == 'node':
+            detected = 'docker'
+
+        compose_file = None
+        if detected == 'docker':
+            if os.path.exists(os.path.join(current_dir, 'docker-compose.yml')):
+                compose_file = 'docker-compose.yml'
+            elif os.path.exists(os.path.join(current_dir, 'Dockerfile')):
+                compose_file = None
+
+        if is_update:
+            app.app_type = detected
+            app.compose_file = compose_file
+            app.version = new_version
+            app.upload_path = upload_archive_path
+            app.root_path = current_dir
+            app.updated_at = datetime.utcnow()
+        else:
+            app = Application(
+                name=name,
+                app_type=detected,
+                status='stopped',
+                source='upload',
+                root_path=current_dir,
+                compose_file=compose_file,
+                managed_by='docker_compose' if detected == 'docker' else None,
+                version=new_version,
+                upload_path=upload_archive_path,
+                user_id=current_user_id,
+                workspace_id=ws_id,
+            )
+            db.session.add(app)
+
+        db.session.commit()
+
+        deploy_result = None
+        if auto_deploy and detected == 'docker' and compose_file:
+            deploy_result = DockerService.compose_up(current_dir, detach=True, build=True, compose_file=compose_file)
+            if deploy_result.get('success'):
+                app.status = 'running'
+                app.last_deployed_at = datetime.utcnow()
+                db.session.commit()
+
+        os.remove(zippath)
+
+        return jsonify({
+            'message': 'Upload service updated' if is_update else 'Upload service created',
+            'app': _attach_deploy_config(app.to_dict(include_linked=True)),
+            'version': new_version,
+            'detected_app_type': detected,
+            'deploy_result': deploy_result,
+        }), 201 if not is_update else 200
+
+    except Exception as exc:
+        try:
+            os.remove(zippath)
+        except Exception:
+            pass
+        return jsonify({'error': str(exc)}), 400
+
+
+@apps_bp.route('/<int:app_id>/versions', methods=['GET'])
+@jwt_required()
+def get_app_versions(app_id):
+    """List versions for an uploaded app."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    app = Application.query.get(app_id)
+
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+
+    if not _can_access_app(user, app):
+        return jsonify({'error': 'Access denied'}), 403
+
+    if app.source != 'upload':
+        return jsonify({'versions': [], 'current': None}), 200
+
+    try:
+        app_dir = get_app_storage_dir(app.name)
+        versions = list_versions(app_dir)
+        current = get_current_version(app_dir)
+        return jsonify({'versions': versions, 'current': current}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@apps_bp.route('/<int:app_id>/rollback', methods=['POST'])
+@jwt_required()
+def rollback_app_version(app_id):
+    """Roll an uploaded app back to a previous version."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    app = Application.query.get(app_id)
+
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+
+    if not _can_edit_app(user, app):
+        return jsonify({'error': 'Access denied'}), 403
+
+    if app.source != 'upload':
+        return jsonify({'error': 'Rollback is only supported for upload-based apps'}), 400
+
+    data = request.get_json() or {}
+    target = data.get('version')
+    if target is None:
+        return jsonify({'error': 'version is required'}), 400
+
+    try:
+        target = int(target)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'version must be an integer'}), 400
+
+    try:
+        app_dir = get_app_storage_dir(app.name)
+        current_dir = switch_current_version(app_dir, target)
+        app.root_path = current_dir
+        app.version = target
+        app.updated_at = datetime.utcnow()
+
+        if app.app_type == 'docker' and app.compose_file:
+            result = DockerService.compose_up(current_dir, detach=True, build=True, compose_file=app.compose_file)
+            if result.get('success'):
+                app.status = 'running'
+                app.last_deployed_at = datetime.utcnow()
+            else:
+                return jsonify({'error': result.get('error', 'Failed to start service'), 'app': app.to_dict()}), 400
+
+        db.session.commit()
+        return jsonify({
+            'message': f'Rolled back to version {target}',
+            'app': _attach_deploy_config(app.to_dict(include_linked=True))
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 
 @apps_bp.route('/<int:app_id>', methods=['PUT'])
@@ -705,6 +1041,14 @@ def update_app(app_id):
         app.root_path = data['root_path']
     if 'docker_image' in data:
         app.docker_image = data['docker_image']
+    if 'source' in data:
+        app.source = data['source']
+    if 'compose_file' in data:
+        app.compose_file = data['compose_file']
+    if 'systemd_unit' in data:
+        app.systemd_unit = data['systemd_unit']
+    if 'managed_by' in data:
+        app.managed_by = data['managed_by']
 
     db.session.commit()
 
@@ -740,16 +1084,23 @@ def delete_app(app_id):
     if app.app_type == 'docker' and app.root_path:
         try:
             # Stop and remove containers, networks, and volumes
-            result = DockerService.compose_down(app.root_path, volumes=True, remove_orphans=True)
+            result = DockerService.compose_down(
+                app.root_path,
+                volumes=True,
+                remove_orphans=True,
+                compose_file=_local_compose_file(app)
+            )
             cleanup_results['docker'] = result
         except Exception as e:
             cleanup_results['docker'] = {'error': str(e)}
 
-        # Delete the app folder
+        # Delete the app folder only for ServerKit-managed uploads.
+        # Manual apps point at existing paths that must not be removed.
         try:
-            if app.root_path and app.root_path.startswith(paths.APPS_DIR):
-                if os.path.exists(app.root_path):
-                    shutil.rmtree(app.root_path)
+            if app.source == 'upload' and app.root_path and app.root_path.startswith(paths.APPS_DIR):
+                app_storage = get_app_storage_dir(app.name)
+                if os.path.exists(app_storage):
+                    shutil.rmtree(app_storage)
                     cleanup_results['folder'] = {'success': True}
         except Exception as e:
             cleanup_results['folder'] = {'error': str(e)}
@@ -795,7 +1146,11 @@ def start_app(app_id):
                 user_id=current_user_id
             )
         else:
-            result = DockerService.compose_up(app.root_path, detach=True)
+            result = DockerService.compose_up(
+                app.root_path,
+                detach=True,
+                compose_file=_local_compose_file(app)
+            )
         if not result.get('success') or _agent_result_failed(result):
             return jsonify({'error': _agent_result_error(result, 'Failed to start containers')}), 400
 
@@ -830,7 +1185,10 @@ def stop_app(app_id):
                 user_id=current_user_id
             )
         else:
-            result = DockerService.compose_down(app.root_path)
+            result = DockerService.compose_down(
+                app.root_path,
+                compose_file=_local_compose_file(app)
+            )
         if not result.get('success') or _agent_result_failed(result):
             return jsonify({'error': _agent_result_error(result, 'Failed to stop containers')}), 400
 
@@ -865,7 +1223,10 @@ def restart_app(app_id):
                 user_id=current_user_id
             )
         else:
-            result = DockerService.compose_restart(app.root_path)
+            result = DockerService.compose_restart(
+                app.root_path,
+                compose_file=_local_compose_file(app)
+            )
         if not result.get('success') or _agent_result_failed(result):
             return jsonify({'error': _agent_result_error(result, 'Failed to restart containers')}), 400
 
@@ -906,7 +1267,9 @@ def get_app_logs(app_id):
             )
             return jsonify(result.get('data') if result.get('success') else result), 200 if result.get('success') else 400
 
-        result = LogService.get_docker_app_logs(app.name, app.root_path, lines)
+        result = LogService.get_docker_app_logs(
+            app.name, app.root_path, lines, compose_file=_local_compose_file(app)
+        )
         return jsonify(result), 200 if result.get('success') else 400
 
     # For other apps, get nginx logs
@@ -1075,6 +1438,22 @@ def get_app_status(app_id):
     if not _can_access_app(user, app):
         return jsonify({'error': 'Access denied'}), 403
 
+    # Manual / local apps: ask the real runtime
+    if app.source == 'manual':
+        _sync_manual_app_status(app)
+        if app.managed_by == 'systemd' and app.systemd_unit:
+            unit_status = ProcessService.get_systemd_unit_status(app.systemd_unit)
+            return jsonify({
+                'status': app.status,
+                'unit_status': unit_status.get('status'),
+                'active': unit_status.get('active'),
+                'containers': [],
+                'running': 1 if app.status == 'running' else 0,
+                'total': 1,
+                'port': app.port,
+                'port_accessible': None,
+            }), 200
+
     if app.app_type == 'docker' and app.root_path:
         # Get container status from Docker
         if app.server_id:
@@ -1087,7 +1466,10 @@ def get_app_status(app_id):
                 return jsonify(result), 503 if result.get('code') == 'AGENT_OFFLINE' else 400
             containers = result.get('data', [])
         else:
-            containers = DockerService.compose_ps(app.root_path)
+            containers = DockerService.compose_ps(
+                app.root_path,
+                compose_file=_local_compose_file(app)
+            )
 
         # Determine overall status
         running_count = sum(1 for c in containers if c.get('Status', c.get('status', '')).startswith('Up'))

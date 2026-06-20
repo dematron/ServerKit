@@ -211,7 +211,7 @@ export default function SecretsWebhooks() {
         <div className="page-container secrets-page">
             <PageTopbar icon={<KeyRound size={18} />} title="Secrets & Webhooks" />
 
-            <Tabs value={activeTab} onValueChange={(v) => navigate(`/secrets/${v}`)} className="tabs">
+            <Tabs value={activeTab} onValueChange={(v) => navigate(`/secrets/${v}`)}>
                 <TabsList>
                     <TabsTrigger value="vaults"><KeyRound size={14} /> Vaults</TabsTrigger>
                     <TabsTrigger value="webhooks"><Webhook size={14} /> Webhooks</TabsTrigger>

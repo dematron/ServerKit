@@ -70,6 +70,10 @@ const ServiceDetail = () => {
 
     // Load upload versions
     useEffect(() => {
+        // Derive locally — the `isUpload` const below is declared after the
+        // early-return guard, so referencing it here would hit its temporal
+        // dead zone and crash the page on every render.
+        const isUpload = service?.source === 'upload';
         if (!isUpload || !id) return;
         setVersionsLoading(true);
         api.getAppVersions(id)
@@ -79,7 +83,7 @@ const ServiceDetail = () => {
             })
             .catch(() => toast.error('Failed to load versions'))
             .finally(() => setVersionsLoading(false));
-    }, [isUpload, id, toast]);
+    }, [service?.source, id, toast]);
 
     // Close menus on outside click
     useEffect(() => {

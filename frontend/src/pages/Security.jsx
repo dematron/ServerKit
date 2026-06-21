@@ -18,16 +18,12 @@ import {
     SecurityConfigTab,
 } from '../components/security';
 import EmptyState from '../components/EmptyState';
-import { MetricCard } from '@/components/ds';
-import { Siren, Bug, ShieldCheck, Radar } from 'lucide-react';
 
 const VALID_TABS = ['overview', 'firewall', 'fail2ban', 'ssh-keys', 'ip-lists', 'scanner', 'quarantine', 'integrity', 'audit', 'vulnerability', 'updates', 'events', 'settings'];
 
-const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-
 const Security = () => {
     const { isAdmin } = useAuth();
-    const [activeTab] = useTabParam('/security', VALID_TABS);
+    const [activeTab, setActiveTab] = useTabParam('/security', VALID_TABS);
     const [status, setStatus] = useState(null);
     const [clamav, setClamav] = useState(null);
     const [clamavLoading, setClamavLoading] = useState(true);
@@ -60,6 +56,12 @@ const Security = () => {
         }
     }
 
+    // Re-pull both status feeds — passed to the Overview so a one-click fix
+    // (install ClamAV, enable integrity, …) reflects in the posture immediately.
+    async function reload() {
+        await Promise.all([loadStatus(), loadClamav()]);
+    }
+
     if (loading) {
         return (
             <div className="sk-tabgroup__inner security-page">
@@ -68,42 +70,10 @@ const Security = () => {
         );
     }
 
-    const alerts = status?.recent_alerts || {};
-    const scanRunning = status?.scan_status === 'running';
-
     return (
         <div className="sk-tabgroup__inner security-page">
-            <div className="sec-kpis" role="group" aria-label="Security overview">
-                <MetricCard
-                    tone={alerts.total > 0 ? 'amber' : 'green'}
-                    icon={<Siren size={16} />}
-                    value={alerts.total || 0}
-                    label="Alerts (24h)"
-                />
-                <MetricCard
-                    tone={alerts.malware_detections > 0 ? 'red' : 'green'}
-                    icon={<Bug size={16} />}
-                    value={alerts.malware_detections || 0}
-                    label="Malware detected"
-                />
-                <MetricCard
-                    className="sec-kpi-text"
-                    tone={clamav?.installed ? 'green' : 'amber'}
-                    icon={<ShieldCheck size={16} />}
-                    value={clamav?.installed ? 'Active' : 'Not installed'}
-                    label="ClamAV"
-                />
-                <MetricCard
-                    className="sec-kpi-text"
-                    tone={scanRunning ? 'cyan' : 'accent'}
-                    icon={<Radar size={16} />}
-                    value={capitalize(status?.scan_status) || 'Idle'}
-                    label="Scan status"
-                />
-            </div>
-
             <div className="tab-content">
-                {activeTab === 'overview' && <OverviewTab status={status} clamavStatus={clamav} clamavLoading={clamavLoading} onRefreshClamav={loadClamav} />}
+                {activeTab === 'overview' && <OverviewTab status={status} clamavStatus={clamav} clamavLoading={clamavLoading} onRefresh={reload} onNavigateTab={setActiveTab} />}
                 {activeTab === 'firewall' && <FirewallTab />}
                 {activeTab === 'fail2ban' && <Fail2banTab />}
                 {activeTab === 'ssh-keys' && <SSHKeysTab />}

@@ -1467,6 +1467,7 @@ $drawer-width: 520px;
     border-bottom: 1px solid var(--border-soft);
 
     > svg { flex-shrink: 0; }
+    > svg.is-accent { color: var(--accent-primary); }
 
     .preview-drawer-title {
         flex: 1;
@@ -1579,6 +1580,16 @@ $drawer-width: 520px;
     display: flex;
     flex-direction: column;
     min-height: 0;
+
+    &.is-padded { padding: 16px; }
+
+    .meta-label {
+        color: $text-tertiary;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+
+        &.is-spaced { margin-bottom: 6px; }
+    }
 
     .preview-image-wrap {
         flex: 1;

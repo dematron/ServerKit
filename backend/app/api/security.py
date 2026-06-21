@@ -89,6 +89,15 @@ def update_definitions():
     return jsonify(result), 200 if result['success'] else 400
 
 
+@security_bp.route('/clamav/start', methods=['POST'])
+@jwt_required()
+@admin_required
+def start_clamav():
+    """Start the ClamAV daemon (one-click posture fix)."""
+    result = SecurityService.start_clamav()
+    return jsonify(result), 200 if result['success'] else 400
+
+
 @security_bp.route('/scan/file', methods=['POST'])
 @jwt_required()
 @admin_required

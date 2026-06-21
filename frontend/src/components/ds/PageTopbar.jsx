@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { MoreHorizontal } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { useOverflowItems } from '@/hooks/useOverflowItems';
 
 // The demo's page top bar (see docs/REDESIGN_MAP.md §6 decision 3): infra pages
 // carry their own top bar — an icon + title, an optional routed sub-nav that
@@ -39,102 +40,25 @@ function matchTab(tab, path) {
 }
 
 // Routed sub-nav with overflow handling. Tabs that don't fit the available width
-// are hidden and surfaced through a trailing "More" popover — the same greedy
-// fit + active-stays-visible logic the shadcn TabsList uses (components/ui/tabs).
+// are hidden and surfaced through a trailing "More" popover via useOverflowItems.
 function TopbarTabs({ tabs, label }) {
     const location = useLocation();
-    const containerRef = useRef(null);
-    const linkRefs = useRef([]);
-    const moreBtnRef = useRef(null);
-    const [hiddenIndices, setHiddenIndices] = useState([]);
     const [popoverOpen, setPopoverOpen] = useState(false);
-
-    linkRefs.current.length = tabs.length;
 
     const activeIndex = useMemo(
         () => tabs.findIndex((t) => matchTab(t, location.pathname)),
         [tabs, location.pathname]
     );
 
-    const recompute = useCallback(() => {
-        const container = containerRef.current;
-        if (!container) return;
-        const containerWidth = container.clientWidth;
-        if (containerWidth === 0) return;
+    const getActiveIndex = useCallback(() => activeIndex, [activeIndex]);
 
-        // Measure each link's natural width (briefly un-hiding collapsed ones).
-        const widths = linkRefs.current.map((el) => {
-            if (!el) return 0;
-            const wasHidden = el.style.display === 'none';
-            if (wasHidden) el.style.display = '';
-            const w = el.offsetWidth;
-            if (wasHidden) el.style.display = 'none';
-            return w;
-        });
-
-        const moreWidth = moreBtnRef.current?.offsetWidth || 56;
-        const gap = 2; // matches .sk-topbar__tabs gap
-
-        // All fit?
-        const total = widths.reduce((s, w, i) => s + w + (i > 0 ? gap : 0), 0);
-        if (total <= containerWidth) {
-            setHiddenIndices((prev) => (prev.length === 0 ? prev : []));
-            return;
-        }
-
-        // Reserve space for the More button, then greedily fit left-to-right.
-        const budget = Math.max(0, containerWidth - moreWidth - gap);
-        const visible = [];
-        let used = 0;
-        for (let i = 0; i < widths.length; i++) {
-            const cost = widths[i] + (visible.length > 0 ? gap : 0);
-            if (used + cost <= budget) {
-                visible.push(i);
-                used += cost;
-            } else {
-                break;
-            }
-        }
-
-        // The active tab must stay visible — rebuild the visible set around it.
-        let visibleSet = visible;
-        if (activeIndex !== -1 && !visible.includes(activeIndex)) {
-            const others = [];
-            let othersUsed = widths[activeIndex];
-            for (let i = 0; i < widths.length; i++) {
-                if (i === activeIndex) continue;
-                const cost = widths[i] + gap;
-                if (othersUsed + cost <= budget) {
-                    others.push(i);
-                    othersUsed += cost;
-                }
-            }
-            visibleSet = [...others, activeIndex].sort((a, b) => a - b);
-        }
-
-        const visibleSetObj = new Set(visibleSet);
-        const hidden = [];
-        for (let i = 0; i < widths.length; i++) {
-            if (!visibleSetObj.has(i)) hidden.push(i);
-        }
-        setHiddenIndices((prev) => (arraysEqual(prev, hidden) ? prev : hidden));
-    }, [activeIndex]);
-
-    // Initial measurement + re-run when the tab set or active tab changes.
-    useEffect(() => {
-        recompute();
-    }, [recompute, tabs.length]);
-
-    // Re-fit on container resize.
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container || typeof ResizeObserver === 'undefined') return undefined;
-        const ro = new ResizeObserver(() => recompute());
-        ro.observe(container);
-        return () => ro.disconnect();
-    }, [recompute]);
-
-    const hiddenSet = new Set(hiddenIndices);
+    const { containerRef, itemRefs, moreBtnRef, hiddenIndices, hiddenSet } = useOverflowItems({
+        count: tabs.length,
+        gap: 2,
+        moreWidth: 56,
+        getActiveIndex,
+        deps: [activeIndex],
+    });
 
     return (
         <nav ref={containerRef} className="sk-topbar__tabs" aria-label={`${label} sections`}>
@@ -145,7 +69,7 @@ function TopbarTabs({ tabs, label }) {
                         key={t.to}
                         to={t.to}
                         end={t.end}
-                        ref={(el) => { linkRefs.current[i] = el; }}
+                        ref={(el) => { itemRefs.current[i] = el; }}
                         className={({ isActive }) => cn('sk-topbar__tab', isActive && 'is-active')}
                         style={{ display: isHidden ? 'none' : undefined }}
                         data-overflow={isHidden ? 'hidden' : undefined}
@@ -192,12 +116,6 @@ function TopbarTabs({ tabs, label }) {
             )}
         </nav>
     );
-}
-
-function arraysEqual(a, b) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-    return true;
 }
 
 export default PageTopbar;

@@ -66,7 +66,10 @@ def get_workspace(workspace_id):
     ws = WorkspaceService.get_workspace(workspace_id)
     if not ws:
         return jsonify({'error': 'Workspace not found'}), 404
-    return jsonify(ws.to_dict())
+    d = ws.to_dict()
+    d['my_role'] = WorkspaceService.get_user_role(ws.id, user.id)
+    d['my_effective_role'] = WorkspaceService.effective_role(user, ws.id)
+    return jsonify(d)
 
 
 @workspaces_bp.route('/', methods=['POST'])

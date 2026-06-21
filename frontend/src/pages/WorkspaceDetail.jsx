@@ -10,6 +10,8 @@ import { Pill, ServiceTile, SegControl } from '@/components/ds';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { SIDEBAR_ITEMS } from '../components/sidebarItems';
 import {
     LayoutGrid, ChevronLeft, ChevronRight, Check, Server, Box, Globe,
     Users, Settings2, Plus, Archive, ArchiveRestore, Trash2,
@@ -85,6 +87,7 @@ const WorkspaceDetail = () => {
 
     const setActiveWorkspace = () => {
         localStorage.setItem(ACTIVE_KEY, String(wsId));
+        localStorage.setItem('active_workspace', JSON.stringify(ws));
         if (ws?.primary_color) localStorage.setItem(ACCENT_KEY, ws.primary_color);
         else localStorage.removeItem(ACCENT_KEY);
         window.location.reload();
@@ -121,13 +124,22 @@ const WorkspaceDetail = () => {
             max_servers: ws.max_servers || 0,
             max_users: ws.max_users || 0,
             primary_color: ws.primary_color || '#6d7cff',
+            nav: ws.settings?.nav || { owner: [], admin: [], member: [], viewer: [] },
         });
         setShowEdit(true);
     };
 
     const handleSave = async () => {
         try {
-            await api.updateWorkspace(wsId, form);
+            const payload = {
+                name: form.name,
+                description: form.description,
+                max_servers: form.max_servers,
+                max_users: form.max_users,
+                primary_color: form.primary_color,
+                settings: { nav: form.nav },
+            };
+            await api.updateWorkspace(wsId, payload);
             toast.success('Workspace updated');
             setShowEdit(false);
             load();
@@ -481,6 +493,34 @@ const WorkspaceDetail = () => {
                                     aria-label="Workspace brand color"
                                 />
                                 <span className="form-hint">Recolors the panel for anyone viewing this workspace.</span>
+                            </div>
+                            <div className="form-group">
+                                <label>Navigation Permissions</label>
+                                <span className="form-hint">Limit which sidebar items each workspace role can see. Empty = no restrictions.</span>
+                                {['owner', 'admin', 'member', 'viewer'].map(role => (
+                                    <div key={role} className="ws-nav-role">
+                                        <div className="ws-nav-role__label">{role}</div>
+                                        <div className="ws-nav-role__items">
+                                            {SIDEBAR_ITEMS.filter(item => !item.alwaysVisible).map(item => {
+                                                const checked = (form.nav[role] || []).includes(item.id);
+                                                return (
+                                                    <label key={`${role}-${item.id}`} className="ws-nav-role__item">
+                                                        <Checkbox
+                                                            checked={checked}
+                                                            onCheckedChange={(val) => {
+                                                                const list = new Set(form.nav[role] || []);
+                                                                if (val) list.add(item.id);
+                                                                else list.delete(item.id);
+                                                                setForm({ ...form, nav: { ...form.nav, [role]: Array.from(list) } });
+                                                            }}
+                                                        />
+                                                        <span>{item.label}</span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                         <div className="modal-footer">

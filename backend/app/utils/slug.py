@@ -70,3 +70,47 @@ def validate_slug(value):
     if not SLUG_PATTERN.match(slug):
         raise ValueError('Slug can only contain lowercase letters, numbers, and hyphens')
     return slug
+
+
+# Common "app/service" name pattern: lowercase alphanumeric with internal hyphens,
+# must start/end with alphanumeric (a single alphanumeric char is allowed).
+_APP_NAME_RE = re.compile(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')
+
+
+def validate_app_name(name, min_length=3, max_length=63,
+                      allow_consecutive_hyphens=False, reserved=None):
+    """Validate an application or service name.
+
+    Args:
+        name: The name to validate.
+        min_length: Minimum allowed length.
+        max_length: Maximum allowed length.
+        allow_consecutive_hyphens: If False, reject names containing ``--``.
+        reserved: Optional iterable of reserved names (case-insensitive).
+
+    Returns:
+        Tuple of ``(is_valid, error_message)``. ``error_message`` is ``None``
+        when the name is valid.
+
+    Examples:
+        >>> validate_app_name('my-app')
+        (True, None)
+        >>> validate_app_name('My App')
+        (False, 'Name must contain only lowercase letters, numbers, and hyphens...')
+    """
+    if not name:
+        return False, 'Name is required'
+    if len(name) < min_length:
+        return False, f'Name must be at least {min_length} characters'
+    if len(name) > max_length:
+        return False, f'Name cannot exceed {max_length} characters'
+    if not _APP_NAME_RE.match(name):
+        return False, (
+            'Name must contain only lowercase letters, numbers, and hyphens '
+            '(cannot start or end with hyphen)'
+        )
+    if not allow_consecutive_hyphens and '--' in name:
+        return False, 'Name cannot contain consecutive hyphens'
+    if reserved and name.lower() in {r.lower() for r in reserved}:
+        return False, f'Name "{name}" is reserved'
+    return True, None

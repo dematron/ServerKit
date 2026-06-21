@@ -63,8 +63,8 @@ def create_group():
         owner_id = data.get('owner_id')
         config = data.get('config')
 
-        if not slug:
-            return jsonify({'error': 'slug is required'}), 400
+        if not slug and not name:
+            return jsonify({'error': 'name or slug is required'}), 400
 
         user = _current_user()
         if not _is_admin(user):
@@ -149,8 +149,8 @@ def create_queue(group_slug):
         description = data.get('description')
         config = data.get('config')
 
-        if not slug:
-            return jsonify({'error': 'slug is required'}), 400
+        if not slug and not name:
+            return jsonify({'error': 'name or slug is required'}), 400
 
         queue = QueueBusService.create_queue(
             group_slug=group_slug,

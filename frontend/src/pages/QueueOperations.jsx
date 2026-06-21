@@ -101,10 +101,13 @@ const QueueOperations = () => {
     const handleCreateGroup = async (e) => {
         e.preventDefault();
         try {
-            await api.createQueueGroup(groupForm);
+            await api.createQueueGroup({
+                name: groupForm.name,
+                description: groupForm.description,
+            });
             toast.success('Queue group created');
             setShowGroupModal(false);
-            setGroupForm({ slug: '', name: '', description: '' });
+            setGroupForm({ name: '', description: '' });
             loadData();
         } catch (err) {
             toast.error(err.message);
@@ -144,14 +147,13 @@ const QueueOperations = () => {
                 return;
             }
             await api.createQueue(selectedGroup, {
-                slug: queueForm.slug,
                 name: queueForm.name,
                 description: queueForm.description,
                 config,
             });
             toast.success('Queue created');
             setShowQueueModal(false);
-            setQueueForm({ slug: '', name: '', description: '', config: '{}' });
+            setQueueForm({ name: '', description: '', config: '{}' });
             loadQueues(selectedGroup);
         } catch (err) {
             toast.error(err.message);
@@ -556,10 +558,6 @@ const QueueOperations = () => {
                         <form onSubmit={handleCreateGroup}>
                             <div className="modal-body">
                                 <div className="form-group">
-                                    <Label htmlFor="group-slug">Slug</Label>
-                                    <Input id="group-slug" value={groupForm.slug} onChange={(e) => setGroupForm({ ...groupForm, slug: e.target.value })} required />
-                                </div>
-                                <div className="form-group">
                                     <Label htmlFor="group-name">Name</Label>
                                     <Input id="group-name" value={groupForm.name} onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })} required />
                                 </div>
@@ -599,10 +597,6 @@ const QueueOperations = () => {
                                         <option value="">Select group</option>
                                         {groups.map(g => <option key={g.id} value={g.slug}>{g.name}</option>)}
                                     </select>
-                                </div>
-                                <div className="form-group">
-                                    <Label htmlFor="queue-slug">Slug</Label>
-                                    <Input id="queue-slug" value={queueForm.slug} onChange={(e) => setQueueForm({ ...queueForm, slug: e.target.value })} required />
                                 </div>
                                 <div className="form-group">
                                     <Label htmlFor="queue-name">Name</Label>

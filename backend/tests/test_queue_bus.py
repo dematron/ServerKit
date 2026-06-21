@@ -25,11 +25,15 @@ class TestGroups:
         assert group['name'] == 'My Group'
         assert QueueGroup.query.filter_by(slug='my-group').first() is not None
 
-    def test_create_group_duplicate_fails(self, app):
+    def test_create_group_from_name(self, app):
+        group = QueueBusService.create_group(name='My Queue Group!')
+        assert group['slug'] == 'my-queue-group'
+        assert group['name'] == 'My Queue Group!'
+
+    def test_create_group_duplicate_gets_unique_slug(self, app):
         QueueBusService.create_group('my-group')
-        with pytest.raises(QueueBusError) as exc:
-            QueueBusService.create_group('my-group')
-        assert exc.value.status_code == 409
+        group = QueueBusService.create_group('my-group')
+        assert group['slug'] == 'my-group-1'
 
     def test_list_groups(self, app):
         QueueBusService.create_group('g1')
@@ -59,12 +63,11 @@ class TestQueues:
         assert queue['slug'] == 'q1'
         assert queue['config']['visibility_timeout_ms'] == 60000
 
-    def test_create_queue_duplicate_fails(self, app):
+    def test_create_queue_duplicate_gets_unique_slug(self, app):
         QueueBusService.create_group('g1')
         QueueBusService.create_queue('g1', 'q1')
-        with pytest.raises(QueueBusError) as exc:
-            QueueBusService.create_queue('g1', 'q1')
-        assert exc.value.status_code == 409
+        queue = QueueBusService.create_queue('g1', 'q1')
+        assert queue['slug'] == 'q1-1'
 
     def test_list_queues(self, app):
         QueueBusService.create_group('g1')

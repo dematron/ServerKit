@@ -2,6 +2,7 @@
 import logging
 
 from app.queue_bus.sqlalchemy_broker import SQLAlchemyBroker, QueueBusError
+from app.utils.slug import unique_slug
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +32,14 @@ class QueueBusService:
     # Groups
     # ------------------------------------------------------------------
     @classmethod
-    def create_group(cls, slug, name=None, description=None, owner_type='system', owner_id=None, config=None):
+    def create_group(cls, slug=None, name=None, description=None, owner_type='system', owner_id=None, config=None):
+        base = slug or name
+        if not base:
+            raise QueueBusError('Either slug or name is required', 400)
+        generated_slug = unique_slug(base, lambda s: cls.broker().get_group(s) is not None)
         return cls.broker().create_group(
-            slug=slug,
-            name=name or slug,
+            slug=generated_slug,
+            name=name or generated_slug,
             description=description,
             owner_type=owner_type,
             owner_id=owner_id,
@@ -61,11 +66,15 @@ class QueueBusService:
     # Queues
     # ------------------------------------------------------------------
     @classmethod
-    def create_queue(cls, group_slug, slug, name=None, description=None, config=None):
+    def create_queue(cls, group_slug, slug=None, name=None, description=None, config=None):
+        base = slug or name
+        if not base:
+            raise QueueBusError('Either slug or name is required', 400)
+        generated_slug = unique_slug(base, lambda s: cls.broker().get_queue(group_slug, s) is not None)
         return cls.broker().create_queue(
             group_slug=group_slug,
-            slug=slug,
-            name=name or slug,
+            slug=generated_slug,
+            name=name or generated_slug,
             description=description,
             config=config,
         )

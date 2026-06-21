@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { GitBranch, Unlink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { RepoProviderStrip, ProviderBadge, detectProvider } from './GitProviders';
+import { RepoProviderStrip, ProviderBadge, detectProvider, GIT_PROVIDERS } from './GitProviders';
 import GithubRepoPicker from './GithubRepoPicker';
 
 // Canonical "connect a repository" form, shared across ServerKit's surfaces
@@ -53,6 +53,15 @@ const RepoConnectForm = ({
 
     const isConnected = gitStatus?.connected;
     const provider = detectProvider(formData.repoUrl);
+
+    // Which provider chip is chosen — drives the connect method (GitHub shows the
+    // one-click picker; everyone else gets a paste-a-URL field). A recognized URL
+    // wins over a manual click.
+    const [selectedKey, setSelectedKey] = useState(enableGithub ? 'github' : 'other');
+    useEffect(() => {
+        if (provider?.key) setSelectedKey(provider.key);
+    }, [provider?.key]);
+    const selectedProvider = GIT_PROVIDERS.find((p) => p.key === selectedKey) || GIT_PROVIDERS[0];
 
     function handleChange(e) {
         const { name, value } = e.target;
@@ -159,16 +168,16 @@ const RepoConnectForm = ({
                 </div>
             </div>
 
-            <RepoProviderStrip detected={provider?.key} />
+            <RepoProviderStrip detected={provider?.key} selected={selectedKey} onSelect={setSelectedKey} />
 
-            {enableGithub && (
+            {enableGithub && selectedKey === 'github' && (
                 <>
                     <GithubRepoPicker
                         onPick={({ repoUrl, branch }) =>
                             setFormData((p) => ({ ...p, repoUrl, branch: branch || p.branch }))
                         }
                     />
-                    <div className="git-connect__or"><span>or connect by URL</span></div>
+                    <div className="git-connect__or"><span>or paste a URL</span></div>
                 </>
             )}
 
@@ -182,7 +191,7 @@ const RepoConnectForm = ({
                     name="repoUrl"
                     value={formData.repoUrl}
                     onChange={handleChange}
-                    placeholder={urlPlaceholder}
+                    placeholder={selectedProvider.placeholder || urlPlaceholder}
                     required
                 />
                 {provider && <ProviderBadge provider={provider} />}

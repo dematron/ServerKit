@@ -76,6 +76,18 @@
             border-color: var(--accent-dim);
             background: var(--accent-bg);
         }
+
+        // When `onSelect` is passed the chips render as <button>s — make them
+        // read and behave like real, clickable options.
+        &--btn {
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+            width: 100%;
+
+            &:hover { border-color: var(--border-strong); }
+            &:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 1px; }
+        }
     }
 
     &__provider-icon {

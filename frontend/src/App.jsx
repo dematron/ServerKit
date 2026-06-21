@@ -282,6 +282,9 @@ function AppRoutes() {
                 <Route path="wordpress/projects/:id/:tab" element={<WordPressProject />} />
                 <Route path="wordpress/:id" element={<WordPressDetail />} />
                 <Route path="wordpress/:id/:tab" element={<WordPressDetail />} />
+                {/* Settings sub-section in the URL (e.g. .../settings/git) so the
+                    Settings left-nav is shareable and survives a refresh. */}
+                <Route path="wordpress/:id/:tab/:section" element={<WordPressDetail />} />
                 <Route path="workflow" element={<WorkflowBuilder />} />
                 <Route element={<TabGroupLayout tabs={DOMAIN_TABS} />}>
                     <Route path="domains" element={<Domains />} />

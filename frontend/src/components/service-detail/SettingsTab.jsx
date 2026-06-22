@@ -33,7 +33,7 @@ const SVC_SETTINGS_GROUPS = [
             { id: 'domain', label: 'Domain & SSL', icon: Shield },
         ],
     },
-    { label: 'Connections', items: [{ id: 'repository', label: 'Repository', icon: GitBranch }] },
+    { label: 'Connections', items: [{ id: 'git', label: 'Git', icon: GitBranch }] },
     { label: 'Advanced', items: [{ id: 'danger', label: 'Danger Zone', icon: AlertTriangle }] },
 ];
 
@@ -248,9 +248,9 @@ const SettingsTab = ({ app, deployConfig, domains, primaryDomain, onUpdate }) =>
                 {/* Repository — the same shared RepoConnectForm the WordPress Git
                     settings use (provider picker + URL fallback, connected summary
                     with Disconnect), wired to the service deployment API. */}
-                {section === 'repository' && (
+                {section === 'git' && (
                     <div className="svc-settings__section">
-                        <h3 className="svc-settings__section-title">Repository</h3>
+                        <h3 className="svc-settings__section-title">Git</h3>
                         <RepoConnectForm
                             gitStatus={gitStatus}
                             onConnect={handleConnectRepo}

@@ -46,7 +46,8 @@
     &__panel {
         position: absolute;
         bottom: calc(100% + 10px); // open upward (sidebar footer)
-        right: 0;
+        left: 0;
+        right: auto;
         width: 340px;
         max-width: calc(100vw - 32px);
         background: $bg-elevated;
@@ -57,6 +58,8 @@
         overflow: hidden;
         display: flex;
         flex-direction: column;
+        animation: skNotifPanelIn 0.18s ease-out;
+        transform-origin: bottom left;
     }
 
     &__head {
@@ -166,11 +169,29 @@
     }
 }
 
-// In the sidebar footer, give the bell its own row above the user button.
+// In the sidebar footer, keep the user menu and notification bell on one row
+// so the footer feels like a single control strip instead of a floating icon.
 .sidebar-footer__row {
     display: flex;
-    justify-content: flex-start;
-    margin-bottom: 8px;
+    align-items: stretch;
+    gap: 8px;
+
+    .user-mini {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .sk-notif {
+        display: flex;
+        align-items: stretch;
+    }
+
+    .sk-notif__bell {
+        width: 38px;
+        height: auto;
+        min-height: 34px;
+        align-self: stretch;
+    }
 }
 
 // In the mobile top bar the bell sits at the top, so the panel opens downward.
@@ -183,5 +204,51 @@
 .mobile-topbar .sk-notif__panel {
     top: calc(100% + 10px);
     bottom: auto;
+    left: auto;
     right: 8px;
+    transform-origin: top right;
+}
+
+@keyframes skNotifPanelIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+// Top bar layout: the bell sits at the far right, so the panel opens downward
+// and extends to the left so it stays inside the viewport.
+@media (min-width: ($breakpoint-md + 1)) {
+    [data-layout="topbar"] .sk-notif__panel {
+        top: calc(100% + 10px);
+        bottom: auto;
+        left: auto;
+        right: 0;
+        transform-origin: top right;
+    }
+}
+
+// Compact rail layout: when collapsed there isn't room for the bell beside the
+// avatar, so stack them vertically.
+@media (min-width: ($breakpoint-md + 1)) {
+    [data-layout="rail"] .sidebar:not(:hover):not(:focus-within) .sidebar-footer__row {
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+
+        .user-mini {
+            flex: 0 0 auto;
+            width: auto;
+        }
+
+        .sk-notif__bell {
+            width: 34px;
+            min-height: 34px;
+            align-self: center;
+        }
+    }
 }

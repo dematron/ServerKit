@@ -427,7 +427,7 @@ const ServiceDetail = () => {
                         )}
                     </span>
                 ) : deployConfig ? (
-                    <div className="svc-detail__repo-pill" onClick={() => navigate(`/services/${id}/settings/repository`)}>
+                    <div className="svc-detail__repo-pill" onClick={() => navigate(`/services/${id}/settings/git`)}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <circle cx="18" cy="18" r="3"/>
                             <circle cx="6" cy="6" r="3"/>
@@ -441,7 +441,7 @@ const ServiceDetail = () => {
                         )}
                     </div>
                 ) : (
-                    <button className="svc-detail__connect-repo" onClick={() => navigate(`/services/${id}/settings/repository`)}>
+                    <button className="svc-detail__connect-repo" onClick={() => navigate(`/services/${id}/settings/git`)}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <circle cx="18" cy="18" r="3"/>
                             <circle cx="6" cy="6" r="3"/>

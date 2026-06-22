@@ -235,6 +235,8 @@
         padding-right: 0;
     }
 
+    &__action { width: 70px; }
+
     &__card {
         background: var(--surface);
         border: 1px solid var(--border-soft);

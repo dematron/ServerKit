@@ -495,25 +495,25 @@ const Sidebar = ({ mobileOpen = false, isMobile = false, onMobileClose = () => {
                     </div>
                 )}
                 <div className="sidebar-footer__row">
+                    <button
+                        type="button"
+                        className="user-mini"
+                        onClick={() => setMenuOpen(!menuOpen)}
+                        aria-haspopup="true"
+                        aria-expanded={menuOpen}
+                        aria-controls="user-context-menu"
+                    >
+                        <span className="user-avatar" aria-hidden="true">
+                            {user?.username?.charAt(0).toUpperCase() || 'U'}
+                        </span>
+                        <span className="user-meta">
+                            <span className="user-handle">{user?.username || 'User'}</span>
+                            <span className="user-status">Online</span>
+                        </span>
+                        <ChevronUp size={14} className={`user-menu-arrow ${menuOpen ? 'open' : ''}`} aria-hidden="true" />
+                    </button>
                     <NotificationBell />
                 </div>
-                <button
-                    type="button"
-                    className="user-mini"
-                    onClick={() => setMenuOpen(!menuOpen)}
-                    aria-haspopup="true"
-                    aria-expanded={menuOpen}
-                    aria-controls="user-context-menu"
-                >
-                    <span className="user-avatar" aria-hidden="true">
-                        {user?.username?.charAt(0).toUpperCase() || 'U'}
-                    </span>
-                    <span className="user-meta">
-                        <span className="user-handle">{user?.username || 'User'}</span>
-                        <span className="user-status">Online</span>
-                    </span>
-                    <ChevronUp size={14} className={`user-menu-arrow ${menuOpen ? 'open' : ''}`} aria-hidden="true" />
-                </button>
             </div>
         </aside>
     );

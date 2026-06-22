@@ -359,7 +359,7 @@ class DNSProviderService:
         from app.services.dns_ownership_service import DnsOwnershipService
         return DnsOwnershipService.guarded_delete(
             cls._cloudflare_client(config), provider_zone_id=zone_id,
-            record_type=record_type, name=name)
+            record_type=record_type, name=name, config_id=config.id)
 
     @staticmethod
     def _host_relative_to_zone(name: str, zone: str) -> str:

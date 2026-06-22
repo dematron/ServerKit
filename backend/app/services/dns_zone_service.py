@@ -442,4 +442,5 @@ class DNSZoneService:
         elif action == 'delete' and record.provider_record_id:
             DnsOwnershipService.guarded_delete(
                 client, provider_zone_id=zone_id, record_type=record.record_type,
-                name=record.name, provider_record_id=record.provider_record_id)
+                name=record.name, provider_record_id=record.provider_record_id,
+                source='zone', config_id=zone.dns_provider_config_id)

@@ -49,6 +49,12 @@ _CATALOG = {
         'severity': 'warning',
         'category': 'system',
     },
+    'dns.sync_failed': {
+        'title': 'DNS sync failed: {record}',
+        'template': 'generic',
+        'severity': 'warning',
+        'category': 'system',
+    },
     # Multi-alert monitoring digest (used by the legacy send_all path).
     'monitoring.alert': {
         'title': 'ServerKit alert',

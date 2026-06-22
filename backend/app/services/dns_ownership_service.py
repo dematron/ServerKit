@@ -106,6 +106,7 @@ class DnsOwnershipService:
         ``conflict=True`` when a foreign record blocked an automatic write.
         """
         from app.services.dns.cloudflare import parse_caa_value
+        from app.services.dns_change_service import DnsChangeService
 
         record_id = known_record_id
         if record_id is None:
@@ -119,22 +120,35 @@ class DnsOwnershipService:
                 else:
                     logger.warning('Refusing to overwrite foreign DNS record %s %s in zone %s',
                                    spec.record_type, spec.name, provider_zone_id)
-                    return {'success': False, 'conflict': True,
-                            'error': (f'{spec.record_type} record {spec.name} already exists in '
-                                      f'this zone and was not created by ServerKit — left untouched.')}
+                    msg = (f'{spec.record_type} record {spec.name} already exists in this zone '
+                           f'and was not created by ServerKit — left untouched.')
+                    DnsChangeService.record(
+                        provider=provider, provider_zone_id=provider_zone_id, action='create',
+                        record_type=spec.record_type, name=spec.name, content=spec.content,
+                        source=source, result='conflict', error=msg, config_id=config_id)
+                    return {'success': False, 'conflict': True, 'error': msg}
 
+        action = 'update' if record_id else 'create'
         res = client.upsert(provider_zone_id, spec, record_id=record_id)
         if res.get('success'):
             DnsOwnershipService.record_write(
                 provider, provider_zone_id, spec.record_type, spec.name,
                 provider_record_id=res.get('record_id'), content=spec.content,
                 source=source, app_id=app_id, config_id=config_id)
+        DnsChangeService.record(
+            provider=provider, provider_zone_id=provider_zone_id, action=action,
+            record_type=spec.record_type, name=spec.name, content=spec.content,
+            provider_record_id=res.get('record_id'), source=source,
+            result='ok' if res.get('success') else 'error',
+            error=None if res.get('success') else res.get('error'), config_id=config_id)
         return res
 
     @staticmethod
-    def guarded_delete(client, *, provider_zone_id, record_type, name, provider_record_id=None):
+    def guarded_delete(client, *, provider_zone_id, record_type, name, provider_record_id=None,
+                       provider='cloudflare', source=None, config_id=None):
         """Delete only a record ServerKit owns; never a foreign one. Clears our
-        ledger entry on success."""
+        ledger entry and logs the change on success."""
+        from app.services.dns_change_service import DnsChangeService
         if provider_record_id:
             owned = DnsOwnershipService.owns(provider_zone_id, provider_record_id=provider_record_id)
         else:
@@ -146,4 +160,9 @@ class DnsOwnershipService:
                             record_type=record_type, name=name)
         DnsOwnershipService.record_delete(provider_zone_id, record_type=record_type,
                                           name=name, provider_record_id=provider_record_id)
+        DnsChangeService.record(
+            provider=provider, provider_zone_id=provider_zone_id, action='delete',
+            record_type=record_type, name=name, provider_record_id=provider_record_id,
+            source=source, result='ok' if res.get('success') else 'error',
+            error=None if res.get('success') else res.get('error'), config_id=config_id)
         return res

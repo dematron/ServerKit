@@ -437,6 +437,9 @@ def create_app(config_name=None):
         from app.jobs import start_job_system
         from app.jobs.builtin_handlers import register_builtin_handlers, seed_builtin_schedules
         register_builtin_handlers()
+        # Register event-driven job handlers (deployment installs, etc.).
+        from app.services.deployment_job_service import DeploymentJobService
+        DeploymentJobService.register_jobs()
         start_job_system(app, seed=seed_builtin_schedules)
 
     # Request body size limit

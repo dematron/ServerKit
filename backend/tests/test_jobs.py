@@ -211,3 +211,91 @@ class TestApi:
         resp = client.get('/api/v1/jobs/scheduled', headers=auth_headers)
         assert resp.status_code == 200
         assert any(s['name'] == 'api-sched' for s in resp.get_json()['scheduled'])
+
+
+class TestDeploymentInstallHandler:
+    """Phase 5 — template installs run as a 'deploy.install' unified job rather
+    than a one-off thread. run_job is patched so these exercise the wiring, not
+    real Docker/templates."""
+
+    def test_register_jobs_adds_handler(self, app):
+        from app.services.deployment_job_service import DeploymentJobService, JOB_KIND
+        DeploymentJobService.register_jobs()
+        assert JOB_KIND == 'deploy.install'
+        assert registry.is_registered('deploy.install')
+
+    def test_handler_success_marks_job_succeeded(self, app, monkeypatch):
+        from app.services.deployment_job_service import DeploymentJobService
+        calls = {}
+
+        def fake_run_job(job_id):
+            calls['job_id'] = job_id
+            return {'success': True, 'app_id': 7, 'app_name': 'blog'}
+
+        monkeypatch.setattr(DeploymentJobService, 'run_job', staticmethod(fake_run_job))
+        DeploymentJobService.register_jobs()
+
+        unified = JobService.enqueue('deploy.install', {'deployment_job_id': 'dep-1'}, max_attempts=1)
+        _drain_once()
+
+        refreshed = Job.query.get(unified.id)
+        assert refreshed.status == Job.STATUS_SUCCEEDED
+        assert refreshed.get_result()['app_id'] == 7
+        assert calls['job_id'] == 'dep-1'
+
+    def test_handler_failure_marks_job_failed(self, app, monkeypatch):
+        from app.services.deployment_job_service import DeploymentJobService
+
+        monkeypatch.setattr(DeploymentJobService, 'run_job',
+                            staticmethod(lambda job_id: {'success': False, 'error': 'compose boom'}))
+        DeploymentJobService.register_jobs()
+
+        unified = JobService.enqueue('deploy.install', {'deployment_job_id': 'dep-2'}, max_attempts=1)
+        _drain_once()
+
+        refreshed = Job.query.get(unified.id)
+        assert refreshed.status == Job.STATUS_FAILED
+        assert 'compose boom' in (refreshed.error_message or '')
+
+    def test_install_template_enqueues_job_instead_of_thread(self, app, monkeypatch):
+        from app.services.deployment_job_service import DeploymentJobService
+        from app.services.template_service import TemplateService
+        from app.models.deployment_job import DeploymentJob
+
+        plan = {
+            'app_name': 'demo', 'app_path': '/tmp/serverkit-nonexistent-demo-xyz',
+            'port': 8123, 'template_name': 'nginx', 'template_id': 'nginx',
+            'steps': [{'type': 'log', 'name': 'step 1'}],
+        }
+        monkeypatch.setattr(
+            TemplateService, 'build_install_plan',
+            staticmethod(lambda **kw: {'success': True, 'plan': plan, 'app_path': plan['app_path']}))
+
+        ran = {'called': False}
+
+        def fake_run_job(job_id):
+            ran['called'] = True
+            return {'success': True}
+
+        monkeypatch.setattr(DeploymentJobService, 'run_job', staticmethod(fake_run_job))
+        DeploymentJobService.register_jobs()
+
+        result = DeploymentJobService.install_template(
+            template_id='nginx', app_name='demo', user_variables={}, user_id=1,
+            server_id='local', wait=False,
+        )
+        assert result['success'] is True
+        dep_id = result['job_id']
+
+        # The DeploymentJob exists and is still pending — proof it was enqueued,
+        # not run inline on a thread (no consumer runs under testing config).
+        dep = DeploymentJob.query.get(dep_id)
+        assert dep is not None and dep.status == 'pending'
+        assert ran['called'] is False
+
+        # A unified deploy.install job points back at it, with shared correlation.
+        unified = Job.query.filter_by(kind='deploy.install', owner_id=dep_id).first()
+        assert unified is not None
+        assert unified.get_payload() == {'deployment_job_id': dep_id}
+        assert unified.max_attempts == 1
+        assert unified.correlation_id == dep.correlation_id

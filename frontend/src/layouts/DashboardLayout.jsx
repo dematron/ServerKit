@@ -11,6 +11,7 @@ import PluginLoader from '../plugins/PluginLoader';
 import { refreshContributions, useContributions } from '../plugins/contributions';
 import useMediaQuery from '../hooks/useMediaQuery';
 import api from '../services/api';
+import SystemNotices from '../components/SystemNotices';
 
 const FULL_PAGE_ROUTES = ['/workflow', '/files', '/docker'];
 
@@ -95,6 +96,7 @@ const DashboardLayout = () => {
                     />
                 )}
                 <main className={`main-content${isFullPageRoute ? ' main-content--full-page' : ''}`}>
+                    {!isFullPageRoute && <SystemNotices />}
                     <Outlet />
                 </main>
                 <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

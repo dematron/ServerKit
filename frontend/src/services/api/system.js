@@ -46,6 +46,10 @@ export async function getAdminStats() {
     return this.request('/admin/stats');
 }
 
+export async function getSystemNotices() {
+    return this.request('/system/notices');
+}
+
 // Managed-sites domain & HTTPS (Phase 5)
 export async function getSitesHttpsStatus() {
     return this.request('/admin/sites-https/status');

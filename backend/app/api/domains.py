@@ -216,6 +216,42 @@ def create_domain():
     return jsonify(response), 201
 
 
+@domains_bp.route('/suggest-subdomain', methods=['GET'])
+@jwt_required()
+def suggest_subdomain():
+    """Suggest a managed-sites subdomain (<slug>.<base>) for an app, so the UI can
+    prefill the 'give this a subdomain' action."""
+    from app.services.site_domain_service import SiteDomainService
+    app_id = request.args.get('application_id', type=int)
+    app = Application.query.get(app_id) if app_id else None
+    base = SiteDomainService.base_domain()
+    if not base:
+        return jsonify({'base_domain': None, 'suggestion': None,
+                        'dns_mode': SiteDomainService.dns_mode()}), 200
+    slug = SiteDomainService.slugify(app.name) if app else 'site'
+    return jsonify({'base_domain': base, 'suggestion': f'{slug}.{base}',
+                    'dns_mode': SiteDomainService.dns_mode()}), 200
+
+
+@domains_bp.route('/give-subdomain', methods=['POST'])
+@jwt_required()
+def give_subdomain():
+    """Publish an app at <label>.<base_domain> in one click — Domain row + nginx
+    vhost + (per-site mode) an auto-created A record."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    data = request.get_json() or {}
+    app = Application.query.get(data.get('application_id')) if data.get('application_id') else None
+    if not app:
+        return jsonify({'error': 'Application not found'}), 404
+    if not ResourceGrantService.can_edit_app(user, app):
+        return jsonify({'error': 'Access denied'}), 403
+
+    from app.services.site_domain_service import SiteDomainService
+    result = SiteDomainService.give_subdomain(app, label=data.get('label'))
+    return jsonify(result), 200 if result.get('success') else 400
+
+
 @domains_bp.route('/<int:domain_id>', methods=['PUT'])
 @jwt_required()
 def update_domain(domain_id):

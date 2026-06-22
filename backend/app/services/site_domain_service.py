@@ -138,3 +138,63 @@ class SiteDomainService:
             return DNSProviderService.ensure_a_record(host, ip)
         except Exception as e:
             return {'created': False, 'reason': 'error', 'error': str(e)}
+
+    @classmethod
+    def give_subdomain(cls, app, label=None):
+        """One-click 'give this app a subdomain': publish ``app`` at
+        ``<label>.<base_domain>`` (label defaults to the app-name slug). Creates the
+        primary Domain row, (re)writes its nginx vhost, and — in per-site DNS mode —
+        auto-creates the A record (wildcard mode relies on ``*.<base>``).
+
+        Returns ``{success, host, url, dns, nginx, warning}`` or
+        ``{success: False, error}``.
+        """
+        from app import db
+        from app.models.domain import Domain
+        from app.services.nginx_service import NginxService
+
+        base = cls.base_domain()
+        if not base:
+            return {'success': False, 'error': 'Set the managed-sites base domain first (Settings).'}
+
+        host = f'{cls.slugify(label or app.name)}.{base}'
+        existing = Domain.query.filter_by(name=host).first()
+        if existing and existing.application_id != app.id:
+            return {'success': False, 'error': f'{host} is already used by another app.'}
+
+        try:
+            if not existing:
+                make_primary = Domain.query.filter_by(
+                    application_id=app.id, is_primary=True).first() is None
+                if make_primary:
+                    Domain.query.filter_by(application_id=app.id, is_primary=True).update(
+                        {'is_primary': False})
+                db.session.add(Domain(name=host, is_primary=make_primary, application_id=app.id))
+                db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return {'success': False, 'error': f'Could not record domain: {e}'}
+
+        warning = None
+        nginx = None
+        if app.app_type == 'docker' and app.port:
+            all_domains = [d.name for d in Domain.query.filter_by(application_id=app.id).all()]
+            ssl_cert, ssl_key = (None, None)
+            if cls.https_enabled() and all(cls.covers(d) for d in all_domains):
+                ssl_cert, ssl_key = cls.wildcard_cert_paths()
+            nginx = NginxService.create_site(
+                name=app.name, app_type='docker', domains=all_domains,
+                root_path=app.root_path or '', port=app.port,
+                ssl_cert=ssl_cert, ssl_key=ssl_key)
+            if nginx.get('success'):
+                NginxService.enable_site(app.name)
+            else:
+                warning = nginx.get('error')
+
+        dns = cls.ensure_site_dns(host)
+        if dns and not dns.get('skipped') and not dns.get('created') and dns.get('message'):
+            warning = (warning + '; ' + dns['message']) if warning else dns['message']
+
+        return {'success': True, 'host': host,
+                'url': cls.site_url(host, ssl=cls.https_enabled() and cls.covers(host)),
+                'dns': dns, 'nginx': nginx, 'warning': warning}

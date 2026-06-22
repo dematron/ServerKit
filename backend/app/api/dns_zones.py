@@ -157,6 +157,23 @@ def list_dns_changes():
     return jsonify({'changes': [c.to_dict() for c in changes]})
 
 
+@dns_zones_bp.route('/managed', methods=['GET'])
+@jwt_required()
+def list_managed_records():
+    """Every DNS record ServerKit owns across all provider zones, in one place —
+    enriched with the app that triggered each (when applicable)."""
+    from app.services.dns_ownership_service import DnsOwnershipService
+    from app.models.application import Application
+    rows = DnsOwnershipService.list_all()
+    app_names = {a.id: a.name for a in Application.query.all()} if rows else {}
+    out = []
+    for r in rows:
+        d = r.to_dict()
+        d['app_name'] = app_names.get(r.app_id)
+        out.append(d)
+    return jsonify({'records': out, 'count': len(out)})
+
+
 @dns_zones_bp.route('/<int:zone_id>/export', methods=['GET'])
 @jwt_required()
 def export_zone(zone_id):

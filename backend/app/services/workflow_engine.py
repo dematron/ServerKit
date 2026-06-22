@@ -34,9 +34,10 @@ MAX_RETRY_COUNT = 5
 DEFAULT_RETRY_DELAY = 5  # seconds
 MAX_OUTPUT_SIZE = 1024 * 512  # 512 KB
 
-# Unified job kind for asynchronous workflow executions
+# Unified job kinds for asynchronous workflow execution + event dispatch
 # (see WorkflowEngine.enqueue_execution / register_jobs).
 WORKFLOW_JOB_KIND = 'workflow.execute'
+WORKFLOW_DISPATCH_JOB_KIND = 'workflow.dispatch'
 
 
 def _parse_version(s: str) -> tuple:
@@ -244,10 +245,11 @@ class WorkflowEngine:
 
     @staticmethod
     def register_jobs():
-        """Register the workflow.execute handler with the unified job registry.
+        """Register the workflow job handlers with the unified job registry.
         Called once at app startup (see app/__init__.py)."""
         from app.jobs import registry
         registry.register(WORKFLOW_JOB_KIND, WorkflowEngine._run_workflow_job, replace=True)
+        registry.register(WORKFLOW_DISPATCH_JOB_KIND, WorkflowEventBus.dispatch_event, replace=True)
 
     # ------------------------------------------------------------------
     # DAG Execution
@@ -937,65 +939,63 @@ class WorkflowEventBus:
 
     @staticmethod
     def emit(event_type: str, data: Dict[str, Any] = None):
-        """
-        Emit an event that may trigger workflows.
+        """Emit a system event that may trigger event-subscribed workflows.
+
+        Non-blocking: enqueues a single ``workflow.dispatch`` job that fans out to
+        the matching workflows on the unified job system (replacing the former
+        per-event daemon thread). Best-effort — never raises into the caller.
 
         Args:
             event_type: One of health_check_failed, high_cpu, high_memory,
                         git_push, app_stopped, or any custom string.
             data: Event payload passed as workflow context.
         """
-        from flask import current_app
         try:
-            app = current_app._get_current_object()
-        except RuntimeError:
-            logger.warning(f"WorkflowEventBus.emit called outside app context for {event_type}")
-            return
-
-        threading.Thread(
-            target=WorkflowEventBus._process_event,
-            args=(app, event_type, data or {}),
-            daemon=True,
-            name=f'wf-event-{event_type}'
-        ).start()
+            from app.jobs.service import JobService
+            JobService.enqueue(
+                WORKFLOW_DISPATCH_JOB_KIND,
+                payload={'event_type': event_type, 'data': data or {}},
+                max_attempts=1,
+                owner_type='workflow_event',
+                owner_id=event_type,
+            )
+        except Exception as e:
+            # No app context, or the queue is unavailable — never break the caller.
+            logger.warning(f"WorkflowEventBus.emit could not enqueue '{event_type}': {e}")
 
     @staticmethod
-    def _process_event(app, event_type: str, data: Dict):
-        """Find and execute workflows subscribed to this event type."""
-        with app.app_context():
+    def dispatch_event(job):
+        """Unified-job handler for ``workflow.dispatch`` — find workflows
+        subscribed to the event and enqueue a workflow.execute job for each
+        (honoring the per-workflow 60s cooldown)."""
+        payload = job.get_payload() or {}
+        event_type = payload.get('event_type')
+        data = payload.get('data') or {}
+        if not event_type:
+            return {'event_type': None, 'triggered': 0}
+
+        workflows = Workflow.query.filter_by(is_active=True, trigger_type='event').all()
+        triggered = 0
+        for workflow in workflows:
             try:
-                workflows = Workflow.query.filter_by(
-                    is_active=True,
-                    trigger_type='event'
-                ).all()
-
-                for workflow in workflows:
-                    try:
-                        config = json.loads(workflow.trigger_config) if workflow.trigger_config else {}
-                        subscribed_event = config.get('eventType', '')
-
-                        if subscribed_event != event_type:
-                            continue
-
-                        # Cooldown: don't re-trigger within 60 seconds
-                        if workflow.last_run_at:
-                            elapsed = (datetime.utcnow() - workflow.last_run_at).total_seconds()
-                            if elapsed < 60:
-                                continue
-
-                        logger.info(f"Event '{event_type}' triggering workflow: {workflow.name}")
-                        context = {
-                            'event_type': event_type,
-                            'event_data': data,
-                            'triggered_at': datetime.utcnow().isoformat()
-                        }
-                        WorkflowEngine.enqueue_execution(
-                            workflow_id=workflow.id,
-                            trigger_type='event',
-                            context=context
-                        )
-                    except Exception as e:
-                        logger.error(f"Event trigger failed for workflow {workflow.id}: {e}")
-
+                config = json.loads(workflow.trigger_config) if workflow.trigger_config else {}
+                if config.get('eventType', '') != event_type:
+                    continue
+                # Cooldown: don't re-trigger within 60 seconds.
+                if workflow.last_run_at and \
+                        (datetime.utcnow() - workflow.last_run_at).total_seconds() < 60:
+                    continue
+                logger.info(f"Event '{event_type}' triggering workflow: {workflow.name}")
+                WorkflowEngine.enqueue_execution(
+                    workflow_id=workflow.id,
+                    trigger_type='event',
+                    context={
+                        'event_type': event_type,
+                        'event_data': data,
+                        'triggered_at': datetime.utcnow().isoformat(),
+                    },
+                )
+                triggered += 1
             except Exception as e:
-                logger.error(f"WorkflowEventBus._process_event error: {e}")
+                logger.error(f"Event trigger failed for workflow {workflow.id}: {e}")
+        return {'event_type': event_type, 'triggered': triggered}

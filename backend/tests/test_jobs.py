@@ -430,3 +430,48 @@ class TestBackupScheduleHandler:
         bad = JobService.enqueue('backup.run', {'schedule_id': 'b2'}, max_attempts=1)
         _drain_once()
         assert Job.query.get(bad.id).status == Job.STATUS_FAILED
+
+
+class TestWorkflowEventDispatch:
+    """Event-bus cleanup — WorkflowEventBus.emit enqueues a 'workflow.dispatch'
+    job instead of spawning a per-event thread; the handler fans out to matching
+    event-subscribed workflows."""
+
+    def _make_event_workflow(self, event_type):
+        import json as _json
+        from app.models.workflow import Workflow
+        wf = Workflow(name=f'evt-{event_type}', user_id=1, nodes='[]', edges='[]',
+                      is_active=True, trigger_type='event',
+                      trigger_config=_json.dumps({'eventType': event_type}))
+        db.session.add(wf)
+        db.session.commit()
+        return wf
+
+    def test_register_adds_dispatch_handler(self, app):
+        from app.services.workflow_engine import WorkflowEngine
+        WorkflowEngine.register_jobs()
+        assert registry.is_registered('workflow.dispatch')
+
+    def test_emit_enqueues_dispatch_job(self, app):
+        from app.services.workflow_engine import WorkflowEventBus
+        WorkflowEventBus.emit('high_cpu', {'value': 95})
+        evt_jobs = Job.query.filter_by(kind='workflow.dispatch').all()
+        assert len(evt_jobs) == 1
+        assert evt_jobs[0].get_payload() == {'event_type': 'high_cpu', 'data': {'value': 95}}
+        assert evt_jobs[0].owner_id == 'high_cpu'
+
+    def test_dispatch_fans_out_to_matching_workflow_only(self, app):
+        from app.services.workflow_engine import WorkflowEngine, WorkflowEventBus
+        from app.models.workflow import WorkflowExecution
+        WorkflowEngine.register_jobs()
+        match = self._make_event_workflow('high_cpu')
+        self._make_event_workflow('git_push')  # different event — must be ignored
+
+        WorkflowEventBus.emit('high_cpu', {'value': 95})
+        _drain_once()  # process workflow.dispatch -> enqueues workflow.execute
+
+        execs = WorkflowExecution.query.all()
+        assert len(execs) == 1
+        assert execs[0].workflow_id == match.id
+        assert execs[0].trigger_type == 'event'
+        assert Job.query.filter_by(kind='workflow.execute').count() == 1

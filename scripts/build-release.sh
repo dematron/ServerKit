@@ -13,6 +13,29 @@
 set -euo pipefail
 
 BUILD_DIR="/tmp/serverkit-release-build"
+# Patterns excluded from the release tarball even when they are not gitignored
+# on the build machine (e.g. local test output, scratch images).
+RELEASE_EXCLUDES=(
+    .git
+    node_modules
+    venv
+    .venv
+    .venv-wsl
+    __pycache__
+    .pytest_cache
+    instance
+    dist
+    /backups
+    /backend/instance/backups
+    /backend/dev-data/backups
+    /scripts/test/output
+    '*.png'
+    '*.jpeg'
+    '*.jpg'
+    '*.log'
+    '*.tmp'
+    '*.pyc'
+)
 
 # ---------------------------------------------------------------------------
 # Terminal styling (violet ServerKit identity, degrades to plain text)
@@ -67,10 +90,53 @@ mkdir -p "$BUILD_DIR"
 
 step "Copying the source tree..."
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-rsync -a --exclude=.git --exclude=node_modules --exclude=venv --exclude=__pycache__ \
-    --exclude=.pytest_cache --exclude=instance --exclude=dist \
-    --exclude=/backups --exclude=/backend/instance/backups --exclude=/backend/dev-data/backups \
-    "$REPO_ROOT/" "$BUILD_DIR/"
+
+# Prefer rsync when available; fall back to cp + manual cleanup for Windows/Git Bash.
+if command -v rsync &>/dev/null; then
+    rsync -a \
+        --exclude=.git \
+        --exclude=node_modules \
+        --exclude=venv \
+        --exclude=.venv \
+        --exclude=.venv-wsl \
+        --exclude=__pycache__ \
+        --exclude=.pytest_cache \
+        --exclude=instance \
+        --exclude=dist \
+        --exclude=/backups \
+        --exclude=/backend/instance/backups \
+        --exclude=/backend/dev-data/backups \
+        --exclude=/scripts/test/output \
+        --exclude='*.png' \
+        --exclude='*.jpeg' \
+        --exclude='*.jpg' \
+        --exclude='*.log' \
+        --exclude='*.tmp' \
+        --exclude='*.pyc' \
+        "$REPO_ROOT/" "$BUILD_DIR/"
+else
+    cp -r "$REPO_ROOT/"* "$REPO_ROOT/".[^.]* "$BUILD_DIR/" 2>/dev/null || true
+    rm -rf "$BUILD_DIR/.git" \
+        "$BUILD_DIR/node_modules" \
+        "$BUILD_DIR/venv" \
+        "$BUILD_DIR/.venv" \
+        "$BUILD_DIR/.venv-wsl" \
+        "$BUILD_DIR/backend/venv" \
+        "$BUILD_DIR/backend/.venv" \
+        "$BUILD_DIR/backend/.venv-wsl" \
+        "$BUILD_DIR/backend/__pycache__" \
+        "$BUILD_DIR/.pytest_cache" \
+        "$BUILD_DIR/backend/.pytest_cache" \
+        "$BUILD_DIR/instance" \
+        "$BUILD_DIR/backend/instance" \
+        "$BUILD_DIR/dist" \
+        "$BUILD_DIR/frontend/dist" \
+        "$BUILD_DIR/backups" \
+        "$BUILD_DIR/backend/instance/backups" \
+        "$BUILD_DIR/backend/dev-data/backups" \
+        "$BUILD_DIR/scripts/test/output" \
+        "$BUILD_DIR/frontend/node_modules"
+fi
 
 # ---------------------------------------------------------------------------
 # Build the frontend bundle
@@ -88,6 +154,7 @@ rm -rf "$BUILD_DIR/frontend/node_modules"
 find "$BUILD_DIR" -type d -name __pycache__    -exec rm -rf {} + 2>/dev/null || true
 find "$BUILD_DIR" -type d -name .pytest_cache  -exec rm -rf {} + 2>/dev/null || true
 find "$BUILD_DIR" -type f -name '*.pyc' -delete 2>/dev/null || true
+find "$BUILD_DIR" -type f \( -name '*.png' -o -name '*.jpeg' -o -name '*.jpg' \) -delete 2>/dev/null || true
 
 # Runtime directory the app expects to exist.
 mkdir -p "$BUILD_DIR/backend/instance"
@@ -97,17 +164,21 @@ mkdir -p "$BUILD_DIR/backend/instance"
 # ---------------------------------------------------------------------------
 step "Creating the tarball..."
 # Land the tarball at the repo root (matches .gitignore's /serverkit-*.tar.gz).
-# Note: REPO_ROOT is captured up-front and stays valid after BUILD_DIR is moved.
 DEST_DIR="$REPO_ROOT"
-PACK_DIR="/tmp/serverkit-tarball-$$"
-mkdir -p "$PACK_DIR/opt"
-mv "$BUILD_DIR" "$PACK_DIR/opt/serverkit"
 
-cd "$PACK_DIR/opt"
-tar czf "${DEST_DIR}/${OUTPUT}" serverkit
+# Build the tar exclude arguments.
+TAR_EXCLUDES=()
+for pat in "${RELEASE_EXCLUDES[@]}"; do
+    TAR_EXCLUDES+=(--exclude="$pat")
+done
+
+# Pack from the parent of BUILD_DIR with a transform so the archive contains
+# /opt/serverkit without moving directories across filesystems.
+cd "$(dirname "$BUILD_DIR")"
+tar czf "${DEST_DIR}/${OUTPUT}" ${TAR_EXCLUDES[@]} --transform 's|^serverkit-release-build|opt/serverkit|' serverkit-release-build
 
 cd "$DEST_DIR"
-rm -rf "$PACK_DIR"
+rm -rf "$BUILD_DIR"
 
 good "Release built: ${OUTPUT}"
 ls -lh "${OUTPUT}"

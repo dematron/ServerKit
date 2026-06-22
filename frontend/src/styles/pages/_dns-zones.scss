@@ -128,6 +128,70 @@
         grid-template-columns: 1fr 1fr;
         gap: $spacing-md;
     }
+
+    // "All managed records" — cross-zone view of every record ServerKit owns.
+    .dns-managed-link {
+        display: flex;
+        align-items: center;
+        gap: $spacing-sm;
+        width: 100%;
+        padding: $spacing-md;
+        margin-bottom: $spacing-xs;
+        background: $card-bg;
+        border: 1px solid $border-color;
+        border-radius: $radius-md;
+        color: var(--text);
+        font-size: 0.9rem;
+        font-weight: 600;
+        text-align: left;
+        cursor: pointer;
+        transition: border-color 0.15s;
+
+        &:hover, &.active { border-color: $primary-color; }
+
+        svg { color: var(--text-dim); flex-shrink: 0; }
+    }
+
+    .dns-managed {
+        &__hint {
+            margin: -#{$spacing-sm} 0 $spacing-md;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        &__count {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            align-self: center;
+        }
+
+        // record_type chip already sits inline; space the name after it.
+        &__name { margin-left: $spacing-sm; }
+
+        &__action-cell { text-align: right; white-space: nowrap; }
+
+        &__prop-row td { padding: 0 16px $spacing-sm; }
+
+        &__prop {
+            padding: $spacing-sm $spacing-md;
+            background: var(--surface-2);
+            border-radius: $radius-md;
+        }
+    }
+
+    // Provenance chip for a managed record (source: zone/ddns/wordpress/...).
+    .dns-source-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 5px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        background: var(--surface-3);
+        color: var(--text-dim);
+    }
 }
 
 // Colored DNS record-type chip (redesign)

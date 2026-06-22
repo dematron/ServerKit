@@ -13,29 +13,6 @@
 set -euo pipefail
 
 BUILD_DIR="/tmp/serverkit-release-build"
-# Patterns excluded from the release tarball even when they are not gitignored
-# on the build machine (e.g. local test output, scratch images).
-RELEASE_EXCLUDES=(
-    .git
-    node_modules
-    venv
-    .venv
-    .venv-wsl
-    __pycache__
-    .pytest_cache
-    instance
-    dist
-    /backups
-    /backend/instance/backups
-    /backend/dev-data/backups
-    /scripts/test/output
-    '*.png'
-    '*.jpeg'
-    '*.jpg'
-    '*.log'
-    '*.tmp'
-    '*.pyc'
-)
 
 # ---------------------------------------------------------------------------
 # Terminal styling (violet ServerKit identity, degrades to plain text)
@@ -91,52 +68,11 @@ mkdir -p "$BUILD_DIR"
 step "Copying the source tree..."
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Prefer rsync when available; fall back to cp + manual cleanup for Windows/Git Bash.
-if command -v rsync &>/dev/null; then
-    rsync -a \
-        --exclude=.git \
-        --exclude=node_modules \
-        --exclude=venv \
-        --exclude=.venv \
-        --exclude=.venv-wsl \
-        --exclude=__pycache__ \
-        --exclude=.pytest_cache \
-        --exclude=instance \
-        --exclude=dist \
-        --exclude=/backups \
-        --exclude=/backend/instance/backups \
-        --exclude=/backend/dev-data/backups \
-        --exclude=/scripts/test/output \
-        --exclude='*.png' \
-        --exclude='*.jpeg' \
-        --exclude='*.jpg' \
-        --exclude='*.log' \
-        --exclude='*.tmp' \
-        --exclude='*.pyc' \
-        "$REPO_ROOT/" "$BUILD_DIR/"
-else
-    cp -r "$REPO_ROOT/"* "$REPO_ROOT/".[^.]* "$BUILD_DIR/" 2>/dev/null || true
-    rm -rf "$BUILD_DIR/.git" \
-        "$BUILD_DIR/node_modules" \
-        "$BUILD_DIR/venv" \
-        "$BUILD_DIR/.venv" \
-        "$BUILD_DIR/.venv-wsl" \
-        "$BUILD_DIR/backend/venv" \
-        "$BUILD_DIR/backend/.venv" \
-        "$BUILD_DIR/backend/.venv-wsl" \
-        "$BUILD_DIR/backend/__pycache__" \
-        "$BUILD_DIR/.pytest_cache" \
-        "$BUILD_DIR/backend/.pytest_cache" \
-        "$BUILD_DIR/instance" \
-        "$BUILD_DIR/backend/instance" \
-        "$BUILD_DIR/dist" \
-        "$BUILD_DIR/frontend/dist" \
-        "$BUILD_DIR/backups" \
-        "$BUILD_DIR/backend/instance/backups" \
-        "$BUILD_DIR/backend/dev-data/backups" \
-        "$BUILD_DIR/scripts/test/output" \
-        "$BUILD_DIR/frontend/node_modules"
-fi
+# Copy the source tree with tar, which handles broken symlinks and avoids
+# the long rm -rf timeouts that cp + rm can hit on Windows/Git Bash.
+mkdir -p "$BUILD_DIR"
+cd "$REPO_ROOT"
+tar -cf -     --exclude='./.git'     --exclude='./node_modules'     --exclude='./venv'     --exclude='./.venv'     --exclude='./.venv-wsl'     --exclude='./backend/venv'     --exclude='./backend/.venv'     --exclude='./backend/.venv-wsl'     --exclude='./__pycache__'     --exclude='./.pytest_cache'     --exclude='./instance'     --exclude='./dist'     --exclude='./backups'     --exclude='./backend/dev-data/backups'     --exclude='./backend/instance/backups'     --exclude='./scripts/test/output'     --exclude='*.png'     --exclude='*.jpeg'     --exclude='*.jpg'     --exclude='*.log'     --exclude='*.tmp'     --exclude='*.pyc'     . | tar -C "$BUILD_DIR" -xf -
 
 # ---------------------------------------------------------------------------
 # Build the frontend bundle
@@ -166,16 +102,30 @@ step "Creating the tarball..."
 # Land the tarball at the repo root (matches .gitignore's /serverkit-*.tar.gz).
 DEST_DIR="$REPO_ROOT"
 
-# Build the tar exclude arguments.
-TAR_EXCLUDES=()
-for pat in "${RELEASE_EXCLUDES[@]}"; do
-    TAR_EXCLUDES+=(--exclude="$pat")
-done
-
 # Pack from the parent of BUILD_DIR with a transform so the archive contains
 # /opt/serverkit without moving directories across filesystems.
 cd "$(dirname "$BUILD_DIR")"
-tar czf "${DEST_DIR}/${OUTPUT}" ${TAR_EXCLUDES[@]} --transform 's|^serverkit-release-build|opt/serverkit|' serverkit-release-build
+tar czf "${DEST_DIR}/${OUTPUT}" \
+    --exclude='node_modules' \
+    --exclude='venv' \
+    --exclude='.venv' \
+    --exclude='.venv-wsl' \
+    --exclude='__pycache__' \
+    --exclude='.pytest_cache' \
+    --exclude='instance' \
+    --exclude='dist' \
+    --exclude='/backups' \
+    --exclude='/backend/instance/backups' \
+    --exclude='/backend/dev-data/backups' \
+    --exclude='/scripts/test/output' \
+    --exclude='*.png' \
+    --exclude='*.jpeg' \
+    --exclude='*.jpg' \
+    --exclude='*.log' \
+    --exclude='*.tmp' \
+    --exclude='*.pyc' \
+    --transform 's|^serverkit-release-build|opt/serverkit|' \
+    serverkit-release-build
 
 cd "$DEST_DIR"
 rm -rf "$BUILD_DIR"

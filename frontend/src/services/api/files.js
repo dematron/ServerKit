@@ -481,6 +481,20 @@ export async function verifyDomain(domainId) {
     return this.request(`/domains/${domainId}/verify`);
 }
 
+// Suggest a managed-sites subdomain (<slug>.<base>) for an app so the UI can
+// prefill the "give this a subdomain" action.
+export async function suggestSubdomain(applicationId) {
+    return this.request(`/domains/suggest-subdomain?application_id=${applicationId}`);
+}
+
+// Publish an app at <label>.<base_domain> in one click. Label is optional —
+// omit it when falsy so the backend derives one from the app name.
+export async function giveSubdomain(applicationId, label) {
+    const body = { application_id: applicationId };
+    if (label) body.label = label;
+    return this.request('/domains/give-subdomain', { method: 'POST', body });
+}
+
 export async function getDomainsNginxSites() {
     return this.request('/domains/nginx/sites');
 }

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Globe } from 'lucide-react';
+import { Globe, Layers } from 'lucide-react';
 import { useTopbarActions } from '@/hooks/useTopbarActions';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import PageLoader from '../components/PageLoader';
 import EmptyState from '../components/EmptyState';
+import { formatRelativeTime } from '../utils/serviceTypes';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { FormField, FormRow } from '../components/FormField';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,15 @@ const DNSZones = () => {
     const [showPropagation, setShowPropagation] = useState(null);
     const [propagationResults, setPropagationResults] = useState([]);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+    // "All managed records" — every provider record ServerKit owns, across all
+    // zones. Shown in the right column when no specific zone is selected.
+    const [showManaged, setShowManaged] = useState(false);
+    const [managedRecords, setManagedRecords] = useState(null); // null = not loaded
+    const [managedLoading, setManagedLoading] = useState(false);
+    // Inline propagation results keyed by record name (#13, reuses checkDNSPropagation).
+    const [managedPropagation, setManagedPropagation] = useState({});
+    const [managedChecking, setManagedChecking] = useState(null);
 
     // Records panel view: 'managed' (ServerKit records) | 'provider' (live mirror)
     const [recordsView, setRecordsView] = useState('managed');
@@ -74,11 +84,58 @@ const DNSZones = () => {
             const data = await api.getDNSRecords(zoneId);
             setRecords(data.records || []);
             setSelectedZone(zones.find(z => z.id === zoneId));
+            // Selecting a zone leaves the cross-zone managed view.
+            setShowManaged(false);
             // Reset the provider mirror when switching zones.
             setRecordsView('managed');
             setMirror(null);
         } catch (err) {
             toast.error('Failed to load records');
+        }
+    };
+
+    // Every provider record ServerKit owns, across all zones (#14). Lazily
+    // loaded the first time the panel is opened; refreshable thereafter.
+    const loadManagedRecords = useCallback(async () => {
+        setManagedLoading(true);
+        try {
+            const data = await api.getManagedDnsRecords();
+            setManagedRecords(data.records || []);
+        } catch (err) {
+            toast.error(err.message || 'Failed to load managed records');
+            setManagedRecords([]);
+        } finally {
+            setManagedLoading(false);
+        }
+    }, [toast]);
+
+    const handleShowManaged = () => {
+        setShowManaged(true);
+        setSelectedZone(null);
+        setRecords([]);
+        if (managedRecords === null) loadManagedRecords();
+    };
+
+    // Inline propagation check for a single managed record (#13). Reuses the
+    // existing checkDNSPropagation endpoint; result expands under the row.
+    const handleCheckManaged = async (name) => {
+        if (managedPropagation[name]) {
+            // Toggle the expansion closed if already shown.
+            setManagedPropagation(prev => {
+                const next = { ...prev };
+                delete next[name];
+                return next;
+            });
+            return;
+        }
+        setManagedChecking(name);
+        try {
+            const data = await api.checkDNSPropagation(name);
+            setManagedPropagation(prev => ({ ...prev, [name]: data.results || [] }));
+        } catch (err) {
+            toast.error(err.message || 'Propagation check failed');
+        } finally {
+            setManagedChecking(null);
         }
     };
 
@@ -201,6 +258,14 @@ const DNSZones = () => {
         <div className="sk-tabgroup__inner dns-zones-page">
             <div className="dns-layout">
                 <div className="dns-zones-list">
+                    <button
+                        type="button"
+                        className={`dns-managed-link ${showManaged ? 'active' : ''}`}
+                        onClick={handleShowManaged}
+                    >
+                        <Layers size={15} />
+                        <span>All managed records</span>
+                    </button>
                     {zones.map(zone => (
                         <div key={zone.id}
                             className={`dns-zone-item ${selectedZone?.id === zone.id ? 'active' : ''}`}
@@ -219,6 +284,88 @@ const DNSZones = () => {
                     ))}
                     {zones.length === 0 && <EmptyState icon={Globe} title="No DNS zones configured" />}
                 </div>
+
+                {showManaged && (
+                    <div className="dns-records-panel">
+                        <div className="dns-records-panel__header">
+                            <h2>All managed records</h2>
+                            <div className="dns-records-panel__actions">
+                                {managedRecords !== null && (
+                                    <span className="dns-managed__count">{managedRecords.length} total</span>
+                                )}
+                                <Button variant="outline" size="sm" onClick={loadManagedRecords} disabled={managedLoading}>
+                                    {managedLoading ? 'Refreshing…' : 'Refresh'}
+                                </Button>
+                            </div>
+                        </div>
+                        <p className="dns-managed__hint">
+                            Every DNS record ServerKit owns across all your provider zones.
+                        </p>
+                        <DataTable
+                            tableClassName="sk-dtable dns-records-table"
+                            sortable={false}
+                            loading={managedLoading}
+                            data={managedRecords || []}
+                            keyField="id"
+                            emptyTitle="No managed records"
+                            emptyMessage="ServerKit hasn't created any provider DNS records yet."
+                            renderRow={(rec, { key, className }) => {
+                                const results = managedPropagation[rec.name];
+                                return (
+                                    <React.Fragment key={key}>
+                                        <tr className={className}>
+                                            <td>
+                                                <span className={`dns-rtype dns-rtype--${(rec.record_type || '').toLowerCase()}`}>{rec.record_type}</span>
+                                                <span className="dns-managed__name">{rec.name}</span>
+                                            </td>
+                                            <td><span className="sk-cell-mono">{rec.provider_zone_id || '-'}</span></td>
+                                            <td>{rec.source ? <span className="dns-source-chip">{rec.source}</span> : '-'}</td>
+                                            <td>{rec.app_name || '-'}</td>
+                                            <td>{formatRelativeTime(rec.created_at) || '-'}</td>
+                                            <td className="dns-managed__action-cell">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => handleCheckManaged(rec.name)}
+                                                    disabled={managedChecking === rec.name}
+                                                >
+                                                    {managedChecking === rec.name ? 'Checking…' : results ? 'Hide' : 'Check'}
+                                                </Button>
+                                            </td>
+                                        </tr>
+                                        {results && (
+                                            <tr className="dns-managed__prop-row">
+                                                <td colSpan={6}>
+                                                    <div className="dns-managed__prop">
+                                                        {results.length === 0 && (
+                                                            <span className="text-muted">No propagation data.</span>
+                                                        )}
+                                                        {results.map((r, i) => (
+                                                            <div key={i} className="propagation-row">
+                                                                <span className={`status-dot status-dot--${r.propagated ? 'success' : 'danger'}`} />
+                                                                <strong>{r.nameserver}</strong>
+                                                                <span className="text-muted">({r.ip})</span>
+                                                                <span className="text-mono">{r.result?.join(', ') || 'No result'}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </React.Fragment>
+                                );
+                            }}
+                            columns={[
+                                { key: 'record', header: 'Record' },
+                                { key: 'zone', header: 'Zone' },
+                                { key: 'source', header: 'Source' },
+                                { key: 'app', header: 'App' },
+                                { key: 'created_at', header: 'Created' },
+                                { key: 'actions', header: '' },
+                            ]}
+                        />
+                    </div>
+                )}
 
                 {selectedZone && (
                     <div className="dns-records-panel">

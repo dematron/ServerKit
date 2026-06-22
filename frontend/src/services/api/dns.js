@@ -66,6 +66,11 @@ export async function getZoneMirror(zoneId) {
     return this.request(`/dns/${zoneId}/mirror`);
 }
 
+// Every DNS record ServerKit owns across all provider zones, in one place.
+export async function getManagedDnsRecords() {
+    return this.request('/dns/managed');
+}
+
 export async function importDNSZone(zoneId, zoneFile) {
     return this.request(`/dns/${zoneId}/import`, {
         method: 'POST',

@@ -29,6 +29,18 @@ _CATALOG = {
         'severity': 'critical',
         'category': 'backups',
     },
+    'restore.completed': {
+        'title': 'Restore completed: {app}',
+        'template': 'generic',
+        'severity': 'success',
+        'category': 'backups',
+    },
+    'restore.failed': {
+        'title': 'Restore failed: {app}',
+        'template': 'generic',
+        'severity': 'critical',
+        'category': 'backups',
+    },
     # --- security ---
     'security.alert': {
         'title': 'Security alert: {alert_type}',

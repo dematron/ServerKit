@@ -450,6 +450,8 @@ def create_app(config_name=None):
         WorkflowEngine.register_jobs()
         from app.services.backup_service import BackupService
         BackupService.register_jobs()
+        from app.services.backup_policy_service import BackupPolicyService
+        BackupPolicyService.register_jobs()
         start_job_system(app, seed=seed_builtin_schedules)
 
     # Request body size limit

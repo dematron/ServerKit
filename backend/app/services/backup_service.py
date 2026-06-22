@@ -804,6 +804,85 @@ class BackupService:
         except Exception:
             pass
 
+    # --- Smart backups (incremental + compression tiering) ---
+
+    @classmethod
+    def _compression_program(cls, compression):
+        """Return ``(tar --use-compress-program value, file extension)`` for a
+        compression tier. zstd is preferred for balanced/max; gzip is the
+        fallback when the zstd binary is missing."""
+        have_zstd = is_command_available('zstd')
+        if compression == 'fast':
+            return ('gzip', 'gz')
+        if compression == 'max':
+            return ('zstd -19 -T0', 'zst') if have_zstd else ('gzip -9', 'gz')
+        # balanced (default)
+        return ('zstd -3 -T0', 'zst') if have_zstd else ('gzip', 'gz')
+
+    @classmethod
+    def smart_backup_files(cls, source_path, dest_dir, kind, compression, snar_path):
+        """Create a (full|incremental) compressed tar of ``source_path`` into
+        ``dest_dir``.
+
+        Uses GNU ``tar --listed-incremental`` (level-0 for full, level-1+ for
+        incremental, sharing one ``.snar`` per policy). A full run resets the
+        ``.snar`` so the chain starts fresh. Falls back to a full Python
+        ``tarfile`` gzip archive when ``tar`` is unavailable (e.g. Windows dev),
+        which means incremental degrades gracefully to full.
+
+        Returns a dict: archive, size, compression, kind, incremental, ext.
+        """
+        os.makedirs(dest_dir, exist_ok=True)
+
+        if not (os.name == 'posix' and is_command_available('tar')):
+            archive = os.path.join(dest_dir, 'files.tar.gz')
+            with tarfile.open(archive, 'w:gz') as tar:
+                tar.add(source_path, arcname=os.path.basename(source_path))
+            return {'archive': archive, 'size': os.path.getsize(archive),
+                    'compression': 'gzip', 'kind': 'full', 'incremental': False, 'ext': 'gz'}
+
+        program, ext = cls._compression_program(compression)
+        archive = os.path.join(dest_dir, f'files.tar.{ext}')
+
+        # A full backup resets the incremental chain.
+        if kind == 'full' and os.path.exists(snar_path):
+            try:
+                os.remove(snar_path)
+            except OSError:
+                pass
+
+        os.makedirs(os.path.dirname(snar_path), exist_ok=True)
+        cmd = ['tar']
+        if program:
+            cmd.append(f'--use-compress-program={program}')
+        cmd.append(f'--listed-incremental={snar_path}')
+        cmd += ['-cf', archive, '-C', os.path.dirname(source_path) or '/', os.path.basename(source_path)]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        if result.returncode != 0:
+            raise RuntimeError(f'tar failed: {(result.stderr or "").strip()[:300]}')
+        return {'archive': archive, 'size': os.path.getsize(archive),
+                'compression': program, 'kind': kind, 'incremental': kind == 'incremental', 'ext': ext}
+
+    @classmethod
+    def restore_incremental_chain(cls, archives, restore_path):
+        """Restore an ordered list of incremental tar archives (full first) into
+        ``restore_path`` using ``tar --listed-incremental``. Each archive is
+        extracted in sequence, reconstructing the point-in-time state of the last
+        archive (including files deleted between increments)."""
+        if not archives:
+            raise RuntimeError('No archives to restore')
+        os.makedirs(restore_path, exist_ok=True)
+        parent = os.path.dirname(restore_path.rstrip('/')) or '/'
+        for archive in archives:
+            if not os.path.exists(archive):
+                raise RuntimeError(f'Backup archive missing: {archive}')
+            cmd = ['tar', '--listed-incremental=/dev/null', '-xf', archive, '-C', parent]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if result.returncode != 0:
+                raise RuntimeError(f'tar restore failed: {(result.stderr or "").strip()[:300]}')
+        return {'success': True, 'restore_path': restore_path}
+
     # --- Scheduler (unified job system) ---
 
     @classmethod

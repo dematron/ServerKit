@@ -44,6 +44,8 @@ from app.models.passkey import PasskeyCredential
 from app.models.secret_vault import SecretVault, Secret
 from app.models.webhook_gateway import WebhookEndpoint, WebhookDelivery
 from app.models.waf_policy import WafPolicy
+from app.models.backup_policy import BackupPolicy
+from app.models.backup_run import BackupRun
 from app.queue_bus.models import QueueGroup, Queue, QueueMessage
 from app.notifications.models import Notification, NotificationDelivery
 from app.models.email_provider import EmailProviderConnection
@@ -76,6 +78,7 @@ __all__ = [
     'SecretVault', 'Secret',
     'WebhookEndpoint', 'WebhookDelivery',
     'WafPolicy',
+    'BackupPolicy', 'BackupRun',
     'QueueGroup', 'Queue', 'QueueMessage',
     'Notification', 'NotificationDelivery',
     'EmailProviderConnection',

@@ -21,6 +21,7 @@ from app.models.wordpress_site import WordPressSite, DatabaseSnapshot
 from app.services.wordpress_env_service import WordPressEnvService
 from app.services.db_sync_service import DatabaseSyncService
 from app.services.git_wordpress_service import GitWordPressService
+from app.services.backup_policy_service import BackupPolicyService, BackupPolicyError
 
 wordpress_sites_bp = Blueprint('wordpress_sites', __name__)
 
@@ -215,6 +216,109 @@ def delete_snapshot(site_id, snapshot_id):
     db.session.commit()
 
     return jsonify({'success': True, 'message': 'Snapshot deleted'})
+
+
+# =============================================================================
+# Backup Protection (policy + runs)
+# =============================================================================
+
+def _load_wp_site(site_id):
+    """Load a site the current user owns, or None."""
+    user = get_current_user()
+    return WordPressSite.query.join(Application).filter(
+        WordPressSite.id == site_id,
+        Application.user_id == user.id,
+    ).first()
+
+
+@wordpress_sites_bp.route('/sites/<int:site_id>/backup-policy', methods=['GET'])
+@auth_required()
+def get_wp_backup_policy(site_id):
+    """Return the protection policy + status for a site (creating a default)."""
+    if not _load_wp_site(site_id):
+        return jsonify({'error': 'Site not found'}), 404
+    policy = BackupPolicyService.get_or_create_policy('wordpress_site', site_id)
+    return jsonify(BackupPolicyService.serialize_policy_view(policy))
+
+
+@wordpress_sites_bp.route('/sites/<int:site_id>/backup-policy', methods=['PUT'])
+@auth_required()
+def update_wp_backup_policy(site_id):
+    """Update the protection policy and re-sync its schedule."""
+    if not _load_wp_site(site_id):
+        return jsonify({'error': 'Site not found'}), 404
+    policy = BackupPolicyService.get_or_create_policy('wordpress_site', site_id)
+    try:
+        BackupPolicyService.update_policy(policy, request.get_json() or {})
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(BackupPolicyService.serialize_policy_view(policy))
+
+
+@wordpress_sites_bp.route('/sites/<int:site_id>/backups', methods=['POST'])
+@auth_required()
+def trigger_wp_backup(site_id):
+    """Enqueue a one-off backup for the site."""
+    if not _load_wp_site(site_id):
+        return jsonify({'error': 'Site not found'}), 404
+    policy = BackupPolicyService.get_or_create_policy('wordpress_site', site_id)
+    try:
+        job = BackupPolicyService.run_policy_now(policy, manual=True)
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 409
+    return jsonify({'success': True, 'job_id': job.id}), 202
+
+
+@wordpress_sites_bp.route('/sites/<int:site_id>/backups', methods=['GET'])
+@auth_required()
+def list_wp_backups(site_id):
+    """List backup runs for the site."""
+    if not _load_wp_site(site_id):
+        return jsonify({'error': 'Site not found'}), 404
+    policy = BackupPolicyService.get_or_create_policy('wordpress_site', site_id)
+    return jsonify({'runs': BackupPolicyService.list_runs(policy)})
+
+
+@wordpress_sites_bp.route('/sites/<int:site_id>/backups/<int:run_id>/restore', methods=['POST'])
+@auth_required()
+def restore_wp_backup(site_id, run_id):
+    """Enqueue a restore from a specific backup run."""
+    if not _load_wp_site(site_id):
+        return jsonify({'error': 'Site not found'}), 404
+    policy = BackupPolicyService.get_or_create_policy('wordpress_site', site_id)
+    try:
+        job = BackupPolicyService.request_restore(policy, run_id, request.get_json() or {})
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'success': True, 'job_id': job.id}), 202
+
+
+@wordpress_sites_bp.route('/sites/<int:site_id>/backups/<int:run_id>/verify', methods=['POST'])
+@auth_required()
+def verify_wp_backup(site_id, run_id):
+    """Verify the remote copy of a backup run."""
+    if not _load_wp_site(site_id):
+        return jsonify({'error': 'Site not found'}), 404
+    policy = BackupPolicyService.get_or_create_policy('wordpress_site', site_id)
+    try:
+        result = BackupPolicyService.verify_run(policy, run_id)
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(result)
+
+
+@wordpress_sites_bp.route('/sites/<int:site_id>/backups/<int:run_id>', methods=['DELETE'])
+@auth_required()
+def delete_wp_backup(site_id, run_id):
+    """Delete a backup run (local + remote + record)."""
+    if not _load_wp_site(site_id):
+        return jsonify({'error': 'Site not found'}), 404
+    policy = BackupPolicyService.get_or_create_policy('wordpress_site', site_id)
+    try:
+        BackupPolicyService.delete_run(policy, run_id)
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'success': True})
 
 
 @wordpress_sites_bp.route('/sites/<int:site_id>/clone-db', methods=['POST'])

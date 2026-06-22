@@ -5,7 +5,7 @@ from app.middleware.rbac import admin_required
 from app.models import Application
 from app.services.backup_service import BackupService
 from app.services.storage_provider_service import StorageProviderService
-from app import paths
+from app import db, paths
 
 backups_bp = Blueprint('backups', __name__)
 
@@ -51,6 +51,71 @@ def update_config():
     current_config.update(data)
     result = BackupService.save_config(current_config)
     return jsonify(result), 200 if result['success'] else 400
+
+
+@backups_bp.route('/cost-rates', methods=['GET'])
+@jwt_required()
+@admin_required
+def get_cost_rates():
+    """Storage-cost rates ($/GB/month). 'local' is the operator's own server
+    disk (free by default); s3/b2 are the real cloud-provider rates."""
+    from app.services.backup_cost_service import BackupCostService, DEFAULT_RATES
+    return jsonify({'rates': BackupCostService.get_rates(), 'defaults': DEFAULT_RATES}), 200
+
+
+@backups_bp.route('/cost-rates', methods=['PUT'])
+@jwt_required()
+@admin_required
+def update_cost_rates():
+    """Update storage-cost rates. Accepts {rates:{local,s3,b2}} or the flat dict."""
+    from app.services.backup_cost_service import BackupCostService
+    data = request.get_json() or {}
+    rates = BackupCostService.save_rates(data.get('rates') if 'rates' in data else data)
+    return jsonify({'success': True, 'rates': rates}), 200
+
+
+@backups_bp.route('/cost-summary', methods=['GET'])
+@jwt_required()
+@admin_required
+def cost_summary():
+    """Aggregate storage cost across all protection backups (BackupRun rows),
+    recomputed from current sizes x current rates, plus a forward projection."""
+    from sqlalchemy import func
+    from app.models.backup_run import BackupRun
+    from app.models.backup_policy import BackupPolicy
+    from app.services.backup_cost_service import BackupCostService
+
+    totals = db.session.query(
+        func.coalesce(func.sum(BackupRun.size_local), 0),
+        func.coalesce(func.sum(BackupRun.size_remote), 0),
+        func.count(BackupRun.id),
+    ).filter(BackupRun.status == 'success').first()
+    size_local = int(totals[0] or 0)
+    size_remote = int(totals[1] or 0)
+    count = int(totals[2] or 0)
+
+    remote_provider = BackupCostService.configured_remote_provider()
+    cost_local = float(BackupCostService.compute_cost(size_local, 'local'))
+    cost_remote = float(BackupCostService.compute_cost(size_remote, remote_provider)) if remote_provider else 0.0
+
+    projected = 0.0
+    for policy in BackupPolicy.query.all():
+        recent = (BackupRun.query.filter_by(policy_id=policy.id, status='success')
+                  .order_by(BackupRun.started_at.desc()).limit(5).all())
+        sizes = [r.size_local or 0 for r in recent]
+        avg = (sum(sizes) / len(sizes)) if sizes else (policy.last_size or 0)
+        projected += float(BackupCostService.project_monthly_cost(policy, avg))
+
+    return jsonify({
+        'backup_count': count,
+        'total_size_local': size_local,
+        'total_size_remote': size_remote,
+        'total_cost_local': round(cost_local, 4),
+        'total_cost_remote': round(cost_remote, 4),
+        'total_cost': round(cost_local + cost_remote, 4),
+        'projected_monthly_cost': round(projected, 4),
+        'cost_rates': BackupCostService.get_rates(),
+    }), 200
 
 
 @backups_bp.route('/application', methods=['POST'])

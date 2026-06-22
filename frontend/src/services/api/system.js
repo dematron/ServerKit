@@ -454,6 +454,20 @@ export async function getBackupConfig() {
     return this.request('/backups/config');
 }
 
+// Storage-cost rates ($/GB/month): local = your server disk (free by default),
+// s3/b2 = your real cloud-provider rate.
+export async function getBackupCostRates() {
+    return this.request('/backups/cost-rates');
+}
+
+export async function updateBackupCostRates(rates) {
+    return this.request('/backups/cost-rates', { method: 'PUT', body: { rates } });
+}
+
+export async function getBackupCostSummary() {
+    return this.request('/backups/cost-summary');
+}
+
 export async function updateBackupConfig(config) {
     return this.request('/backups/config', {
         method: 'PUT',

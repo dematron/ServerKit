@@ -7,6 +7,7 @@ import {
     Globe,
     Lock,
     Shield,
+    Archive,
     CircleCheck,
     CircleX,
     Sparkles,
@@ -15,6 +16,7 @@ import api from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 import { DangerZone } from '../DangerZone';
 import RepoConnectForm from '../git/RepoConnectForm';
+import ProtectionPanel from '../backups/ProtectionPanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,6 +37,7 @@ const SVC_SETTINGS_GROUPS = [
         ],
     },
     { label: 'Connections', items: [{ id: 'git', label: 'Git', icon: GitBranch }] },
+    { label: 'Data', items: [{ id: 'backups', label: 'Backups', icon: Archive }] },
     { label: 'Advanced', items: [{ id: 'danger', label: 'Danger Zone', icon: AlertTriangle }] },
 ];
 
@@ -262,6 +265,20 @@ const SettingsTab = ({ app, deployConfig, domains, primaryDomain, onUpdate }) =>
                             }}
                             submitLabel="Connect Repository"
                             idPrefix="svc"
+                        />
+                    </div>
+                )}
+
+                {/* Backups — the shared Protection panel (scheduled backups,
+                    cost, one-click restore), same component the WordPress
+                    detail page renders. */}
+                {section === 'backups' && (
+                    <div className="svc-settings__section">
+                        <h3 className="svc-settings__section-title">Backups</h3>
+                        <ProtectionPanel
+                            targetType="application"
+                            targetId={app.id}
+                            targetName={app.name}
                         />
                     </div>
                 )}

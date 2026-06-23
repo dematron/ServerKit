@@ -8,6 +8,7 @@ import { ResourceTierProvider } from './contexts/ResourceTierContext';
 import { NotificationsProvider } from './contexts/NotificationsContext';
 import { Toaster } from './components/ui/sonner';
 import DashboardLayout from './layouts/DashboardLayout';
+import AppLoader from './components/AppLoader';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -189,7 +190,7 @@ function PrivateRoute({ children }) {
     const { isAuthenticated, loading, needsSetup, needsMigration } = useAuth();
 
     if (loading) {
-        return <div className="loading">Loading...</div>;
+        return <AppLoader />;
     }
 
     // Priority: migrations > setup > auth
@@ -208,7 +209,7 @@ function PublicRoute({ children }) {
     const { isAuthenticated, loading, needsSetup, needsMigration } = useAuth();
 
     if (loading) {
-        return <div className="loading">Loading...</div>;
+        return <AppLoader />;
     }
 
     // Priority: migrations > setup > auth
@@ -227,7 +228,7 @@ function SetupRoute({ children }) {
     const { loading, needsSetup, isAuthenticated } = useAuth();
 
     if (loading) {
-        return <div className="loading">Loading...</div>;
+        return <AppLoader />;
     }
 
     // If setup is not needed, redirect appropriately

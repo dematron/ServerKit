@@ -31,3 +31,35 @@ export async function purgeCloudflareCache(zoneId, payload) {
         body: payload,
     });
 }
+
+// WAF custom firewall rules (http_request_firewall_custom phase).
+export async function getCloudflareWafRules(zoneId) {
+    return this.request(`/cloudflare/zones/${zoneId}/waf/rules`);
+}
+
+export async function addCloudflareWafRule(zoneId, rule) {
+    return this.request(`/cloudflare/zones/${zoneId}/waf/rules`, {
+        method: 'POST',
+        body: rule,
+    });
+}
+
+export async function applyCloudflareWafPreset(zoneId, presetKey, params = {}) {
+    return this.request(`/cloudflare/zones/${zoneId}/waf/presets/${presetKey}`, {
+        method: 'POST',
+        body: { params },
+    });
+}
+
+export async function updateCloudflareWafRule(zoneId, rulesetId, ruleId, fields) {
+    return this.request(`/cloudflare/zones/${zoneId}/waf/rulesets/${rulesetId}/rules/${ruleId}`, {
+        method: 'PATCH',
+        body: fields,
+    });
+}
+
+export async function deleteCloudflareWafRule(zoneId, rulesetId, ruleId) {
+    return this.request(`/cloudflare/zones/${zoneId}/waf/rulesets/${rulesetId}/rules/${ruleId}`, {
+        method: 'DELETE',
+    });
+}

@@ -98,3 +98,73 @@ def purge_cache(zone_id):
     except CloudflareError as e:
         return jsonify({'error': str(e)}), 400
     return _service_response(res)
+
+
+# ── WAF custom rules ─────────────────────────────────────────────────────────
+
+@cloudflare_bp.route('/zones/<int:zone_id>/waf/rules', methods=['GET'])
+@jwt_required()
+def list_waf_rules(zone_id):
+    try:
+        res = CloudflareService.list_waf_rules(zone_id)
+    except CloudflareError as e:
+        return jsonify({'error': str(e)}), 400
+    return _service_response(res)
+
+
+@cloudflare_bp.route('/zones/<int:zone_id>/waf/rules', methods=['POST'])
+@jwt_required()
+def add_waf_rule(zone_id):
+    if not _require_admin():
+        return jsonify({'error': 'Admin access required'}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        res = CloudflareService.add_waf_rule(
+            zone_id,
+            description=data.get('description'),
+            expression=data.get('expression'),
+            action=data.get('action'),
+            enabled=data.get('enabled', True))
+    except CloudflareError as e:
+        return jsonify({'error': str(e)}), 400
+    return _service_response(res)
+
+
+@cloudflare_bp.route('/zones/<int:zone_id>/waf/presets/<preset_key>', methods=['POST'])
+@jwt_required()
+def apply_waf_preset(zone_id, preset_key):
+    if not _require_admin():
+        return jsonify({'error': 'Admin access required'}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        res = CloudflareService.apply_waf_preset(zone_id, preset_key, data.get('params') or {})
+    except CloudflareError as e:
+        return jsonify({'error': str(e)}), 400
+    return _service_response(res)
+
+
+@cloudflare_bp.route('/zones/<int:zone_id>/waf/rulesets/<ruleset_id>/rules/<rule_id>',
+                     methods=['PATCH'])
+@jwt_required()
+def update_waf_rule(zone_id, ruleset_id, rule_id):
+    if not _require_admin():
+        return jsonify({'error': 'Admin access required'}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        res = CloudflareService.update_waf_rule(zone_id, ruleset_id, rule_id, data)
+    except CloudflareError as e:
+        return jsonify({'error': str(e)}), 400
+    return _service_response(res)
+
+
+@cloudflare_bp.route('/zones/<int:zone_id>/waf/rulesets/<ruleset_id>/rules/<rule_id>',
+                     methods=['DELETE'])
+@jwt_required()
+def delete_waf_rule(zone_id, ruleset_id, rule_id):
+    if not _require_admin():
+        return jsonify({'error': 'Admin access required'}), 403
+    try:
+        res = CloudflareService.delete_waf_rule(zone_id, ruleset_id, rule_id)
+    except CloudflareError as e:
+        return jsonify({'error': str(e)}), 400
+    return _service_response(res)

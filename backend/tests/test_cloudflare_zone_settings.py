@@ -220,3 +220,149 @@ def test_service_purge_surfaces_provider_error(app, monkeypatch):
                                                'errors': [{'message': 'rate limited'}]}))
     res = CloudflareService.purge_cache(zone.id, everything=True)
     assert res['success'] is False and 'rate limited' in res['error']
+
+
+# ── WAF custom rules (Phase 3) ───────────────────────────────────────────────
+
+def test_waf_list_no_ruleset_is_empty(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    monkeypatch.setattr(cf.requests, 'request',
+                        lambda method, url, **k:
+                            _Resp({'success': True, 'result': []})
+                            if url.endswith('/rulesets') else _Resp({'success': False}))
+    res = CloudflareService.list_waf_rules(zone.id)
+    assert res['success'] is True
+    assert res['ruleset_id'] is None and res['rules'] == []
+    assert any(p['key'] == 'lock_wp_admin' for p in res['presets'])
+
+
+def test_waf_list_surfaces_listing_error(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    monkeypatch.setattr(cf.requests, 'request',
+                        lambda *a, **k: _Resp({'success': False,
+                                               'errors': [{'message': 'token lacks WAF scope'}]}))
+    res = CloudflareService.list_waf_rules(zone.id)
+    assert res['success'] is False and 'WAF scope' in res['error']
+
+
+def test_waf_list_with_ruleset(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+
+    def stub(method, url, headers=None, json=None, params=None, timeout=None):
+        if url.endswith('/rulesets'):
+            return _Resp({'success': True, 'result': [
+                {'id': 'rs1', 'phase': 'http_request_firewall_custom', 'kind': 'zone'}]})
+        if url.endswith('/rulesets/rs1'):
+            return _Resp({'success': True, 'result': {'id': 'rs1', 'rules': [
+                {'id': 'r1', 'description': 'd', 'expression': 'e',
+                 'action': 'block', 'enabled': True}]}})
+        return _Resp({'success': False})
+    monkeypatch.setattr(cf.requests, 'request', stub)
+    res = CloudflareService.list_waf_rules(zone.id)
+    assert res['ruleset_id'] == 'rs1'
+    assert res['rules'][0]['id'] == 'r1' and res['rules'][0]['action'] == 'block'
+
+
+def test_waf_add_creates_phase_ruleset_when_absent(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    seen = {}
+
+    def stub(method, url, headers=None, json=None, params=None, timeout=None):
+        if method == 'GET' and url.endswith('/rulesets'):
+            return _Resp({'success': True, 'result': []})
+        if method == 'PUT' and url.endswith('/phases/http_request_firewall_custom/entrypoint'):
+            seen.update(json=json)
+            return _Resp({'success': True, 'result': {'id': 'rsNew'}})
+        return _Resp({'success': False})
+    monkeypatch.setattr(cf.requests, 'request', stub)
+    res = CloudflareService.add_waf_rule(zone.id, description='d',
+                                         expression='ip.src eq 1.1.1.1', action='block')
+    assert res['success'] is True
+    assert seen['json']['rules'][0]['action'] == 'block'
+
+
+def test_waf_add_posts_to_existing_ruleset(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    seen = {}
+
+    def stub(method, url, headers=None, json=None, params=None, timeout=None):
+        if method == 'GET' and url.endswith('/rulesets'):
+            return _Resp({'success': True, 'result': [
+                {'id': 'rs1', 'phase': 'http_request_firewall_custom', 'kind': 'zone'}]})
+        if method == 'POST' and url.endswith('/rulesets/rs1/rules'):
+            seen.update(json=json, url=url)
+            return _Resp({'success': True, 'result': {'id': 'rs1'}})
+        return _Resp({'success': False})
+    monkeypatch.setattr(cf.requests, 'request', stub)
+    res = CloudflareService.add_waf_rule(zone.id, description='d',
+                                         expression='x', action='log')
+    assert res['success'] is True and seen['json']['action'] == 'log'
+
+
+def test_waf_add_rejects_bad_action(app):
+    from app.services.cloudflare_service import CloudflareService, CloudflareError
+    zone = _make_cf_zone()
+    with pytest.raises(CloudflareError):
+        CloudflareService.add_waf_rule(zone.id, description='d', expression='x', action='nuke')
+
+
+def test_waf_preset_lock_requires_valid_ip(app):
+    from app.services.cloudflare_service import CloudflareService, CloudflareError
+    zone = _make_cf_zone()
+    with pytest.raises(CloudflareError):
+        CloudflareService.apply_waf_preset(zone.id, 'lock_wp_admin', {'ip': 'not-an-ip'})
+
+
+def test_waf_preset_lock_builds_safe_expression(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    seen = {}
+
+    def stub(method, url, headers=None, json=None, params=None, timeout=None):
+        if method == 'GET' and url.endswith('/rulesets'):
+            return _Resp({'success': True, 'result': [
+                {'id': 'rs1', 'phase': 'http_request_firewall_custom', 'kind': 'zone'}]})
+        if method == 'POST' and url.endswith('/rulesets/rs1/rules'):
+            seen.update(json=json)
+            return _Resp({'success': True, 'result': {'id': 'rs1'}})
+        return _Resp({'success': False})
+    monkeypatch.setattr(cf.requests, 'request', stub)
+    res = CloudflareService.apply_waf_preset(zone.id, 'lock_wp_admin', {'ip': '203.0.113.7'})
+    assert res['success'] is True
+    assert 'ip.src ne 203.0.113.7' in seen['json']['expression']
+    assert seen['json']['action'] == 'block'
+
+
+def test_waf_update_validates_action(app):
+    from app.services.cloudflare_service import CloudflareService, CloudflareError
+    zone = _make_cf_zone()
+    with pytest.raises(CloudflareError):
+        CloudflareService.update_waf_rule(zone.id, 'rs1', 'r1', {'action': 'nuke'})
+
+
+def test_waf_delete_calls_delete(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    deleted = {}
+
+    def stub(method, url, headers=None, json=None, params=None, timeout=None):
+        if method == 'DELETE':
+            deleted.update(url=url)
+            return _Resp({'success': True})
+        return _Resp({'success': False})
+    monkeypatch.setattr(cf.requests, 'request', stub)
+    res = CloudflareService.delete_waf_rule(zone.id, 'rs1', 'r1')
+    assert res['success'] is True
+    assert deleted['url'].endswith('/rulesets/rs1/rules/r1')

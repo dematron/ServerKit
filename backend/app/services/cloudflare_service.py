@@ -251,3 +251,173 @@ class CloudflareService:
         if not res.get('success'):
             return {'success': False, 'error': res.get('error', 'Cache purge failed')}
         return {'success': True, 'purged': payload}
+
+    # ── WAF custom rules ─────────────────────────────────────────────────────
+
+    WAF_PHASE = 'http_request_firewall_custom'
+    # Actions ServerKit lets you set on a custom rule (a safe subset of
+    # Cloudflare's). Terminal actions only — no "skip", which can disable WAF.
+    WAF_ACTIONS = {'block', 'managed_challenge', 'js_challenge', 'challenge', 'log'}
+
+    # One-click rule templates (plan §Phase 3). ``params`` are collected from the
+    # admin and validated before being interpolated into a Cloudflare expression.
+    WAF_PRESETS = [
+        {
+            'key': 'lock_wp_admin',
+            'label': 'Lock WordPress admin to an IP',
+            'description': 'Block /wp-admin and /wp-login.php for everyone except a '
+                           'trusted IP address (e.g. your office or home).',
+            'action': 'block',
+            'params': [{'key': 'ip', 'label': 'Allowed IP address',
+                        'placeholder': 'e.g. 203.0.113.7'}],
+        },
+        {
+            'key': 'block_exploit_paths',
+            'label': 'Block common exploit paths',
+            'description': 'Block requests probing for /xmlrpc.php, dotfiles like '
+                           '/.env and /.git, and exposed config files.',
+            'action': 'block',
+            'params': [],
+        },
+        {
+            'key': 'challenge_bad_bots',
+            'label': 'Challenge suspicious bots',
+            'description': 'Show a managed challenge to traffic with a low bot score. '
+                           'Requires Cloudflare Bot Management on some plans.',
+            'action': 'managed_challenge',
+            'params': [],
+        },
+    ]
+
+    @classmethod
+    def _validate_action(cls, action):
+        if action not in cls.WAF_ACTIONS:
+            raise CloudflareError(
+                f'Unsupported action "{action}". Use one of: {", ".join(sorted(cls.WAF_ACTIONS))}')
+
+    @classmethod
+    def _build_preset_rule(cls, key, params):
+        """Turn a preset key + admin-supplied params into a concrete rule dict.
+        Validates any user input that lands inside a Cloudflare expression (the IP)
+        so a preset can't be used to inject expression syntax."""
+        import ipaddress
+        if key == 'lock_wp_admin':
+            ip = (params.get('ip') or '').strip()
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                raise CloudflareError('A valid IP address is required for this rule')
+            return {
+                'description': 'ServerKit: lock WordPress admin to a trusted IP',
+                'expression': ('(http.request.uri.path contains "/wp-admin" or '
+                               'http.request.uri.path contains "/wp-login.php") '
+                               f'and ip.src ne {ip}'),
+                'action': 'block',
+            }
+        if key == 'block_exploit_paths':
+            return {
+                'description': 'ServerKit: block common exploit paths',
+                'expression': ('(http.request.uri.path contains "/xmlrpc.php") or '
+                               '(http.request.uri.path contains "/.env") or '
+                               '(http.request.uri.path contains "/.git/") or '
+                               '(http.request.uri.path contains "/wp-config.php")'),
+                'action': 'block',
+            }
+        if key == 'challenge_bad_bots':
+            return {
+                'description': 'ServerKit: challenge suspicious bots',
+                'expression': '(cf.bot_management.score lt 30)',
+                'action': 'managed_challenge',
+            }
+        raise CloudflareError(f'Unknown WAF preset: {key}')
+
+    @classmethod
+    def _find_custom_ruleset(cls, client, provider_zone_id):
+        """Return ``(ruleset_dict, listing_error)``. ``ruleset_dict`` is the zone's
+        custom-firewall entry-point ruleset or ``None`` when it doesn't exist yet;
+        ``listing_error`` is set only when the list call itself failed (auth/scope)."""
+        listing = client.list_rulesets(provider_zone_id)
+        if not listing.get('success'):
+            return None, listing.get('error', 'Failed to list rulesets')
+        custom = next((rs for rs in (listing.get('result') or [])
+                       if rs.get('phase') == cls.WAF_PHASE and rs.get('kind') == 'zone'), None)
+        return custom, None
+
+    @staticmethod
+    def _rule_dict(r):
+        return {'id': r.get('id'), 'description': r.get('description'),
+                'expression': r.get('expression'), 'action': r.get('action'),
+                'enabled': r.get('enabled', True), 'ref': r.get('ref')}
+
+    @classmethod
+    def list_waf_rules(cls, zone_id):
+        """Custom firewall rules for the zone, plus the preset catalog. A zone with
+        no custom ruleset yet returns an empty list (not an error)."""
+        zone, client = cls._zone_and_client(zone_id)
+        custom, err = cls._find_custom_ruleset(client, zone.provider_zone_id)
+        if err:
+            return {'success': False, 'error': err}
+        if not custom:
+            return {'success': True, 'ruleset_id': None, 'rules': [],
+                    'presets': cls.WAF_PRESETS}
+        detail = client.get_ruleset(zone.provider_zone_id, custom['id'])
+        if not detail.get('success'):
+            return {'success': False, 'error': detail.get('error', 'Failed to load ruleset')}
+        result = detail.get('result') or {}
+        rules = [cls._rule_dict(r) for r in (result.get('rules') or [])]
+        return {'success': True, 'ruleset_id': result.get('id'),
+                'rules': rules, 'presets': cls.WAF_PRESETS}
+
+    @classmethod
+    def add_waf_rule(cls, zone_id, *, description, expression, action, enabled=True):
+        """Append a custom firewall rule, creating the zone's custom ruleset on first
+        use. Returns the created rule's ruleset on success."""
+        cls._validate_action(action)
+        if not (expression or '').strip():
+            raise CloudflareError('A rule expression is required')
+        zone, client = cls._zone_and_client(zone_id)
+        rule = {'description': description or 'ServerKit rule',
+                'expression': expression, 'action': action, 'enabled': bool(enabled)}
+
+        custom, err = cls._find_custom_ruleset(client, zone.provider_zone_id)
+        if err:
+            return {'success': False, 'error': err}
+        if custom:
+            res = client.add_ruleset_rule(zone.provider_zone_id, custom['id'], rule)
+        else:
+            res = client.create_phase_ruleset(zone.provider_zone_id, cls.WAF_PHASE, [rule])
+        if not res.get('success'):
+            return {'success': False, 'error': res.get('error', 'Failed to add rule')}
+        return {'success': True, 'result': res.get('result')}
+
+    @classmethod
+    def apply_waf_preset(cls, zone_id, preset_key, params=None):
+        rule = cls._build_preset_rule(preset_key, params or {})
+        return cls.add_waf_rule(zone_id, description=rule['description'],
+                                expression=rule['expression'], action=rule['action'])
+
+    @classmethod
+    def update_waf_rule(cls, zone_id, ruleset_id, rule_id, fields):
+        """Patch a custom rule. Only known fields are forwarded; an ``action``, if
+        present, is validated."""
+        zone, client = cls._zone_and_client(zone_id)
+        rule = {}
+        for key in ('description', 'expression', 'action', 'enabled'):
+            if key in fields:
+                rule[key] = fields[key]
+        if 'action' in rule:
+            cls._validate_action(rule['action'])
+        if not rule:
+            raise CloudflareError('No updatable fields provided')
+        res = client.update_ruleset_rule(zone.provider_zone_id, ruleset_id, rule_id, rule)
+        if not res.get('success'):
+            return {'success': False, 'error': res.get('error', 'Failed to update rule')}
+        return {'success': True, 'result': res.get('result')}
+
+    @classmethod
+    def delete_waf_rule(cls, zone_id, ruleset_id, rule_id):
+        zone, client = cls._zone_and_client(zone_id)
+        res = client.delete_ruleset_rule(zone.provider_zone_id, ruleset_id, rule_id)
+        if not res.get('success'):
+            return {'success': False, 'error': res.get('error', 'Failed to delete rule')}
+        return {'success': True}

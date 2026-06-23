@@ -261,3 +261,35 @@ class CloudflareClient:
         """Purge the zone's Cloudflare cache. ``payload`` is one of
         ``{purge_everything: true}`` or ``{files|hosts|prefixes|tags: [...]}``."""
         return self.request('POST', f'/zones/{zone_id}/purge_cache', json=payload)
+
+    # ── WAF / rulesets ────────────────────────────────────────────────────────
+    # Custom firewall rules live in the zone's ``http_request_firewall_custom``
+    # phase entry-point ruleset. We list rulesets to find it (cleanly telling
+    # "no custom ruleset yet" apart from an auth error), then read/append rules
+    # by id; the first rule is created by PUTting the phase entry point.
+    def list_rulesets(self, zone_id: str) -> dict:
+        return self.request('GET', f'/zones/{zone_id}/rulesets')
+
+    def get_ruleset(self, zone_id: str, ruleset_id: str) -> dict:
+        return self.request('GET', f'/zones/{zone_id}/rulesets/{ruleset_id}')
+
+    def create_phase_ruleset(self, zone_id: str, phase: str, rules: list) -> dict:
+        """Create/replace a phase entry-point ruleset with ``rules`` (used to seed the
+        first custom rule when no ruleset exists yet)."""
+        return self.request(
+            'PUT', f'/zones/{zone_id}/rulesets/phases/{phase}/entrypoint',
+            json={'rules': rules})
+
+    def add_ruleset_rule(self, zone_id: str, ruleset_id: str, rule: dict) -> dict:
+        return self.request('POST', f'/zones/{zone_id}/rulesets/{ruleset_id}/rules',
+                            json=rule)
+
+    def update_ruleset_rule(self, zone_id: str, ruleset_id: str, rule_id: str,
+                            rule: dict) -> dict:
+        return self.request('PATCH',
+                            f'/zones/{zone_id}/rulesets/{ruleset_id}/rules/{rule_id}',
+                            json=rule)
+
+    def delete_ruleset_rule(self, zone_id: str, ruleset_id: str, rule_id: str) -> dict:
+        return self.request('DELETE',
+                            f'/zones/{zone_id}/rulesets/{ruleset_id}/rules/{rule_id}')

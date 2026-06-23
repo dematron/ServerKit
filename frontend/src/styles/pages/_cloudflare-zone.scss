@@ -155,3 +155,120 @@
         margin-top: $spacing-sm;
     }
 }
+
+// WAF tab — preset picker, custom-rule form, and the active-rules list.
+.cf-waf {
+    &__loading {
+        padding: $spacing-lg;
+        color: $text-muted;
+    }
+
+    &__section {
+        padding: $spacing-md 0;
+        border-bottom: 1px solid $border-color;
+
+        &:last-child { border-bottom: none; }
+    }
+
+    &__heading {
+        margin: 0 0 4px;
+        font-size: 0.95rem;
+    }
+
+    &__hint {
+        margin: 0 0 $spacing-sm;
+        color: $text-muted;
+        font-size: 0.85rem;
+    }
+
+    &__field {
+        margin-bottom: $spacing-sm;
+    }
+
+    &__label {
+        display: block;
+        font-size: 0.82rem;
+        color: $text-secondary;
+        margin-bottom: 4px;
+    }
+
+    &__select {
+        max-width: 320px;
+    }
+
+    &__preset-desc {
+        margin: 0 0 $spacing-sm;
+        color: $text-secondary;
+        font-size: 0.85rem;
+        line-height: 1.4;
+    }
+
+    &__params {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $spacing-md;
+    }
+
+    &__actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: $spacing-sm;
+    }
+
+    &__list {
+        list-style: none;
+        margin: $spacing-sm 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: $spacing-sm;
+    }
+
+    &__rule {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: $spacing-md;
+        padding: $spacing-md;
+        background: $bg-elevated;
+        border: 1px solid $border-color;
+        border-radius: $radius-md;
+    }
+
+    &__rule-main {
+        min-width: 0;
+        flex: 1;
+    }
+
+    &__rule-head {
+        display: flex;
+        align-items: center;
+        gap: $spacing-sm;
+        margin-bottom: $spacing-xs;
+    }
+
+    &__rule-desc {
+        font-weight: 600;
+        color: $text-primary;
+    }
+
+    &__rule-expr {
+        display: block;
+        font-family: $font-mono;
+        font-size: 0.8rem;
+        color: $text-secondary;
+        background: $bg-code;
+        padding: $spacing-xs $spacing-sm;
+        border-radius: $radius-sm;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    &__rule-actions {
+        display: flex;
+        align-items: center;
+        gap: $spacing-sm;
+        flex-shrink: 0;
+    }
+}

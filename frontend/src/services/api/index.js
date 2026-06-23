@@ -9,6 +9,7 @@ import * as systemMethods from './system.js';
 import * as securityMethods from './security.js';
 import * as fileMethods from './files.js';
 import * as dnsMethods from './dns.js';
+import * as cloudflareMethods from './cloudflare.js';
 import * as pluginMethods from './plugins.js';
 import * as deploymentJobMethods from './deploymentJobs.js';
 import * as pairingMethods from './pairing.js';
@@ -22,6 +23,7 @@ import * as queueBusMethods from './queueBus.js';
 import * as notificationMethods from './notifications.js';
 import * as telemetryMethods from './telemetry.js';
 import * as jobMethods from './jobs.js';
+import * as backupProtectionMethods from './backupProtection.js';
 
 class ApiService extends ApiClient {
     constructor() {
@@ -38,6 +40,7 @@ class ApiService extends ApiClient {
             securityMethods,
             fileMethods,
             dnsMethods,
+            cloudflareMethods,
             pluginMethods,
             deploymentJobMethods,
             pairingMethods,
@@ -51,6 +54,7 @@ class ApiService extends ApiClient {
             notificationMethods,
             telemetryMethods,
             jobMethods,
+            backupProtectionMethods,
         ];
         for (const mod of modules) {
             for (const [key, fn] of Object.entries(mod)) {

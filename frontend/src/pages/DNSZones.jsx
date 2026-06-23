@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Globe } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Globe, Layers, Cloud } from 'lucide-react';
 import { useTopbarActions } from '@/hooks/useTopbarActions';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import PageLoader from '../components/PageLoader';
 import EmptyState from '../components/EmptyState';
+import { formatRelativeTime } from '../utils/serviceTypes';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { FormField, FormRow } from '../components/FormField';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { DataTable } from '@/components/ds';
+import { Badge } from '@/components/ui/badge';
+import { DataTable, SegControl } from '@/components/ds';
 import {
     Select,
     SelectTrigger,
@@ -21,6 +24,7 @@ import {
 
 const DNSZones = () => {
     const toast = useToast();
+    const navigate = useNavigate();
     const { user } = useAuth();
     const [zones, setZones] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -32,40 +36,27 @@ const DNSZones = () => {
     const [propagationResults, setPropagationResults] = useState([]);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
 
-    const [zoneForm, setZoneForm] = useState({ domain: '', provider: 'manual', provider_zone_id: '', api_token: '' });
+    // "All managed records" — every provider record ServerKit owns, across all
+    // zones. Shown in the right column when no specific zone is selected.
+    const [showManaged, setShowManaged] = useState(false);
+    const [managedRecords, setManagedRecords] = useState(null); // null = not loaded
+    const [managedLoading, setManagedLoading] = useState(false);
+    // Inline propagation results keyed by record name (#13, reuses checkDNSPropagation).
+    const [managedPropagation, setManagedPropagation] = useState({});
+    const [managedChecking, setManagedChecking] = useState(null);
+
+    // Records panel view: 'managed' (ServerKit records) | 'provider' (live mirror)
+    const [recordsView, setRecordsView] = useState('managed');
+    const [mirror, setMirror] = useState(null); // { records, counts } | { error }
+    const [mirrorLoading, setMirrorLoading] = useState(false);
+
+    const [zoneForm, setZoneForm] = useState({ domain: '', dns_provider_config_id: '' });
+    const [providers, setProviders] = useState([]);
     const [recordForm, setRecordForm] = useState({
         record_type: 'A', name: '@', content: '', ttl: 3600, priority: null
     });
 
     const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV', 'CAA', 'NS'];
-
-    const PROVIDER_CONFIG = {
-        cloudflare: {
-            zoneLabel: 'Cloudflare Zone ID',
-            zonePlaceholder: 'e.g. 023e105f4ecef8ad9ca31a8372d0c353',
-            tokenLabel: 'API Token',
-            tokenPlaceholder: 'Cloudflare API token (Edit zone permissions)',
-            helpText: 'Find your Zone ID in the Cloudflare dashboard under Overview → API.',
-        },
-        route53: {
-            zoneLabel: 'Hosted Zone ID',
-            zonePlaceholder: 'e.g. Z3M3LMPEXAMPLE',
-            tokenLabel: 'AWS Access Key',
-            tokenPlaceholder: 'AKIA... (needs Route 53 permissions)',
-            helpText: 'Use an IAM user with AmazonRoute53FullAccess policy.',
-            extraFields: [
-                { key: 'aws_secret_key', label: 'AWS Secret Key', placeholder: 'Secret access key', type: 'password' },
-                { key: 'aws_region', label: 'AWS Region', placeholder: 'us-east-1', type: 'text' },
-            ],
-        },
-        digitalocean: {
-            zoneLabel: 'Domain Name',
-            zonePlaceholder: 'e.g. example.com (must exist in your DO account)',
-            tokenLabel: 'Personal Access Token',
-            tokenPlaceholder: 'DigitalOcean personal access token',
-            helpText: 'Generate a token at API → Tokens with read+write scope.',
-        },
-    };
 
     const loadZones = useCallback(async () => {
         try {
@@ -80,30 +71,113 @@ const DNSZones = () => {
 
     useEffect(() => { loadZones(); }, [loadZones]);
 
+    // Lazily load connected DNS providers (Settings -> Connections) for the
+    // zone picker the first time the modal opens.
+    useEffect(() => {
+        if (showCreateZone && providers.length === 0) {
+            api.getEmailDNSProviders()
+                .then(d => setProviders(d.providers || []))
+                .catch(() => {});
+        }
+    }, [showCreateZone, providers.length]);
+
     const loadRecords = async (zoneId) => {
         try {
             const data = await api.getDNSRecords(zoneId);
             setRecords(data.records || []);
             setSelectedZone(zones.find(z => z.id === zoneId));
+            // Selecting a zone leaves the cross-zone managed view.
+            setShowManaged(false);
+            // Reset the provider mirror when switching zones.
+            setRecordsView('managed');
+            setMirror(null);
         } catch (err) {
             toast.error('Failed to load records');
         }
     };
 
+    // Every provider record ServerKit owns, across all zones (#14). Lazily
+    // loaded the first time the panel is opened; refreshable thereafter.
+    const loadManagedRecords = useCallback(async () => {
+        setManagedLoading(true);
+        try {
+            const data = await api.getManagedDnsRecords();
+            setManagedRecords(data.records || []);
+        } catch (err) {
+            toast.error(err.message || 'Failed to load managed records');
+            setManagedRecords([]);
+        } finally {
+            setManagedLoading(false);
+        }
+    }, [toast]);
+
+    const handleShowManaged = () => {
+        setShowManaged(true);
+        setSelectedZone(null);
+        setRecords([]);
+        if (managedRecords === null) loadManagedRecords();
+    };
+
+    // Inline propagation check for a single managed record (#13). Reuses the
+    // existing checkDNSPropagation endpoint; result expands under the row.
+    const handleCheckManaged = async (name) => {
+        if (managedPropagation[name]) {
+            // Toggle the expansion closed if already shown.
+            setManagedPropagation(prev => {
+                const next = { ...prev };
+                delete next[name];
+                return next;
+            });
+            return;
+        }
+        setManagedChecking(name);
+        try {
+            const data = await api.checkDNSPropagation(name);
+            setManagedPropagation(prev => ({ ...prev, [name]: data.results || [] }));
+        } catch (err) {
+            toast.error(err.message || 'Propagation check failed');
+        } finally {
+            setManagedChecking(null);
+        }
+    };
+
+    // Live records as they exist in the provider (Cloudflare only). Lazily
+    // loaded the first time the "In your provider" view is opened per zone.
+    const loadMirror = async (zoneId) => {
+        setMirrorLoading(true);
+        try {
+            const data = await api.getZoneMirror(zoneId);
+            if (data.success) {
+                setMirror({ records: data.records || [], counts: data.counts || { serverkit: 0, external: 0 } });
+            } else {
+                setMirror({ error: data.error || 'Mirror unavailable for this zone' });
+            }
+        } catch (err) {
+            setMirror({ error: err.message || 'Failed to load provider records' });
+        } finally {
+            setMirrorLoading(false);
+        }
+    };
+
+    const handleRecordsView = (view) => {
+        setRecordsView(view);
+        if (view === 'provider' && !mirror && selectedZone) {
+            loadMirror(selectedZone.id);
+        }
+    };
+
     const handleCreateZone = async () => {
         try {
-            const payload = {
-                domain: zoneForm.domain,
-                provider: zoneForm.provider,
-            };
-            if (zoneForm.provider !== 'manual') {
-                payload.provider_zone_id = zoneForm.provider_zone_id;
-                payload.provider_config = { api_token: zoneForm.api_token };
+            const payload = { domain: zoneForm.domain };
+            if (zoneForm.dns_provider_config_id) {
+                payload.dns_provider_config_id = Number(zoneForm.dns_provider_config_id);
+            } else {
+                payload.provider = 'manual';
             }
             await api.createDNSZone(payload);
             toast.success('Zone created');
             setShowCreateZone(false);
-            setZoneForm({ domain: '', provider: 'manual', provider_zone_id: '', api_token: '' });
+            setZoneForm({ domain: '', dns_provider_config_id: '' });
             loadZones();
         } catch (err) {
             toast.error(err.message);
@@ -186,6 +260,14 @@ const DNSZones = () => {
         <div className="sk-tabgroup__inner dns-zones-page">
             <div className="dns-layout">
                 <div className="dns-zones-list">
+                    <button
+                        type="button"
+                        className={`dns-managed-link ${showManaged ? 'active' : ''}`}
+                        onClick={handleShowManaged}
+                    >
+                        <Layers size={15} />
+                        <span>All managed records</span>
+                    </button>
                     {zones.map(zone => (
                         <div key={zone.id}
                             className={`dns-zone-item ${selectedZone?.id === zone.id ? 'active' : ''}`}
@@ -195,6 +277,12 @@ const DNSZones = () => {
                                 <span className="text-muted">{zone.provider} &bull; {zone.record_count} records</span>
                             </div>
                             <div className="dns-zone-item__actions" onClick={e => e.stopPropagation()}>
+                                {zone.provider === 'cloudflare' && (
+                                    <Button variant="outline" size="sm" title="Cloudflare zone settings"
+                                        onClick={() => navigate(`/cloudflare/zones/${zone.id}`)}>
+                                        <Cloud size={14} /> Cloudflare
+                                    </Button>
+                                )}
                                 <Button variant="outline" size="sm" onClick={() => handleCheckPropagation(zone.domain)}>Check</Button>
                                 {user?.is_admin && (
                                     <Button variant="destructive" size="sm" onClick={() => setDeleteConfirm(zone)}>Delete</Button>
@@ -205,45 +293,183 @@ const DNSZones = () => {
                     {zones.length === 0 && <EmptyState icon={Globe} title="No DNS zones configured" />}
                 </div>
 
+                {showManaged && (
+                    <div className="dns-records-panel">
+                        <div className="dns-records-panel__header">
+                            <h2>All managed records</h2>
+                            <div className="dns-records-panel__actions">
+                                {managedRecords !== null && (
+                                    <span className="dns-managed__count">{managedRecords.length} total</span>
+                                )}
+                                <Button variant="outline" size="sm" onClick={loadManagedRecords} disabled={managedLoading}>
+                                    {managedLoading ? 'Refreshing…' : 'Refresh'}
+                                </Button>
+                            </div>
+                        </div>
+                        <p className="dns-managed__hint">
+                            Every DNS record ServerKit owns across all your provider zones.
+                        </p>
+                        <DataTable
+                            tableClassName="sk-dtable dns-records-table"
+                            sortable={false}
+                            loading={managedLoading}
+                            data={managedRecords || []}
+                            keyField="id"
+                            emptyTitle="No managed records"
+                            emptyMessage="ServerKit hasn't created any provider DNS records yet."
+                            renderRow={(rec, { key, className }) => {
+                                const results = managedPropagation[rec.name];
+                                return (
+                                    <React.Fragment key={key}>
+                                        <tr className={className}>
+                                            <td>
+                                                <span className={`dns-rtype dns-rtype--${(rec.record_type || '').toLowerCase()}`}>{rec.record_type}</span>
+                                                <span className="dns-managed__name">{rec.name}</span>
+                                            </td>
+                                            <td><span className="sk-cell-mono">{rec.provider_zone_id || '-'}</span></td>
+                                            <td>{rec.source ? <span className="dns-source-chip">{rec.source}</span> : '-'}</td>
+                                            <td>{rec.app_name || '-'}</td>
+                                            <td>{formatRelativeTime(rec.created_at) || '-'}</td>
+                                            <td className="dns-managed__action-cell">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => handleCheckManaged(rec.name)}
+                                                    disabled={managedChecking === rec.name}
+                                                >
+                                                    {managedChecking === rec.name ? 'Checking…' : results ? 'Hide' : 'Check'}
+                                                </Button>
+                                            </td>
+                                        </tr>
+                                        {results && (
+                                            <tr className="dns-managed__prop-row">
+                                                <td colSpan={6}>
+                                                    <div className="dns-managed__prop">
+                                                        {results.length === 0 && (
+                                                            <span className="text-muted">No propagation data.</span>
+                                                        )}
+                                                        {results.map((r, i) => (
+                                                            <div key={i} className="propagation-row">
+                                                                <span className={`status-dot status-dot--${r.propagated ? 'success' : 'danger'}`} />
+                                                                <strong>{r.nameserver}</strong>
+                                                                <span className="text-muted">({r.ip})</span>
+                                                                <span className="text-mono">{r.result?.join(', ') || 'No result'}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </React.Fragment>
+                                );
+                            }}
+                            columns={[
+                                { key: 'record', header: 'Record' },
+                                { key: 'zone', header: 'Zone' },
+                                { key: 'source', header: 'Source' },
+                                { key: 'app', header: 'App' },
+                                { key: 'created_at', header: 'Created' },
+                                { key: 'actions', header: '' },
+                            ]}
+                        />
+                    </div>
+                )}
+
                 {selectedZone && (
                     <div className="dns-records-panel">
                         <div className="dns-records-panel__header">
                             <h2>{selectedZone.domain}</h2>
                             <div className="dns-records-panel__actions">
                                 <Button variant="outline" size="sm" onClick={() => handleExport(selectedZone.id)}>Export</Button>
-                                {user?.is_admin && (
+                                {user?.is_admin && recordsView === 'managed' && (
                                     <Button size="sm" onClick={() => setShowCreateRecord(true)}>Add Record</Button>
                                 )}
                             </div>
                         </div>
-                        <DataTable
-                            tableClassName="sk-dtable dns-records-table"
-                            sortable={false}
-                            data={records}
-                            keyField="id"
-                            emptyTitle="No records"
-                            emptyMessage="This zone has no DNS records yet."
-                            columns={[
-                                {
-                                    key: 'type',
-                                    header: 'Type',
-                                    render: (rec) => <span className={`dns-rtype dns-rtype--${(rec.record_type || '').toLowerCase()}`}>{rec.record_type}</span>,
-                                },
-                                { key: 'name', header: 'Name' },
-                                { key: 'content', header: 'Content', render: (rec) => <span className="sk-cell-mono">{rec.content}</span> },
-                                { key: 'ttl', header: 'TTL' },
-                                { key: 'priority', header: 'Priority', render: (rec) => rec.priority || '-' },
-                                {
-                                    key: 'actions',
-                                    header: '',
-                                    render: (rec) => (
-                                        user?.is_admin && (
-                                            <Button variant="destructive" size="sm" onClick={() => handleDeleteRecord(rec.id)}>Delete</Button>
-                                        )
-                                    ),
-                                },
+
+                        <SegControl
+                            className="dns-records-panel__seg"
+                            value={recordsView}
+                            onChange={handleRecordsView}
+                            options={[
+                                { value: 'managed', label: 'ServerKit records' },
+                                { value: 'provider', label: 'In your provider' },
                             ]}
                         />
+
+                        {recordsView === 'managed' ? (
+                            <DataTable
+                                tableClassName="sk-dtable dns-records-table"
+                                sortable={false}
+                                data={records}
+                                keyField="id"
+                                emptyTitle="No records"
+                                emptyMessage="This zone has no DNS records yet."
+                                columns={[
+                                    {
+                                        key: 'type',
+                                        header: 'Type',
+                                        render: (rec) => <span className={`dns-rtype dns-rtype--${(rec.record_type || '').toLowerCase()}`}>{rec.record_type}</span>,
+                                    },
+                                    { key: 'name', header: 'Name' },
+                                    { key: 'content', header: 'Content', render: (rec) => <span className="sk-cell-mono">{rec.content}</span> },
+                                    { key: 'ttl', header: 'TTL' },
+                                    { key: 'priority', header: 'Priority', render: (rec) => rec.priority || '-' },
+                                    {
+                                        key: 'actions',
+                                        header: '',
+                                        render: (rec) => (
+                                            user?.is_admin && (
+                                                <Button variant="destructive" size="sm" onClick={() => handleDeleteRecord(rec.id)}>Delete</Button>
+                                            )
+                                        ),
+                                    },
+                                ]}
+                            />
+                        ) : (
+                            <div className="dns-mirror">
+                                {mirrorLoading && <div className="dns-mirror__status">Loading provider records…</div>}
+                                {!mirrorLoading && mirror?.error && (
+                                    <div className="dns-mirror__status dns-mirror__status--error">{mirror.error}</div>
+                                )}
+                                {!mirrorLoading && mirror && !mirror.error && (
+                                    <>
+                                        <p className="dns-mirror__summary">
+                                            <span className="dns-mirror__count">{mirror.counts.serverkit} managed</span>
+                                            {' · '}
+                                            <span className="dns-mirror__count">{mirror.counts.external} external</span>
+                                            <span className="dns-mirror__hint"> — ServerKit never modifies external records.</span>
+                                        </p>
+                                        <DataTable
+                                            tableClassName="sk-dtable dns-records-table"
+                                            sortable={false}
+                                            data={mirror.records}
+                                            keyField="id"
+                                            emptyTitle="No records"
+                                            emptyMessage="No records exist in the provider for this zone."
+                                            rowClassName={(rec) => rec.managed_by === 'external' ? 'dns-mirror__row--external' : ''}
+                                            columns={[
+                                                {
+                                                    key: 'type',
+                                                    header: 'Type',
+                                                    render: (rec) => <span className={`dns-rtype dns-rtype--${(rec.type || '').toLowerCase()}`}>{rec.type}</span>,
+                                                },
+                                                { key: 'name', header: 'Name' },
+                                                { key: 'content', header: 'Content', render: (rec) => <span className="sk-cell-mono">{rec.content}</span> },
+                                                { key: 'ttl', header: 'TTL', render: (rec) => rec.ttl || '-' },
+                                                {
+                                                    key: 'managed_by',
+                                                    header: 'Source',
+                                                    render: (rec) => rec.managed_by === 'serverkit'
+                                                        ? <Badge variant="success">ServerKit</Badge>
+                                                        : <Badge variant="secondary" title="Created outside ServerKit — never modified">External</Badge>,
+                                                },
+                                            ]}
+                                        />
+                                    </>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -259,40 +485,36 @@ const DNSZones = () => {
                             <FormField label="Domain" htmlFor="zone-domain">
                                 <Input id="zone-domain" value={zoneForm.domain} onChange={e => setZoneForm({...zoneForm, domain: e.target.value})} placeholder="example.com" />
                             </FormField>
-                            <FormField label="Provider">
-                                <Select value={zoneForm.provider} onValueChange={v => setZoneForm({...zoneForm, provider: v})}>
+                            <FormField label="DNS Provider">
+                                <Select
+                                    value={zoneForm.dns_provider_config_id || 'manual'}
+                                    onValueChange={v => setZoneForm({ ...zoneForm, dns_provider_config_id: v === 'manual' ? '' : v })}
+                                >
                                     <SelectTrigger id="zone-provider">
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="manual">Manual</SelectItem>
-                                        <SelectItem value="cloudflare">Cloudflare</SelectItem>
-                                        <SelectItem value="route53">Route 53 (AWS)</SelectItem>
-                                        <SelectItem value="digitalocean">DigitalOcean</SelectItem>
+                                        <SelectItem value="manual">Manual (no automatic sync)</SelectItem>
+                                        {providers.map(p => (
+                                            <SelectItem key={p.id} value={String(p.id)}>
+                                                {p.name} — {p.provider}
+                                            </SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                             </FormField>
-                            {zoneForm.provider !== 'manual' && (() => {
-                                const cfg = PROVIDER_CONFIG[zoneForm.provider];
-                                return (
-                                    <>
-                                        {cfg.helpText && (
-                                            <p className="text-muted text-sm">{cfg.helpText}</p>
-                                        )}
-                                        <FormField label={cfg.zoneLabel} htmlFor="zone-provider-zone-id">
-                                            <Input id="zone-provider-zone-id" value={zoneForm.provider_zone_id} onChange={e => setZoneForm({...zoneForm, provider_zone_id: e.target.value})} placeholder={cfg.zonePlaceholder} />
-                                        </FormField>
-                                        <FormField label={cfg.tokenLabel} htmlFor="zone-api-token">
-                                            <Input id="zone-api-token" type="password" value={zoneForm.api_token} onChange={e => setZoneForm({...zoneForm, api_token: e.target.value})} placeholder={cfg.tokenPlaceholder} />
-                                        </FormField>
-                                        {cfg.extraFields?.map(field => (
-                                            <FormField key={field.key} label={field.label} htmlFor={`zone-${field.key}`}>
-                                                <Input id={`zone-${field.key}`} type={field.type} value={zoneForm[field.key] || ''} onChange={e => setZoneForm({...zoneForm, [field.key]: e.target.value})} placeholder={field.placeholder} />
-                                            </FormField>
-                                        ))}
-                                    </>
-                                );
-                            })()}
+                            {zoneForm.dns_provider_config_id ? (
+                                <p className="text-muted text-sm">
+                                    Records added here sync to this connection. We will match{' '}
+                                    <strong>{zoneForm.domain || 'your domain'}</strong> to a zone in that
+                                    account automatically — no zone ID or token to paste.
+                                </p>
+                            ) : (
+                                <p className="text-muted text-sm">
+                                    Manual zones are not pushed to a provider. To sync automatically,{' '}
+                                    <a href="/settings?tab=connections">connect a DNS provider</a> first.
+                                </p>
+                            )}
                         </div>
                         <div className="modal-footer">
                             <Button variant="outline" onClick={() => setShowCreateZone(false)}>Cancel</Button>

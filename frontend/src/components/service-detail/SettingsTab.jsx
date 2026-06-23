@@ -7,13 +7,16 @@ import {
     Globe,
     Lock,
     Shield,
+    Archive,
     CircleCheck,
     CircleX,
+    Sparkles,
 } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 import { DangerZone } from '../DangerZone';
 import RepoConnectForm from '../git/RepoConnectForm';
+import ProtectionPanel from '../backups/ProtectionPanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,6 +37,7 @@ const SVC_SETTINGS_GROUPS = [
         ],
     },
     { label: 'Connections', items: [{ id: 'git', label: 'Git', icon: GitBranch }] },
+    { label: 'Data', items: [{ id: 'backups', label: 'Backups', icon: Archive }] },
     { label: 'Advanced', items: [{ id: 'danger', label: 'Danger Zone', icon: AlertTriangle }] },
 ];
 
@@ -265,6 +269,20 @@ const SettingsTab = ({ app, deployConfig, domains, primaryDomain, onUpdate }) =>
                     </div>
                 )}
 
+                {/* Backups — the shared Protection panel (scheduled backups,
+                    cost, one-click restore), same component the WordPress
+                    detail page renders. */}
+                {section === 'backups' && (
+                    <div className="svc-settings__section">
+                        <h3 className="svc-settings__section-title">Backups</h3>
+                        <ProtectionPanel
+                            targetType="application"
+                            targetId={app.id}
+                            targetName={app.name}
+                        />
+                    </div>
+                )}
+
                 {/* Danger Zone */}
                 {section === 'danger' && (
                     <div className="svc-settings__section">
@@ -297,6 +315,12 @@ const DomainSslPanel = ({ app, domains, primaryDomain, onUpdate }) => {
     const [serverkitDomains, setServerkitDomains] = useState([]);
     const [contextLoading, setContextLoading] = useState(true);
     const [email, setEmail] = useState(() => localStorage.getItem('serverkit_ssl_email') || '');
+
+    // "Give it a subdomain" — publish the app at a managed <label>.<base> host.
+    const [subdomainModal, setSubdomainModal] = useState(null); // { base_domain, dns_mode }
+    const [subdomainLabel, setSubdomainLabel] = useState('');
+    const [suggesting, setSuggesting] = useState(false);
+    const [publishing, setPublishing] = useState(false);
 
     const isPublicDomain = !!primaryDomain
         && !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(primaryDomain)
@@ -354,6 +378,45 @@ const DomainSslPanel = ({ app, domains, primaryDomain, onUpdate }) => {
             toast.error(err.message || 'Failed to attach domain');
         } finally {
             setAttaching(false);
+        }
+    }
+
+    async function handleSuggestSubdomain() {
+        setSuggesting(true);
+        try {
+            const res = await api.suggestSubdomain(app.id);
+            if (!res.base_domain) {
+                toast.info('Set a managed-sites base domain in Settings → Sites to publish on a subdomain.', 6000);
+                return;
+            }
+            // Prefill the editable label from the suggestion (<label>.<base>).
+            const suggestedLabel = (res.suggestion || '').replace(`.${res.base_domain}`, '');
+            setSubdomainLabel(suggestedLabel);
+            setSubdomainModal({ base_domain: res.base_domain, dns_mode: res.dns_mode });
+        } catch (err) {
+            toast.error(err.message || 'Failed to suggest a subdomain');
+        } finally {
+            setSuggesting(false);
+        }
+    }
+
+    async function handleGiveSubdomain() {
+        setPublishing(true);
+        try {
+            const res = await api.giveSubdomain(app.id, subdomainLabel.trim());
+            if (res.success) {
+                if (res.warning) toast.warning(res.warning);
+                toast.success(res.url ? `Published at ${res.url}` : 'Subdomain published');
+                setSubdomainModal(null);
+                setSubdomainLabel('');
+                onUpdate();
+            } else {
+                toast.error(res.error || 'Failed to publish subdomain');
+            }
+        } catch (err) {
+            toast.error(err.message || 'Failed to publish subdomain');
+        } finally {
+            setPublishing(false);
         }
     }
 
@@ -427,6 +490,16 @@ const DomainSslPanel = ({ app, domains, primaryDomain, onUpdate }) => {
                         <span className="app-info-value">{health.issuer}</span>
                     </div>
                 )}
+            </div>
+
+            {/* One-click publish at a managed subdomain (<slug>.<base>). Works
+                whether or not a domain is already attached. */}
+            <div className="svc-give-subdomain">
+                <Button variant="outline" onClick={handleSuggestSubdomain} disabled={suggesting}>
+                    <Sparkles size={14} />
+                    {suggesting ? 'Checking…' : 'Give it a subdomain'}
+                </Button>
+                <span className="form-hint">Publish this service at a ServerKit-managed subdomain.</span>
             </div>
 
             {!primaryDomain ? (
@@ -506,6 +579,47 @@ const DomainSslPanel = ({ app, domains, primaryDomain, onUpdate }) => {
                             {issued ? <Shield size={14} /> : <Lock size={14} />}
                             {issuing ? 'Requesting...' : issued ? 'Re-issue Certificate' : 'Enable SSL'}
                         </Button>
+                    </div>
+                </div>
+            )}
+
+            {subdomainModal && (
+                <div className="modal-overlay" onClick={() => setSubdomainModal(null)}>
+                    <div className="modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Give it a subdomain</h2>
+                            <button className="modal-close" onClick={() => setSubdomainModal(null)}>&times;</button>
+                        </div>
+                        <div className="modal-body">
+                            <p className="hint">
+                                Publish <strong>{app.name}</strong> at a managed subdomain of{' '}
+                                <code>{subdomainModal.base_domain}</code>.
+                            </p>
+                            <div className="form-group">
+                                <Label>Subdomain</Label>
+                                <div className="svc-subdomain-input">
+                                    <Input
+                                        type="text"
+                                        value={subdomainLabel}
+                                        onChange={(e) => setSubdomainLabel(e.target.value)}
+                                        placeholder="my-app"
+                                        disabled={publishing}
+                                    />
+                                    <span className="svc-subdomain-input__suffix">.{subdomainModal.base_domain}</span>
+                                </div>
+                                <span className="form-hint">
+                                    {subdomainModal.dns_mode === 'wildcard'
+                                        ? 'Wildcard DNS is configured — this resolves instantly, no record needed.'
+                                        : 'Per-site mode — a DNS record will be created for this host.'}
+                                </span>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <Button variant="outline" onClick={() => setSubdomainModal(null)} disabled={publishing}>Cancel</Button>
+                            <Button onClick={handleGiveSubdomain} disabled={publishing || !subdomainLabel.trim()}>
+                                {publishing ? 'Publishing…' : 'Publish'}
+                            </Button>
+                        </div>
                     </div>
                 </div>
             )}

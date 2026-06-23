@@ -8,6 +8,7 @@ import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useLogsDrawer } from '../contexts/LogsDrawerContext';
 import { EnvironmentCard, SnapshotTable, GitConnectForm, CommitList } from '../components/wordpress';
+import ProtectionPanel from '../components/backups/ProtectionPanel';
 import ActivityFeed from '../components/wordpress/ActivityFeed';
 import ChangeUrlModal from '../components/wordpress/ChangeUrlModal';
 import AttachDomainModal from '../components/wordpress/AttachDomainModal';
@@ -554,7 +555,7 @@ const WordPressDetail = () => {
                     {activeTab === 'plugins' && <PluginsTab siteId={site.id} />}
                     {activeTab === 'themes' && <ThemesTab siteId={site.id} />}
                     {activeTab === 'git' && <GitTab siteId={site.id} site={site} onUpdate={loadSite} />}
-                    {activeTab === 'backups' && <BackupsTab siteId={site.id} />}
+                    {activeTab === 'backups' && <BackupsTab siteId={site.id} site={site} />}
                     {activeTab === 'uptime' && <UptimeTab siteId={site.id} />}
                     {activeTab === 'analytics' && <AnalyticsTab siteId={site.id} />}
                     {activeTab === 'vulnerabilities' && <VulnerabilitiesTab siteId={site.id} />}
@@ -3641,86 +3642,17 @@ const GitTab = ({ siteId, site, onUpdate }) => {
 };
 
 // Backups Tab
-const BackupsTab = ({ siteId }) => {
-    const toast = useToast();
-    const [snapshots, setSnapshots] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        loadSnapshots();
-    }, [siteId]);
-
-    async function loadSnapshots() {
-        try {
-            const data = await wordpressApi.getSnapshots(siteId);
-            // Filter for backup-tagged snapshots
-            setSnapshots((data.snapshots || []).filter(s => s.tag?.includes('backup')));
-        } catch (err) {
-            console.error('Failed to load backups:', err);
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function handleCreateBackup() {
-        try {
-            await wordpressApi.createSnapshot(siteId, {
-                name: `Backup ${new Date().toISOString().split('T')[0]}`,
-                tag: 'backup',
-                description: 'Full site backup'
-            });
-            toast.success('Backup created');
-            loadSnapshots();
-        } catch (err) {
-            toast.error(err.message || 'Failed to create backup');
-        }
-    }
-
-    async function handleRestore(snapId) {
-        try {
-            await wordpressApi.restoreSnapshot(siteId, snapId);
-            toast.success('Backup restored');
-        } catch (err) {
-            toast.error(err.message || 'Failed to restore backup');
-        }
-    }
-
-    async function handleDelete(snapId) {
-        try {
-            await wordpressApi.deleteSnapshot(siteId, snapId);
-            toast.success('Backup deleted');
-            loadSnapshots();
-        } catch (err) {
-            toast.error(err.message || 'Failed to delete backup');
-        }
-    }
-
-    return (
-        <div className="backups-tab">
-            <div className="section-header">
-                <h3>Backups</h3>
-                <Button onClick={handleCreateBackup}>
-                    <Plus size={14} /> Create Backup
-                </Button>
-            </div>
-
-            {snapshots.length === 0 && !loading ? (
-                <EmptyState
-                    icon={Archive}
-                    title="No backups yet"
-                    description="Create a backup to protect your site files and database."
-                />
-            ) : (
-                <SnapshotTable
-                    snapshots={snapshots}
-                    loading={loading}
-                    onRestore={handleRestore}
-                    onDelete={handleDelete}
-                />
-            )}
-        </div>
-    );
-};
+// Backups tab — now the shared Protection panel (scheduled backups, cost,
+// one-click restore). Renders for both the top-level "Backups" tab and the
+// Settings → Backups section.
+const BackupsTab = ({ siteId, site }) => (
+    <ProtectionPanel
+        targetType="wordpress_site"
+        targetId={siteId}
+        targetName={site?.name}
+        showMaintenanceModeOption
+    />
+);
 
 // Settings tab — a left sub-nav that consolidates per-site configuration which
 // used to be its own top-level tabs (PHP, safe Updates, …). Each section just
@@ -3896,7 +3828,7 @@ const WP_SETTINGS_GROUPS = [
         { id: 'updates', label: 'Updates', icon: RefreshCw, render: (ctx) => <UpdatesTab siteId={ctx.siteId} /> },
     ] },
     { label: 'Data', items: [
-        { id: 'backups', label: 'Backups', icon: Archive, render: (ctx) => <BackupsTab siteId={ctx.siteId} /> },
+        { id: 'backups', label: 'Backups', icon: Archive, render: (ctx) => <BackupsTab siteId={ctx.siteId} site={ctx.site} /> },
     ] },
     { label: 'Connections', items: [
         { id: 'git', label: 'Git', icon: GitBranch, render: (ctx) => <GitTab siteId={ctx.siteId} site={ctx.site} onUpdate={ctx.onUpdate} /> },

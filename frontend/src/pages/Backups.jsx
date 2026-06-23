@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import useTabParam from '../hooks/useTabParam';
-import { Upload, Check, AlertTriangle, Clock, Database, Package, FolderArchive, HardDrive, Cloud, CloudOff, RefreshCw, Trash2, Plus, CheckCircle, XCircle, FileArchive } from 'lucide-react';
+import { Upload, Check, AlertTriangle, Clock, Database, Package, FolderArchive, HardDrive, Cloud, CloudOff, RefreshCw, Trash2, Plus, CheckCircle, XCircle, FileArchive, DollarSign, TrendingUp } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../hooks/useConfirm';
@@ -25,6 +25,7 @@ const Backups = () => {
     const [schedules, setSchedules] = useState([]);
     const [config, setConfig] = useState(null);
     const [storageConfig, setStorageConfig] = useState(null);
+    const [costSummary, setCostSummary] = useState(null);
     const [apps, setApps] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -69,6 +70,10 @@ const Backups = () => {
         retention_days: 30
     });
 
+    // Cost rates form state ($/GB/month). Local is the operator's own server disk.
+    const [ratesForm, setRatesForm] = useState({ local: 0, s3: 0.023, b2: 0.006 });
+    const [savingRates, setSavingRates] = useState(false);
+
     // Storage config form state
     const [storageForm, setStorageForm] = useState({
         provider: 'local',
@@ -85,13 +90,15 @@ const Backups = () => {
     const loadData = async () => {
         try {
             setLoading(true);
-            const [backupsRes, statsRes, schedulesRes, configRes, appsRes, storageRes] = await Promise.all([
+            const [backupsRes, statsRes, schedulesRes, configRes, appsRes, storageRes, costRes, ratesRes] = await Promise.all([
                 api.getBackups(),
                 api.getBackupStats(),
                 api.getBackupSchedules(),
                 api.getBackupConfig(),
                 api.getApps(),
-                api.getStorageConfig().catch(() => null)
+                api.getStorageConfig().catch(() => null),
+                api.getBackupCostSummary().catch(() => null),
+                api.getBackupCostRates().catch(() => null)
             ]);
 
             setBackups(backupsRes.backups || []);
@@ -99,10 +106,19 @@ const Backups = () => {
             setSchedules(schedulesRes.schedules || []);
             setConfig(configRes);
             setApps(appsRes.applications || []);
+            setCostSummary(costRes || null);
 
             if (storageRes) {
                 setStorageConfig(storageRes);
                 setStorageForm(storageRes);
+            }
+
+            if (ratesRes?.rates) {
+                setRatesForm({
+                    local: ratesRes.rates.local ?? 0,
+                    s3: ratesRes.rates.s3 ?? 0,
+                    b2: ratesRes.rates.b2 ?? 0
+                });
             }
 
             if (configRes) {
@@ -258,6 +274,25 @@ const Backups = () => {
         }
     };
 
+    const handleSaveRates = async (e) => {
+        e.preventDefault();
+        setSavingRates(true);
+        try {
+            await api.updateBackupCostRates({
+                local: Number(ratesForm.local) || 0,
+                s3: Number(ratesForm.s3) || 0,
+                b2: Number(ratesForm.b2) || 0
+            });
+            toast.success('Storage cost rates saved');
+            const summary = await api.getBackupCostSummary().catch(() => null);
+            setCostSummary(summary || null);
+        } catch (err) {
+            toast.error(err.message);
+        } finally {
+            setSavingRates(false);
+        }
+    };
+
     const handleSaveStorageConfig = async (e) => {
         e.preventDefault();
         try {
@@ -339,6 +374,11 @@ const Backups = () => {
         return new Date(timestamp).toLocaleString();
     };
 
+    const formatMoney = (n) => {
+        const v = Number(n || 0);
+        return v === 0 || v >= 0.01 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
+    };
+
     const getBackupIcon = (type) => {
         switch (type) {
             case 'application': return <Package size={16} />;
@@ -408,6 +448,12 @@ const Backups = () => {
                         )}
                     </MetricCard>
                 )}
+                <MetricCard tone="green" icon={<DollarSign size={16} />} value={formatMoney(costSummary?.total_cost ?? 0)} label="Est. storage cost / mo">
+                    {costSummary?.total_cost_local === 0 && (
+                        <div className="sk-kpi__sub"><span>local disk is free</span></div>
+                    )}
+                </MetricCard>
+                <MetricCard tone="amber" icon={<TrendingUp size={16} />} value={formatMoney(costSummary?.projected_monthly_cost ?? 0)} label="Projected at full retention" />
             </div>
 
             {activeTab === 'backups' && (
@@ -445,9 +491,11 @@ const Backups = () => {
                                     <tr>
                                         <th>Name</th>
                                         <th>Type</th>
+                                        <th>Site/Service</th>
                                         <th>Size</th>
                                         <th>Storage</th>
                                         <th>Created</th>
+                                        <th>Cost</th>
                                         <th aria-label="Actions" />
                                     </tr>
                                 </thead>
@@ -465,9 +513,11 @@ const Backups = () => {
                                             <td>
                                                 <span className={`bk-type bk-type--${backup.type}`}>{backup.type}</span>
                                             </td>
+                                            <td>{backup.app_name || backup.name?.split('_')[0] || '—'}</td>
                                             <td className="sk-cell-mono">{formatSize(backup.size)}</td>
                                             <td>{getRemoteStatusPill(backup.remote_status)}</td>
                                             <td className="bk-when">{formatTimestamp(backup.timestamp)}</td>
+                                            <td className="sk-cell-mono">{formatMoney(((backup.size || 0) / (1024 ** 3)) * (costSummary?.cost_rates?.local || 0))}</td>
                                             <td>
                                                 <div className="bk-actions">
                                                     {backup.type !== 'files' && (
@@ -871,6 +921,61 @@ const Backups = () => {
                                     <Button type="button" variant="outline" onClick={handleCleanup}>
                                         <Trash2 size={16} />
                                         Run Cleanup Now
+                                    </Button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <div className="card-header">
+                            <h3>Storage cost rates</h3>
+                        </div>
+                        <div className="card-body">
+                            <p className="form-help">
+                                ServerKit is free &mdash; these are your own storage costs. Local is your server disk
+                                (leave at 0 if you don&apos;t track it). S3/B2 are your cloud provider&apos;s $/GB/month.
+                            </p>
+                            <form onSubmit={handleSaveRates}>
+                                <FormRow>
+                                    <FormField label="Local ($/GB/month)" htmlFor="rate-local" hint="Your server disk — usually free">
+                                        <Input
+                                            id="rate-local"
+                                            type="number"
+                                            min={0}
+                                            step="0.001"
+                                            value={ratesForm.local}
+                                            onChange={(e) => setRatesForm({...ratesForm, local: e.target.value})}
+                                        />
+                                    </FormField>
+                                    <FormField label="S3 ($/GB/month)" htmlFor="rate-s3">
+                                        <Input
+                                            id="rate-s3"
+                                            type="number"
+                                            min={0}
+                                            step="0.001"
+                                            value={ratesForm.s3}
+                                            onChange={(e) => setRatesForm({...ratesForm, s3: e.target.value})}
+                                        />
+                                    </FormField>
+                                    <FormField label="B2 ($/GB/month)" htmlFor="rate-b2">
+                                        <Input
+                                            id="rate-b2"
+                                            type="number"
+                                            min={0}
+                                            step="0.001"
+                                            value={ratesForm.b2}
+                                            onChange={(e) => setRatesForm({...ratesForm, b2: e.target.value})}
+                                        />
+                                    </FormField>
+                                </FormRow>
+                                <div className="form-actions">
+                                    <Button type="submit" disabled={savingRates}>
+                                        {savingRates ? (
+                                            <><RefreshCw size={16} className="spinning" /> Saving...</>
+                                        ) : (
+                                            <><DollarSign size={16} /> Save rates</>
+                                        )}
                                     </Button>
                                 </div>
                             </form>

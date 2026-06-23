@@ -1515,12 +1515,23 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
         running = cls._is_wordpress_running()
         config = cls._load_wp_config()
 
+        # Prefer the panel's canonical origin so the link works through a domain
+        # and Cloudflare; fall back to the local port only when no domain is set.
+        from app.services.site_domain_service import SiteDomainService
+        panel_origin = SiteDomainService.panel_origin()
+        if panel_origin:
+            public_url = f"{panel_origin}/wordpress"
+        elif app.port:
+            public_url = f"http://localhost:{app.port}"
+        else:
+            public_url = None
+
         return {
             'installed': True,
             'running': running,
             'http_port': app.port or config.get('http_port'),
             'url_path': '/wordpress',
-            'url': f"http://localhost:{app.port}" if app.port else None,
+            'url': public_url,
             'app_id': app.id,
             'version': config.get('version', '6.4')
         }
@@ -1896,7 +1907,7 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
     @classmethod
     def create_site(cls, name: str, admin_email: str, user_id: int, admin_user: str = 'admin',
                     php_version: str = None, enable_page_cache: bool = False,
-                    enable_object_cache: bool = False) -> Dict:
+                    enable_object_cache: bool = False, domain: str = None) -> Dict:
         """Create a new WordPress site via Docker.
 
         One-click orchestration: provision the Docker stack on a chosen PHP version,
@@ -2047,6 +2058,21 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
             except Exception:
                 pass
 
+            # If the caller supplied a custom domain, attach it and migrate the
+            # WordPress site URL away from localhost:<port> / base subdomain.
+            if domain:
+                attach_res = cls.attach_custom_domain(
+                    app, domain, migrate=True, issue_ssl=False
+                )
+                if attach_res.get('success'):
+                    site_url = attach_res.get('url') or site_url
+                    site_host = attach_res.get('domain') or site_host
+                    if attach_res.get('warning'):
+                        wp_warning = (wp_warning + ' ' + attach_res['warning']) if wp_warning else attach_res['warning']
+                else:
+                    attach_err = attach_res.get('error') or 'Custom domain could not be attached'
+                    wp_warning = (wp_warning + ' ' + attach_err) if wp_warning else attach_err
+
             result = {
                 'success': True,
                 'message': 'WordPress site created successfully',
@@ -2078,6 +2104,7 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
         """
         from app import db
         from app.models.domain import Domain
+        from app.services.site_domain_service import SiteDomainService
 
         if not site_host:
             return {'domain': None, 'nginx': None, 'warning': None}
@@ -2091,6 +2118,12 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
         except Exception as e:
             db.session.rollback()
             warning = f'could not record domain {site_host}: {e}'
+
+        # Per-site DNS mode: auto-create this site's A record via a connected
+        # provider (wildcard mode relies on the single *.<base> record instead).
+        dns = SiteDomainService.ensure_site_dns(site_host)
+        if dns and not dns.get('skipped') and not dns.get('created') and dns.get('message'):
+            warning = (warning + '; ' + dns['message']) if warning else dns['message']
 
         v = cls._write_app_vhost(app)
         if v.get('warning'):
@@ -2133,14 +2166,16 @@ RewriteRule ^wp-content/uploads/.*\\.php$ - [F]
 
     @classmethod
     def _canonical_site_url(cls, app) -> str:
-        """The URL WordPress serves under — its primary domain if one exists,
-        else the legacy localhost:<port> address. Used to build correct
-        search-replace pairs when cloning."""
+        """The URL WordPress actually serves under — its primary domain if one
+        exists, else the legacy localhost:<port> address it was installed with.
+        Used to build correct search-replace pairs when cloning or swapping URLs,
+        so it must reflect what's baked into the DB, not the panel's origin."""
         from app.models.domain import Domain
         d = (Domain.query.filter_by(application_id=app.id, is_primary=True).first()
              or Domain.query.filter_by(application_id=app.id).first())
         if d:
-            return f'http://{d.name}'
+            scheme = 'https' if d.ssl_enabled else 'http'
+            return f'{scheme}://{d.name}'
         if app.port:
             return f'http://localhost:{app.port}'
         return None

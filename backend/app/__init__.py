@@ -303,6 +303,11 @@ def create_app(config_name=None):
     from app.api.dns_zones import dns_zones_bp
     app.register_blueprint(dns_zones_bp, url_prefix='/api/v1/dns')
 
+    # Register blueprints - Cloudflare operations (zone settings/cache/WAF on top
+    # of the existing Cloudflare DNS connection)
+    from app.api.cloudflare import cloudflare_bp
+    app.register_blueprint(cloudflare_bp, url_prefix='/api/v1/cloudflare')
+
     # Register blueprints - Dynamic DNS
     from app.api.ddns import ddns_bp
     app.register_blueprint(ddns_bp, url_prefix='/api/v1/ddns')
@@ -391,12 +396,17 @@ def create_app(config_name=None):
             n_store = StorageProviderService.encrypt_legacy_secrets()
             n_cloud = CloudProvisioningService.encrypt_legacy_secrets()
             n_settings = SettingsService.migrate_legacy_secrets()
-            if n_dns or n_store or n_cloud or n_settings:
+            # Migrate DNS zones with an inline Cloudflare token onto the canonical
+            # connection store (idempotent), so every zone resolves creds the same way.
+            from app.services.dns_zone_service import DNSZoneService
+            n_zones = DNSZoneService.link_legacy_zones()
+            if n_dns or n_store or n_cloud or n_settings or n_zones:
                 import logging as _logging
                 _logging.getLogger(__name__).info(
                     f'Encrypted legacy secrets at rest: {n_dns} DNS provider(s), '
                     f'{n_store} storage field(s), {n_cloud} cloud provider(s), '
-                    f'{n_settings} system setting(s)')
+                    f'{n_settings} system setting(s); linked {n_zones} DNS zone(s) '
+                    f'to a connection')
         except Exception as e:
             import logging as _logging
             _logging.getLogger(__name__).warning(f'Legacy secret encryption skipped: {e}')
@@ -445,6 +455,8 @@ def create_app(config_name=None):
         WorkflowEngine.register_jobs()
         from app.services.backup_service import BackupService
         BackupService.register_jobs()
+        from app.services.backup_policy_service import BackupPolicyService
+        BackupPolicyService.register_jobs()
         start_job_system(app, seed=seed_builtin_schedules)
 
     # Request body size limit

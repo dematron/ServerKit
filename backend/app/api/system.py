@@ -7,6 +7,8 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User
 from app.services.system_service import SystemService
 from app.services.resource_tier_service import ResourceTierService
+from app.services.site_domain_service import SiteDomainService
+from app.utils.domain import is_valid_canonical_domain
 
 # Cache for update check (to avoid hitting GitHub API too often)
 _update_cache = {
@@ -212,6 +214,69 @@ def health_check():
         'canonical_https_enabled': https_enabled,
         'canonical_origin': canonical_origin(canonical_domain, https_enabled) if canonical_domain else None,
     }), 200
+
+
+@system_bp.route('/notices', methods=['GET'])
+@jwt_required()
+def get_system_notices():
+    """Return dismissible system notices for common misconfigurations."""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+
+    if not user or not user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+
+    notices = []
+    canonical_domain = (SiteDomainService.panel_origin() or '').replace('https://', '').replace('http://', '')
+    base_domain = SiteDomainService.base_domain()
+    server_ip = SiteDomainService.server_ip()
+    https_enabled = SiteDomainService.https_enabled()
+
+    if not canonical_domain or not is_valid_canonical_domain(canonical_domain):
+        notices.append({
+            'id': 'missing_canonical_domain',
+            'level': 'warning',
+            'title': 'Canonical domain not configured',
+            'message': 'Set the panel\'s canonical domain so install commands, agents, and app URLs point to the right place.',
+            'action_label': 'Fix in Settings',
+            'action_path': '/settings/site',
+            'setting_key': 'canonical_domain',
+        })
+
+    if not base_domain:
+        notices.append({
+            'id': 'missing_sites_base_domain',
+            'level': 'warning',
+            'title': 'Managed sites base domain not set',
+            'message': 'New sites will fall back to localhost:<port>. Add a base domain to publish sites at <name>.<domain>.',
+            'action_label': 'Fix in Settings',
+            'action_path': '/settings/site',
+            'setting_key': 'sites_base_domain',
+        })
+
+    if not server_ip:
+        notices.append({
+            'id': 'missing_server_public_ip',
+            'level': 'info',
+            'title': 'Server public IP not configured',
+            'message': 'Set the server public IP so ServerKit can auto-create DNS records for managed sites and custom domains.',
+            'action_label': 'Fix in Settings',
+            'action_path': '/settings/site',
+            'setting_key': 'server_public_ip',
+        })
+
+    if base_domain and server_ip and not https_enabled:
+        notices.append({
+            'id': 'managed_sites_https_not_setup',
+            'level': 'info',
+            'title': 'Managed sites HTTPS is not set up',
+            'message': f'Wildcard HTTPS for *.{base_domain} is not active. Set it up so published sites serve HTTPS.',
+            'action_label': 'Set up wildcard HTTPS',
+            'action_path': '/settings/site',
+            'setting_key': 'sites_https_enabled',
+        })
+
+    return jsonify({'notices': notices}), 200
 
 
 @system_bp.route('/resource-tier', methods=['GET'])

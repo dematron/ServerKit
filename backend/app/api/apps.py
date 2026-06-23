@@ -19,6 +19,7 @@ from app.services.container_sleep_service import ContainerSleepService
 from app.services.container_scale_service import ContainerScaleService
 from app.services.log_service import LogService
 from app.services.process_service import ProcessService
+from app.services.backup_policy_service import BackupPolicyService, BackupPolicyError
 from app.services.upload_service import (
     ensure_app_dirs,
     validate_zip,
@@ -1698,3 +1699,114 @@ def get_app_status(app_id):
         'port': app.port,
         'port_accessible': port_status.get('accessible') if port_status else None
     }), 200
+
+
+# ==================== BACKUP PROTECTION (policy + runs) ====================
+
+def _load_app_for_backup(app_id, edit=False):
+    """Load an app the current user may access (or edit). Returns (app, error)."""
+    user = User.query.get(get_jwt_identity())
+    app = Application.query.get(app_id)
+    if not app:
+        return None, (jsonify({'error': 'Application not found'}), 404)
+    allowed = _can_edit_app(user, app) if edit else _can_access_app(user, app)
+    if not allowed:
+        return None, (jsonify({'error': 'Access denied'}), 403)
+    return app, None
+
+
+@apps_bp.route('/<int:app_id>/backup-policy', methods=['GET'])
+@jwt_required()
+def get_app_backup_policy(app_id):
+    """Return the protection policy + status for an app (creating a default)."""
+    app, err = _load_app_for_backup(app_id)
+    if err:
+        return err
+    policy = BackupPolicyService.get_or_create_policy('application', app_id)
+    return jsonify(BackupPolicyService.serialize_policy_view(policy))
+
+
+@apps_bp.route('/<int:app_id>/backup-policy', methods=['PUT'])
+@jwt_required()
+def update_app_backup_policy(app_id):
+    """Update the protection policy and re-sync its schedule."""
+    app, err = _load_app_for_backup(app_id, edit=True)
+    if err:
+        return err
+    policy = BackupPolicyService.get_or_create_policy('application', app_id)
+    try:
+        BackupPolicyService.update_policy(policy, request.get_json() or {})
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(BackupPolicyService.serialize_policy_view(policy))
+
+
+@apps_bp.route('/<int:app_id>/backups', methods=['POST'])
+@jwt_required()
+def trigger_app_backup(app_id):
+    """Enqueue a one-off backup for the app."""
+    app, err = _load_app_for_backup(app_id, edit=True)
+    if err:
+        return err
+    policy = BackupPolicyService.get_or_create_policy('application', app_id)
+    try:
+        job = BackupPolicyService.run_policy_now(policy, manual=True)
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 409
+    return jsonify({'success': True, 'job_id': job.id}), 202
+
+
+@apps_bp.route('/<int:app_id>/backups', methods=['GET'])
+@jwt_required()
+def list_app_backups(app_id):
+    """List backup runs for the app."""
+    app, err = _load_app_for_backup(app_id)
+    if err:
+        return err
+    policy = BackupPolicyService.get_or_create_policy('application', app_id)
+    return jsonify({'runs': BackupPolicyService.list_runs(policy)})
+
+
+@apps_bp.route('/<int:app_id>/backups/<int:run_id>/restore', methods=['POST'])
+@jwt_required()
+def restore_app_backup(app_id, run_id):
+    """Enqueue a restore from a specific backup run."""
+    app, err = _load_app_for_backup(app_id, edit=True)
+    if err:
+        return err
+    policy = BackupPolicyService.get_or_create_policy('application', app_id)
+    try:
+        job = BackupPolicyService.request_restore(policy, run_id, request.get_json() or {})
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'success': True, 'job_id': job.id}), 202
+
+
+@apps_bp.route('/<int:app_id>/backups/<int:run_id>/verify', methods=['POST'])
+@jwt_required()
+def verify_app_backup(app_id, run_id):
+    """Verify the remote copy of a backup run."""
+    app, err = _load_app_for_backup(app_id, edit=True)
+    if err:
+        return err
+    policy = BackupPolicyService.get_or_create_policy('application', app_id)
+    try:
+        result = BackupPolicyService.verify_run(policy, run_id)
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(result)
+
+
+@apps_bp.route('/<int:app_id>/backups/<int:run_id>', methods=['DELETE'])
+@jwt_required()
+def delete_app_backup(app_id, run_id):
+    """Delete a backup run (local + remote + record)."""
+    app, err = _load_app_for_backup(app_id, edit=True)
+    if err:
+        return err
+    policy = BackupPolicyService.get_or_create_policy('application', app_id)
+    try:
+        BackupPolicyService.delete_run(policy, run_id)
+    except BackupPolicyError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'success': True})

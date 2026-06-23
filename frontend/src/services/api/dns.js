@@ -51,6 +51,26 @@ export async function exportDNSZone(zoneId) {
     return this.request(`/dns/${zoneId}/export`);
 }
 
+// DNS unification — provider change log & live zone mirror (Cloudflare)
+export async function getDnsChanges({ configId, zone, result, limit } = {}) {
+    const params = new URLSearchParams();
+    if (configId != null) params.append('config_id', configId);
+    if (zone) params.append('zone', zone);
+    if (result) params.append('result', result);
+    if (limit != null) params.append('limit', limit);
+    const qs = params.toString();
+    return this.request(`/dns/changes${qs ? `?${qs}` : ''}`);
+}
+
+export async function getZoneMirror(zoneId) {
+    return this.request(`/dns/${zoneId}/mirror`);
+}
+
+// Every DNS record ServerKit owns across all provider zones, in one place.
+export async function getManagedDnsRecords() {
+    return this.request('/dns/managed');
+}
+
 export async function importDNSZone(zoneId, zoneFile) {
     return this.request(`/dns/${zoneId}/import`, {
         method: 'POST',

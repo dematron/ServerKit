@@ -29,6 +29,8 @@ from app.models.agent_plugin import AgentPlugin, AgentPluginInstall
 from app.models.server_template import ServerTemplate, ServerTemplateAssignment
 from app.models.workspace import Workspace, WorkspaceMember, WorkspaceApiKey, ResourceGrant
 from app.models.dns_zone import DNSZone, DNSRecord
+from app.models.managed_dns_record import ManagedDnsRecord
+from app.models.dns_change import DnsChange
 from app.models.tunnel import Tunnel
 from app.models.exposed_service import ExposedService
 from app.models.status_page import StatusPage, StatusComponent, HealthCheck, StatusIncident, StatusIncidentUpdate
@@ -42,6 +44,10 @@ from app.models.passkey import PasskeyCredential
 from app.models.secret_vault import SecretVault, Secret
 from app.models.webhook_gateway import WebhookEndpoint, WebhookDelivery
 from app.models.waf_policy import WafPolicy
+from app.models.cloudflare_worker import CloudflareWorker
+from app.models.cloudflare_tunnel import CloudflareTunnel
+from app.models.backup_policy import BackupPolicy
+from app.models.backup_run import BackupRun
 from app.queue_bus.models import QueueGroup, Queue, QueueMessage
 from app.notifications.models import Notification, NotificationDelivery
 from app.models.email_provider import EmailProviderConnection
@@ -61,7 +67,7 @@ __all__ = [
     'AgentPlugin', 'AgentPluginInstall',
     'ServerTemplate', 'ServerTemplateAssignment',
     'Workspace', 'WorkspaceMember', 'WorkspaceApiKey', 'ResourceGrant',
-    'DNSZone', 'DNSRecord',
+    'DNSZone', 'DNSRecord', 'ManagedDnsRecord', 'DnsChange',
     'Tunnel', 'ExposedService',
     'StatusPage', 'StatusComponent', 'HealthCheck', 'StatusIncident', 'StatusIncidentUpdate',
     'CloudProvider', 'CloudServer', 'CloudSnapshot',
@@ -74,6 +80,8 @@ __all__ = [
     'SecretVault', 'Secret',
     'WebhookEndpoint', 'WebhookDelivery',
     'WafPolicy',
+    'CloudflareWorker', 'CloudflareTunnel',
+    'BackupPolicy', 'BackupRun',
     'QueueGroup', 'Queue', 'QueueMessage',
     'Notification', 'NotificationDelivery',
     'EmailProviderConnection',

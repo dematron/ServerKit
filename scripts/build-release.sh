@@ -2,8 +2,10 @@
 #
 # ServerKit release builder.
 #
-# Produces a portable tarball that installs without compiling on the target:
-# the full /opt/serverkit tree with a pre-built venv and a built frontend.
+# Produces a portable tarball that installs without compiling the frontend on
+# the target: the full /opt/serverkit tree with a built frontend. The Python
+# virtualenv is created locally by install.sh/update.sh so absolute paths in
+# the venv always match the target machine.
 #
 #   bash scripts/build-release.sh
 #   VERSION=v1.7.0 bash scripts/build-release.sh
@@ -54,8 +56,7 @@ step "Building release ${RELEASE_TAG} for ${DL_ARCH}"
 # ---------------------------------------------------------------------------
 # Toolchain check
 # ---------------------------------------------------------------------------
-command -v python3 &>/dev/null || halt "python3 is required."
-command -v node    &>/dev/null || halt "Node.js is required."
+command -v node &>/dev/null || halt "Node.js is required."
 
 # ---------------------------------------------------------------------------
 # Stage a clean copy of the repository
@@ -66,20 +67,12 @@ mkdir -p "$BUILD_DIR"
 
 step "Copying the source tree..."
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-rsync -a --exclude=.git --exclude=node_modules --exclude=venv --exclude=__pycache__ \
-    --exclude=.pytest_cache --exclude=instance --exclude=dist \
-    --exclude=/backups --exclude=/backend/instance/backups --exclude=/backend/dev-data/backups \
-    "$REPO_ROOT/" "$BUILD_DIR/"
 
-# ---------------------------------------------------------------------------
-# Bake the Python virtual environment
-# ---------------------------------------------------------------------------
-step "Creating the Python virtual environment..."
-python3 -m venv "$BUILD_DIR/venv"
-source "$BUILD_DIR/venv/bin/activate"
-pip install --upgrade pip --quiet
-pip install -r "$BUILD_DIR/backend/requirements.txt" --quiet
-pip install gunicorn gevent gevent-websocket --quiet
+# Copy the source tree with tar, which handles broken symlinks and avoids
+# the long rm -rf timeouts that cp + rm can hit on Windows/Git Bash.
+mkdir -p "$BUILD_DIR"
+cd "$REPO_ROOT"
+tar -cf -     --exclude='./.git'     --exclude='./node_modules'     --exclude='./venv'     --exclude='./.venv'     --exclude='./.venv-wsl'     --exclude='./backend/venv'     --exclude='./backend/.venv'     --exclude='./backend/.venv-wsl'     --exclude='./__pycache__'     --exclude='./.pytest_cache'     --exclude='./instance'     --exclude='./dist'     --exclude='./backups'     --exclude='./backend/dev-data/backups'     --exclude='./backend/instance/backups'     --exclude='./scripts/test/output'     --exclude='*.png'     --exclude='*.jpeg'     --exclude='*.jpg'     --exclude='*.log'     --exclude='*.tmp'     --exclude='*.pyc'     . | tar -C "$BUILD_DIR" -xf -
 
 # ---------------------------------------------------------------------------
 # Build the frontend bundle
@@ -97,6 +90,7 @@ rm -rf "$BUILD_DIR/frontend/node_modules"
 find "$BUILD_DIR" -type d -name __pycache__    -exec rm -rf {} + 2>/dev/null || true
 find "$BUILD_DIR" -type d -name .pytest_cache  -exec rm -rf {} + 2>/dev/null || true
 find "$BUILD_DIR" -type f -name '*.pyc' -delete 2>/dev/null || true
+find "$BUILD_DIR" -type f \( -name '*.png' -o -name '*.jpeg' -o -name '*.jpg' \) -delete 2>/dev/null || true
 
 # Runtime directory the app expects to exist.
 mkdir -p "$BUILD_DIR/backend/instance"
@@ -106,17 +100,35 @@ mkdir -p "$BUILD_DIR/backend/instance"
 # ---------------------------------------------------------------------------
 step "Creating the tarball..."
 # Land the tarball at the repo root (matches .gitignore's /serverkit-*.tar.gz).
-# Note: REPO_ROOT is captured up-front and stays valid after BUILD_DIR is moved.
 DEST_DIR="$REPO_ROOT"
-PACK_DIR="/tmp/serverkit-tarball-$$"
-mkdir -p "$PACK_DIR/opt"
-mv "$BUILD_DIR" "$PACK_DIR/opt/serverkit"
 
-cd "$PACK_DIR/opt"
-tar czf "${DEST_DIR}/${OUTPUT}" serverkit
+# Pack from the parent of BUILD_DIR with a transform so the archive contains
+# /opt/serverkit without moving directories across filesystems.
+cd "$(dirname "$BUILD_DIR")"
+tar czf "${DEST_DIR}/${OUTPUT}" \
+    --exclude='node_modules' \
+    --exclude='venv' \
+    --exclude='.venv' \
+    --exclude='.venv-wsl' \
+    --exclude='__pycache__' \
+    --exclude='.pytest_cache' \
+    --exclude='instance' \
+    --exclude='dist' \
+    --exclude='/backups' \
+    --exclude='/backend/instance/backups' \
+    --exclude='/backend/dev-data/backups' \
+    --exclude='/scripts/test/output' \
+    --exclude='*.png' \
+    --exclude='*.jpeg' \
+    --exclude='*.jpg' \
+    --exclude='*.log' \
+    --exclude='*.tmp' \
+    --exclude='*.pyc' \
+    --transform 's|^serverkit-release-build|opt/serverkit|' \
+    serverkit-release-build
 
 cd "$DEST_DIR"
-rm -rf "$PACK_DIR"
+rm -rf "$BUILD_DIR"
 
 good "Release built: ${OUTPUT}"
 ls -lh "${OUTPUT}"

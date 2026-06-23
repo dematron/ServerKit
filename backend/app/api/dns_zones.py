@@ -131,6 +131,49 @@ def check_propagation(domain):
     return jsonify({'domain': domain, 'record_type': record_type, 'results': results})
 
 
+@dns_zones_bp.route('/<int:zone_id>/mirror', methods=['GET'])
+@jwt_required()
+def zone_mirror(zone_id):
+    """Live provider records for a zone, each tagged serverkit-owned vs external."""
+    zone = DNSZoneService.get_zone(zone_id)
+    if not zone:
+        return jsonify({'error': 'Zone not found'}), 404
+    return jsonify(DNSZoneService.list_provider_records(zone))
+
+
+@dns_zones_bp.route('/changes', methods=['GET'])
+@jwt_required()
+def list_dns_changes():
+    """The 'Changes to your Cloudflare' activity feed — every record write ServerKit
+    sent to a connected provider. Filter by ?config_id=, ?zone= (provider zone id),
+    ?result= (ok|error|conflict|skipped)."""
+    from app.services.dns_change_service import DnsChangeService
+    config_id = request.args.get('config_id', type=int)
+    zone = request.args.get('zone')
+    result = request.args.get('result')
+    limit = request.args.get('limit', default=100, type=int)
+    changes = DnsChangeService.list(config_id=config_id, provider_zone_id=zone,
+                                    result=result, limit=min(max(limit, 1), 500))
+    return jsonify({'changes': [c.to_dict() for c in changes]})
+
+
+@dns_zones_bp.route('/managed', methods=['GET'])
+@jwt_required()
+def list_managed_records():
+    """Every DNS record ServerKit owns across all provider zones, in one place —
+    enriched with the app that triggered each (when applicable)."""
+    from app.services.dns_ownership_service import DnsOwnershipService
+    from app.models.application import Application
+    rows = DnsOwnershipService.list_all()
+    app_names = {a.id: a.name for a in Application.query.all()} if rows else {}
+    out = []
+    for r in rows:
+        d = r.to_dict()
+        d['app_name'] = app_names.get(r.app_id)
+        out.append(d)
+    return jsonify({'records': out, 'count': len(out)})
+
+
 @dns_zones_bp.route('/<int:zone_id>/export', methods=['GET'])
 @jwt_required()
 def export_zone(zone_id):

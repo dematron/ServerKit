@@ -363,6 +363,18 @@ curl -fsSL https://serverkit.ai/install.sh | bash
 ```
 
 > Works on Ubuntu 22.04+, Debian 12+, Fedora, and RHEL/Rocky/AlmaLinux 9+. Sets up everything automatically.
+>
+> Optional: `PANEL_DOMAIN=panel.example.com` sets the domain and tries Let's Encrypt; `SERVERKIT_OFFLINE_TARBALL=...` installs from a local tarball.
+
+### Update
+
+```bash
+sudo serverkit update
+```
+
+Atomic blue/green update with pre-flight checks, DB backup, migration, and
+automatic rollback. Use `--dry-run` to preview, `--branch dev` for dev builds,
+or `--release [version]` for release tarballs.
 
 ### Option 2: Docker
 

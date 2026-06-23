@@ -79,3 +79,22 @@ def update_zone_setting(zone_id, setting_id):
     except CloudflareError as e:
         return jsonify({'error': str(e)}), 400
     return _service_response(res)
+
+
+# ── Cache ────────────────────────────────────────────────────────────────────
+
+@cloudflare_bp.route('/zones/<int:zone_id>/purge-cache', methods=['POST'])
+@jwt_required()
+def purge_cache(zone_id):
+    if not _require_admin():
+        return jsonify({'error': 'Admin access required'}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        res = CloudflareService.purge_cache(
+            zone_id,
+            everything=bool(data.get('purge_everything') or data.get('everything')),
+            files=data.get('files'), hosts=data.get('hosts'),
+            prefixes=data.get('prefixes'), tags=data.get('tags'))
+    except CloudflareError as e:
+        return jsonify({'error': str(e)}), 400
+    return _service_response(res)

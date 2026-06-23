@@ -22,3 +22,12 @@ export async function applyCloudflareSettingsPreset(zoneId) {
         method: 'POST',
     });
 }
+
+// Purge the zone's Cloudflare cache. payload is { purge_everything: true } or
+// { files: [...] } (and on Enterprise, hosts/prefixes/tags).
+export async function purgeCloudflareCache(zoneId, payload) {
+    return this.request(`/cloudflare/zones/${zoneId}/purge-cache`, {
+        method: 'POST',
+        body: payload,
+    });
+}

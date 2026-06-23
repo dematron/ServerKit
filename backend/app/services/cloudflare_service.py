@@ -218,3 +218,36 @@ class CloudflareService:
         applied = sum(1 for r in results if r['success'])
         return {'success': applied > 0, 'applied': applied,
                 'total': len(results), 'results': results}
+
+    # Free/Pro plans can purge everything or up to 30 individual files per request;
+    # hosts/prefixes/tags are Enterprise-only (Cloudflare returns a plan error,
+    # which we surface verbatim).
+    MAX_PURGE_FILES = 30
+
+    @classmethod
+    def purge_cache(cls, zone_id, *, everything=False, files=None, hosts=None,
+                    prefixes=None, tags=None):
+        """Purge the zone's Cloudflare cache. Either ``everything`` or one/more of
+        ``files``/``hosts``/``prefixes``/``tags``. Raises :class:`CloudflareError`
+        when nothing was requested (a caller error)."""
+        zone, client = cls._zone_and_client(zone_id)
+
+        if everything:
+            payload = {'purge_everything': True}
+        else:
+            payload = {}
+            clean = [f.strip() for f in (files or []) if f and f.strip()]
+            if clean:
+                payload['files'] = clean[:cls.MAX_PURGE_FILES]
+            for key, val in (('hosts', hosts), ('prefixes', prefixes), ('tags', tags)):
+                items = [v.strip() for v in (val or []) if v and v.strip()]
+                if items:
+                    payload[key] = items
+            if not payload:
+                raise CloudflareError('Nothing to purge — choose "everything" or '
+                                      'provide files, hosts, prefixes, or tags')
+
+        res = client.purge_cache(zone.provider_zone_id, payload)
+        if not res.get('success'):
+            return {'success': False, 'error': res.get('error', 'Cache purge failed')}
+        return {'success': True, 'purged': payload}

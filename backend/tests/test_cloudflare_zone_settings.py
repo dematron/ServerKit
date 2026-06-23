@@ -158,3 +158,65 @@ def test_service_apply_preset_reports_each(app, monkeypatch):
     assert res['total'] == len(CloudflareService.RECOMMENDED_PRESET)
     assert res['applied'] == res['total'] - 1
     assert any(r['setting'] == 'http3' and not r['success'] for r in res['results'])
+
+
+# ── cache purge (Phase 2) ────────────────────────────────────────────────────
+
+def test_client_purge_cache_posts_payload(monkeypatch):
+    from app.services.dns import cloudflare as cf
+    seen = {}
+
+    def capture(method, url, headers=None, json=None, params=None, timeout=None):
+        seen.update(method=method, url=url, json=json)
+        return _Resp({'success': True, 'result': {'id': 'zoneA'}})
+    monkeypatch.setattr(cf.requests, 'request', capture)
+    res = _client().purge_cache('zoneA', {'purge_everything': True})
+    assert res['success'] is True
+    assert seen['method'] == 'POST'
+    assert seen['url'].endswith('/zones/zoneA/purge_cache')
+    assert seen['json'] == {'purge_everything': True}
+
+
+def test_service_purge_everything(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    sent = {}
+    monkeypatch.setattr(cf.requests, 'request',
+                        lambda method, url, headers=None, json=None, params=None, timeout=None:
+                            (sent.update(json=json) or _Resp({'success': True})))
+    res = CloudflareService.purge_cache(zone.id, everything=True)
+    assert res['success'] is True
+    assert sent['json'] == {'purge_everything': True}
+
+
+def test_service_purge_files_caps_at_30(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    sent = {}
+    monkeypatch.setattr(cf.requests, 'request',
+                        lambda method, url, headers=None, json=None, params=None, timeout=None:
+                            (sent.update(json=json) or _Resp({'success': True})))
+    urls = [f'https://example.com/{i}.css' for i in range(50)]
+    res = CloudflareService.purge_cache(zone.id, files=urls)
+    assert res['success'] is True
+    assert len(sent['json']['files']) == 30
+
+
+def test_service_purge_nothing_raises(app):
+    from app.services.cloudflare_service import CloudflareService, CloudflareError
+    zone = _make_cf_zone()
+    with pytest.raises(CloudflareError):
+        CloudflareService.purge_cache(zone.id)
+
+
+def test_service_purge_surfaces_provider_error(app, monkeypatch):
+    from app.services.dns import cloudflare as cf
+    from app.services.cloudflare_service import CloudflareService
+    zone = _make_cf_zone()
+    monkeypatch.setattr(cf.requests, 'request',
+                        lambda *a, **k: _Resp({'success': False,
+                                               'errors': [{'message': 'rate limited'}]}))
+    res = CloudflareService.purge_cache(zone.id, everything=True)
+    assert res['success'] is False and 'rate limited' in res['error']

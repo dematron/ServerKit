@@ -256,3 +256,8 @@ class CloudflareClient:
         structured object for compound settings (e.g. HSTS ``security_header``)."""
         return self.request('PATCH', f'/zones/{zone_id}/settings/{setting_id}',
                             json={'value': value})
+
+    def purge_cache(self, zone_id: str, payload: dict) -> dict:
+        """Purge the zone's Cloudflare cache. ``payload`` is one of
+        ``{purge_everything: true}`` or ``{files|hosts|prefixes|tags: [...]}``."""
+        return self.request('POST', f'/zones/{zone_id}/purge_cache', json=payload)

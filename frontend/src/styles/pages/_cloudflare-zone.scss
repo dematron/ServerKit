@@ -110,6 +110,8 @@
 }
 
 .cf-actions {
+    & + & { margin-top: $spacing-md; }
+
     .cf-action {
         display: flex;
         align-items: center;
@@ -118,7 +120,13 @@
         padding: $spacing-md 0;
 
         &__text {
-            h3 { margin: 0 0 4px; font-size: 1rem; }
+            h3 {
+                margin: 0 0 4px;
+                font-size: 1rem;
+                display: inline-flex;
+                align-items: center;
+                gap: $spacing-xs;
+            }
             p { margin: 0; color: $text-muted; font-size: 0.88rem; max-width: 60ch; line-height: 1.5; }
         }
     }
@@ -127,5 +135,23 @@
         margin: $spacing-sm 0 0;
         color: $text-muted;
         font-size: 0.85rem;
+    }
+}
+
+.cf-purge-files {
+    border-top: 1px solid $border-color;
+    padding-top: $spacing-md;
+
+    &__label {
+        display: block;
+        font-size: 0.85rem;
+        color: $text-secondary;
+        margin-bottom: $spacing-xs;
+    }
+
+    &__actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: $spacing-sm;
     }
 }

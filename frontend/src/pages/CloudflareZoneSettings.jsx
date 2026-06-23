@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Cloud, ShieldCheck, Lock, Gauge, Database, Wand2 } from 'lucide-react';
+import { Cloud, ShieldCheck, Lock, Gauge, Database, Wand2, Eraser } from 'lucide-react';
 import { PageTopbar } from '@/components/ds';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import {
     Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from '@/components/ui/select';
 import PageLoader from '../components/PageLoader';
 import EmptyState from '../components/EmptyState';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
@@ -46,6 +48,9 @@ const CloudflareZoneSettings = () => {
     const [settings, setSettings] = useState({});
     const [saving, setSaving] = useState(null);        // setting id in flight
     const [applying, setApplying] = useState(false);
+    const [purgeUrls, setPurgeUrls] = useState('');
+    const [purging, setPurging] = useState(false);
+    const [confirmPurgeAll, setConfirmPurgeAll] = useState(false);
 
     const loadSettings = useCallback(async () => {
         setLoading(true);
@@ -95,6 +100,38 @@ const CloudflareZoneSettings = () => {
             toast.error(err.message || 'Failed to apply preset');
         } finally {
             setApplying(false);
+        }
+    };
+
+    const handlePurgeEverything = async () => {
+        setConfirmPurgeAll(false);
+        setPurging(true);
+        try {
+            await api.purgeCloudflareCache(zoneId, { purge_everything: true });
+            toast.success('Purged the entire cache');
+        } catch (err) {
+            toast.error(err.message || 'Failed to purge cache');
+        } finally {
+            setPurging(false);
+        }
+    };
+
+    const handlePurgeFiles = async () => {
+        const files = purgeUrls.split('\n').map(u => u.trim()).filter(Boolean);
+        if (files.length === 0) {
+            toast.error('Enter at least one URL to purge');
+            return;
+        }
+        setPurging(true);
+        try {
+            const res = await api.purgeCloudflareCache(zoneId, { files });
+            const n = res.purged?.files?.length ?? files.length;
+            toast.success(`Purged ${n} URL${n === 1 ? '' : 's'} from cache`);
+            setPurgeUrls('');
+        } catch (err) {
+            toast.error(err.message || 'Failed to purge URLs');
+        } finally {
+            setPurging(false);
         }
     };
 
@@ -189,9 +226,64 @@ const CloudflareZoneSettings = () => {
                                 </p>
                             )}
                         </div>
+
+                        <div className="cf-panel cf-actions">
+                            <div className="cf-action">
+                                <div className="cf-action__text">
+                                    <h3><Eraser size={15} /> Purge cache</h3>
+                                    <p>
+                                        Clear Cloudflare&apos;s cached copy of your site so visitors get
+                                        fresh content. Purge everything, or list specific URLs below.
+                                    </p>
+                                </div>
+                                <Button
+                                    variant="destructive"
+                                    onClick={() => setConfirmPurgeAll(true)}
+                                    disabled={purging || !isAdmin}
+                                >
+                                    {purging ? 'Purging…' : 'Purge everything'}
+                                </Button>
+                            </div>
+                            <div className="cf-purge-files">
+                                <label htmlFor="cf-purge-urls" className="cf-purge-files__label">
+                                    Purge specific URLs (one per line, up to 30)
+                                </label>
+                                <Textarea
+                                    id="cf-purge-urls"
+                                    rows={4}
+                                    placeholder={'https://example.com/style.css\nhttps://example.com/app.js'}
+                                    value={purgeUrls}
+                                    disabled={purging || !isAdmin}
+                                    onChange={(e) => setPurgeUrls(e.target.value)}
+                                />
+                                <div className="cf-purge-files__actions">
+                                    <Button
+                                        variant="outline"
+                                        onClick={handlePurgeFiles}
+                                        disabled={purging || !isAdmin || !purgeUrls.trim()}
+                                    >
+                                        Purge URLs
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
                     </TabsContent>
                 </Tabs>
             </div>
+
+            {confirmPurgeAll && (
+                <ConfirmDialog
+                    isOpen
+                    title="Purge entire cache"
+                    message={`Clear Cloudflare's entire cache for ${zone?.domain || 'this zone'}? `
+                        + 'The next visit to each page will be served from your origin until '
+                        + 'it re-caches. This is safe but can briefly increase origin load.'}
+                    confirmText="Purge everything"
+                    onConfirm={handlePurgeEverything}
+                    onCancel={() => setConfirmPurgeAll(false)}
+                    variant="danger"
+                />
+            )}
         </div>
     );
 };

@@ -116,6 +116,10 @@ def create_app(config_name=None):
     from app.api.tunnels import tunnels_bp
     from app.api.private_urls import private_urls_bp
     app.register_blueprint(apps_bp, url_prefix='/api/v1/apps')
+    # "Services" is the user-facing term for Applications (§1 unification).
+    # Mount the same blueprint under /api/v1/services as a true alias so the
+    # canonical `apps` routes and any `services` callers resolve identically.
+    app.register_blueprint(apps_bp, url_prefix='/api/v1/services', name='services')
     app.register_blueprint(domains_bp, url_prefix='/api/v1/domains')
     app.register_blueprint(private_urls_bp, url_prefix='/api/v1/apps')
 

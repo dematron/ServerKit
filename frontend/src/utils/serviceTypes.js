@@ -3,13 +3,17 @@
 // green #3ddc97 / red #fb6f6f / amber #f5b945 / accent #6d7cff /
 // cyan #49c7f0 / violet #b07bf5, neutral gray #646b7a.
 const SERVICE_TYPES = {
+    // Tab order note: ops/waf/build/deploy/previews were merged in from the
+    // retired ApplicationDetail page (§1 feature unification). Type-gating
+    // matches the old page exactly: ops = Docker only; waf = Docker + Python
+    // (nginx-served); build/deploy/previews = every type.
     docker: {
         label: 'Docker',
         color: '#49c7f0',
         bgColor: 'rgba(73, 199, 240, 0.1)',
         borderColor: 'rgba(73, 199, 240, 0.2)',
         icon: 'docker',
-        tabs: ['overview', 'events', 'logs', 'environment', 'shell', 'metrics', 'settings'],
+        tabs: ['overview', 'events', 'logs', 'environment', 'shell', 'metrics', 'ops', 'waf', 'build', 'deploy', 'previews', 'settings'],
     },
     flask: {
         label: 'Flask',
@@ -17,7 +21,7 @@ const SERVICE_TYPES = {
         bgColor: 'rgba(245, 185, 69, 0.1)',
         borderColor: 'rgba(245, 185, 69, 0.2)',
         icon: 'flask',
-        tabs: ['overview', 'events', 'logs', 'environment', 'packages', 'gunicorn', 'commands', 'metrics', 'settings'],
+        tabs: ['overview', 'events', 'logs', 'environment', 'packages', 'gunicorn', 'commands', 'metrics', 'waf', 'build', 'deploy', 'previews', 'settings'],
     },
     django: {
         label: 'Django',
@@ -25,7 +29,7 @@ const SERVICE_TYPES = {
         bgColor: 'rgba(61, 220, 151, 0.1)',
         borderColor: 'rgba(61, 220, 151, 0.2)',
         icon: 'django',
-        tabs: ['overview', 'events', 'logs', 'environment', 'packages', 'gunicorn', 'commands', 'metrics', 'settings'],
+        tabs: ['overview', 'events', 'logs', 'environment', 'packages', 'gunicorn', 'commands', 'metrics', 'waf', 'build', 'deploy', 'previews', 'settings'],
     },
     php: {
         label: 'PHP',
@@ -33,7 +37,7 @@ const SERVICE_TYPES = {
         bgColor: 'rgba(176, 123, 245, 0.1)',
         borderColor: 'rgba(176, 123, 245, 0.2)',
         icon: 'php',
-        tabs: ['overview', 'events', 'logs', 'environment', 'settings'],
+        tabs: ['overview', 'events', 'logs', 'environment', 'build', 'deploy', 'previews', 'settings'],
     },
     static: {
         label: 'Static',
@@ -41,7 +45,7 @@ const SERVICE_TYPES = {
         bgColor: 'rgba(109, 124, 255, 0.1)',
         borderColor: 'rgba(109, 124, 255, 0.2)',
         icon: 'static',
-        tabs: ['overview', 'events', 'environment', 'settings'],
+        tabs: ['overview', 'events', 'environment', 'build', 'deploy', 'previews', 'settings'],
     },
     wordpress: {
         label: 'WordPress',
@@ -76,7 +80,7 @@ export function getServiceType(appType) {
         bgColor: 'rgba(100, 107, 122, 0.1)',
         borderColor: 'rgba(100, 107, 122, 0.2)',
         icon: 'default',
-        tabs: ['overview', 'events', 'logs', 'environment', 'settings'],
+        tabs: ['overview', 'events', 'logs', 'environment', 'build', 'deploy', 'previews', 'settings'],
     };
 }
 

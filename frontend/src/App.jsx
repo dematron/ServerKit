@@ -13,7 +13,6 @@ import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Setup from './pages/Setup';
-import ApplicationDetail from './pages/ApplicationDetail';
 import Docker from './pages/Docker';
 import Databases from './pages/Databases';
 import Domains from './pages/Domains';
@@ -96,7 +95,6 @@ const PAGE_TITLES = {
     '/projects': 'Projects',
     '/shared-variables': 'Shared Variables',
     '/fleet-proxy': 'Fleet Proxy',
-    '/apps': 'Applications',
     '/wordpress': 'WordPress Sites',
     '/wordpress/projects': 'WordPress Projects',
     '/templates': 'Templates',
@@ -151,6 +149,15 @@ const PAGE_TITLES = {
     '/jobs': 'Jobs',
 };
 
+// /apps/* is the legacy URL space for what is now "Services" (§1 unification).
+// The list route already redirects; this preserves deep links to a single app
+// (and its active tab) by forwarding to the matching /services/* path.
+function LegacyAppRedirect() {
+    const { id, tab } = useParams();
+    const suffix = [id, tab].filter(Boolean).join('/');
+    return <Navigate to={`/services/${suffix}`} replace />;
+}
+
 function PageTitleUpdater() {
     const location = useLocation();
     const { page_titles: pluginTitles } = useContributions();
@@ -181,7 +188,6 @@ function PageTitleUpdater() {
                 } else if (pluginTitles && pluginTitles[basePath]) {
                     title = pluginTitles[basePath];
                 } else if (path.startsWith('/services/')) title = 'Service Details';
-                else if (path.startsWith('/apps/')) title = 'Application Details';
                 else if (path.startsWith('/servers/')) title = 'Server Details';
                 else if (path.startsWith('/wordpress/projects/')) title = 'WordPress Pipeline';
                 else if (path.startsWith('/wordpress/')) title = 'WordPress Site';
@@ -322,8 +328,8 @@ function AppRoutes() {
                     so the Settings left-nav is shareable and survives a refresh. */}
                 <Route path="services/:id/:tab/:section" element={<ServiceDetail />} />
                 <Route path="apps" element={<Navigate to="/services" replace />} />
-                <Route path="apps/:id" element={<ApplicationDetail />} />
-                <Route path="apps/:id/:tab" element={<ApplicationDetail />} />
+                <Route path="apps/:id" element={<LegacyAppRedirect />} />
+                <Route path="apps/:id/:tab" element={<LegacyAppRedirect />} />
                 <Route element={<TabGroupLayout tabs={WORDPRESS_TABS} />}>
                     <Route path="wordpress" element={<WordPress />} />
                     <Route path="wordpress/projects" element={<WordPressProjects />} />

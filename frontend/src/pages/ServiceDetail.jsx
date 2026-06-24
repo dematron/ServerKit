@@ -16,8 +16,14 @@ import PackagesTab from '../components/service-detail/PackagesTab';
 import GunicornTab from '../components/service-detail/GunicornTab';
 import CommandsTab from '../components/service-detail/CommandsTab';
 import OverviewTab from '../components/service-detail/OverviewTab';
+// Tabs merged in from the retired ApplicationDetail page (§1 unification).
+import ContainerOpsPanel from '../components/apps/ContainerOpsPanel';
+import AppWafPanel from '../components/apps/AppWafPanel';
+import BuildTab from '../components/appdetail/BuildTab';
+import DeployTab from '../components/appdetail/DeployTab';
+import PreviewList from '../components/previews/PreviewList';
 import EmptyState from '../components/EmptyState';
-import { Layers, FileArchive, RotateCcw, LayoutDashboard, History, ScrollText, Variable, Terminal, Activity, Package, Server, SquareTerminal, Settings } from 'lucide-react';
+import { Layers, FileArchive, RotateCcw, LayoutDashboard, History, ScrollText, Variable, Terminal, Activity, Package, Server, SquareTerminal, Settings, Boxes, Shield, Hammer, Rocket, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Pill, ServiceTile, PageTopbar } from '@/components/ds';
 
@@ -42,6 +48,11 @@ const TAB_LABELS = {
     packages: 'Packages',
     gunicorn: 'Gunicorn',
     commands: 'Commands',
+    ops: 'Container Ops',
+    waf: 'WAF',
+    build: 'Build',
+    deploy: 'Deploy',
+    previews: 'Previews',
     settings: 'Settings',
 };
 
@@ -56,6 +67,11 @@ const TAB_ICONS = {
     packages: Package,
     gunicorn: Server,
     commands: SquareTerminal,
+    ops: Boxes,
+    waf: Shield,
+    build: Hammer,
+    deploy: Rocket,
+    previews: Eye,
     settings: Settings,
 };
 
@@ -525,6 +541,11 @@ const ServiceDetail = () => {
                 {activeTab === 'packages' && service.isPython && <PackagesTab appId={service.id} />}
                 {activeTab === 'gunicorn' && service.isPython && <GunicornTab appId={service.id} />}
                 {activeTab === 'commands' && service.isPython && <CommandsTab appId={service.id} appType={service.app_type} />}
+                {activeTab === 'ops' && service.isDocker && <ContainerOpsPanel app={service} onChanged={reload} />}
+                {activeTab === 'waf' && <AppWafPanel app={service} onChanged={reload} />}
+                {activeTab === 'build' && <BuildTab appId={service.id} appPath={service.path} app={service} />}
+                {activeTab === 'deploy' && <DeployTab appId={service.id} appPath={service.path} />}
+                {activeTab === 'previews' && <PreviewList appId={service.id} />}
                 {activeTab === 'settings' && (
                     <SettingsTab
                         app={service}

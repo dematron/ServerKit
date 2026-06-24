@@ -29,6 +29,69 @@ def get_stats():
     return jsonify(stats), 200
 
 
+@backups_bp.route('/policies', methods=['GET'])
+@jwt_required()
+@admin_required
+def list_policies():
+    """Global list of policy-driven backup schedules across every target type
+    (§8 unification). Optional filters: ?target_type=, ?enabled=true|false.
+
+    Replaces the legacy filesystem schedule list (/backups/schedules) for the
+    unified Backups page — one queryable view of every BackupPolicy.
+    """
+    from app.models.backup_policy import BackupPolicy, VALID_TARGET_TYPES
+    query = BackupPolicy.query
+    target_type = request.args.get('target_type')
+    if target_type:
+        if target_type not in VALID_TARGET_TYPES:
+            return jsonify({'error': f'invalid target_type {target_type!r}'}), 400
+        query = query.filter_by(target_type=target_type)
+    enabled = request.args.get('enabled')
+    if enabled is not None:
+        query = query.filter_by(enabled=str(enabled).lower() in ('1', 'true', 'yes'))
+    policies = query.order_by(BackupPolicy.target_type, BackupPolicy.target_id).all()
+    return jsonify({'policies': [p.to_dict() for p in policies]}), 200
+
+
+@backups_bp.route('/runs', methods=['GET'])
+@jwt_required()
+@admin_required
+def list_runs():
+    """Global, queryable list of backup runs across every policy (§8).
+
+    Optional filters: ?target_type=, ?status=, ?policy_id=, ?limit= (<=500).
+    Each run is augmented with its policy's target_type/target_id so the unified
+    Backups page can render and filter without a second lookup.
+    """
+    from app.models.backup_policy import BackupPolicy
+    from app.models.backup_run import BackupRun
+    query = db.session.query(BackupRun, BackupPolicy).join(
+        BackupPolicy, BackupRun.policy_id == BackupPolicy.id
+    )
+    target_type = request.args.get('target_type')
+    if target_type:
+        query = query.filter(BackupPolicy.target_type == target_type)
+    status = request.args.get('status')
+    if status:
+        query = query.filter(BackupRun.status == status)
+    policy_id = request.args.get('policy_id', type=int)
+    if policy_id:
+        query = query.filter(BackupRun.policy_id == policy_id)
+    try:
+        limit = min(int(request.args.get('limit', 200)), 500)
+    except (TypeError, ValueError):
+        limit = 200
+    rows = query.order_by(BackupRun.started_at.desc()).limit(limit).all()
+    runs = []
+    for run, policy in rows:
+        item = run.to_dict()
+        item['target_type'] = policy.target_type
+        item['target_id'] = policy.target_id
+        item['target_subtype'] = policy.target_subtype
+        runs.append(item)
+    return jsonify({'runs': runs}), 200
+
+
 @backups_bp.route('/config', methods=['GET'])
 @jwt_required()
 @admin_required

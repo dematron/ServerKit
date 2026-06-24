@@ -49,13 +49,35 @@ class BackupPolicyService:
             target_type=target_type, target_id=int(target_id)
         ).first()
 
+    @staticmethod
+    def validate_target_type(target_type):
+        """Reject unknown target types (maps to HTTP 400)."""
+        from app.models.backup_policy import VALID_TARGET_TYPES
+        if target_type not in VALID_TARGET_TYPES:
+            raise BackupPolicyError(
+                f"target_type must be one of {VALID_TARGET_TYPES}, got {target_type!r}"
+            )
+
     @classmethod
-    def get_or_create_policy(cls, target_type, target_id):
+    def get_or_create_policy(cls, target_type, target_id, target_subtype=None, target_meta=None):
         from app.models.backup_policy import BackupPolicy
+        cls.validate_target_type(target_type)
         policy = cls.get_policy(target_type, target_id)
         if policy:
+            # Refresh target descriptors for non-resource targets (database/files)
+            # whose connection/path details can change between calls.
+            if target_subtype is not None:
+                policy.target_subtype = target_subtype
+            if target_meta is not None:
+                policy.set_target_meta(target_meta)
+            if target_subtype is not None or target_meta is not None:
+                db.session.commit()
             return policy
         policy = BackupPolicy(target_type=target_type, target_id=int(target_id))
+        if target_subtype is not None:
+            policy.target_subtype = target_subtype
+        if target_meta is not None:
+            policy.set_target_meta(target_meta)
         db.session.add(policy)
         db.session.commit()
         cls.ensure_scheduled_job(policy)

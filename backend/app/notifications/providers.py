@@ -75,12 +75,26 @@ class EmailProviderService:
 
     @classmethod
     def default_provider(cls):
-        """The active default provider, or the first active one, or None."""
-        row = EmailProviderConnection.query.filter_by(is_default=True, is_active=True).first()
+        """The provider the Notification Bus should send through: the active
+        default, else the first active one — both restricted to providers
+        flagged ``uses_notifications`` so relay-only rows are never picked (§6)."""
+        row = EmailProviderConnection.query.filter_by(
+            is_default=True, is_active=True, uses_notifications=True).first()
         if row:
             return row
-        return EmailProviderConnection.query.filter_by(is_active=True).order_by(
+        return EmailProviderConnection.query.filter_by(
+            is_active=True, uses_notifications=True).order_by(
             EmailProviderConnection.created_at.asc()
+        ).first()
+
+    @classmethod
+    def relay_provider(cls):
+        """The active SMTP connection that should drive the Postfix relay:
+        highest relay_priority first, then oldest. None if no relay is flagged."""
+        return EmailProviderConnection.query.filter_by(
+            uses_relay=True, is_active=True).order_by(
+            EmailProviderConnection.relay_priority.desc(),
+            EmailProviderConnection.created_at.asc(),
         ).first()
 
     @classmethod
@@ -106,6 +120,9 @@ class EmailProviderService:
         if make_default:
             EmailProviderConnection.query.update({EmailProviderConnection.is_default: False})
 
+        # Usage flags (§6). API providers cannot be a Postfix smarthost, so
+        # uses_relay is only honored for SMTP.
+        uses_relay = bool(data.get('uses_relay')) and provider == 'smtp'
         row = EmailProviderConnection(
             provider=provider,
             name=data.get('name') or spec['name'],
@@ -114,6 +131,9 @@ class EmailProviderService:
             from_name=(data.get('from_name') or 'ServerKit').strip(),
             is_default=make_default,
             is_active=data.get('is_active', True),
+            uses_notifications=bool(data.get('uses_notifications', True)),
+            uses_relay=uses_relay,
+            relay_priority=int(data.get('relay_priority') or 0),
             created_by=user_id,
         )
         db.session.add(row)

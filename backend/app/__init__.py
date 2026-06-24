@@ -214,8 +214,15 @@ def create_app(config_name=None):
     # Register blueprints - Builds & Deployments
     from app.api.builds import builds_bp
     from app.api.deployment_jobs import deployment_jobs_bp
+    from app.api.deployments import deployments_bp
     app.register_blueprint(builds_bp, url_prefix='/api/v1/builds')
     app.register_blueprint(deployment_jobs_bp, url_prefix='/api/v1/deployment-jobs')
+    # §3 unification: one /api/v1/deployments surface. Federated history/detail
+    # live in deployments_bp; the canonical execution records (DeploymentJob)
+    # are also mounted here under /deployments/jobs (alias of /deployment-jobs).
+    app.register_blueprint(deployments_bp, url_prefix='/api/v1/deployments')
+    app.register_blueprint(deployment_jobs_bp, url_prefix='/api/v1/deployments/jobs',
+                           name='deployment_jobs_unified')
 
     # Register blueprints - Templates
     from app.api.templates import templates_bp

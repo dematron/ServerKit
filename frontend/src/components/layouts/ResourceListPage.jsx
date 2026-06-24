@@ -37,6 +37,9 @@ export default function ResourceListPage({
     onRowClick,
     rowClassName,
     sortable = false,
+    // optional content rendered inside the wrapper, above the toolbar/empty
+    // state (e.g. a one-time credentials banner)
+    header,
     // toolbar
     filters,
     activeFilter,
@@ -68,6 +71,7 @@ export default function ResourceListPage({
 
     return (
         <div className={cn('sk-tabgroup__inner', className)}>
+            {header}
             {resolvedTotal === 0 ? (
                 <EmptyState
                     size="lg"

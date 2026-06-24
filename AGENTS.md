@@ -101,6 +101,11 @@ ServerKit deploys on Linux (bare metal, VPS, or Docker). Development may happen 
 - One logical change per commit
 - Minimal, focused diffs — don't silently refactor surrounding code
 - Branch naming: `feature/`, `fix/`, `docs/`, `refactor/` prefixes
+- **Pre-commit hook**: a shared git hook (`.githooks/pre-commit`) lints staged
+  frontend JS/JSX and blocks the commit on ESLint **errors** (warnings allowed;
+  backend/SCSS-only commits are skipped). Enable once per clone:
+  `git config core.hooksPath .githooks` (or `sh frontend/setup-hooks.sh`). Keep
+  the repo at **0 ESLint errors**.
 
 ## Styling Standard
 

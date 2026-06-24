@@ -257,3 +257,39 @@ def resolved():
         'groups': [g.to_dict() for g in groups],
     }
     return jsonify(mask_sensitive(payload))
+
+
+@shared_resources_bp.route('/resolved/hierarchical', methods=['GET'])
+@jwt_required()
+def resolved_hierarchical():
+    """Hierarchical effective variables for a resource (secrets masked).
+
+    Merges scope-inherited groups with the resource's directly-attached groups.
+    Precedence, lowest → highest:
+
+        workspace < project < environment < direct attachments
+
+    Each returned variable carries a ``source_scope`` provenance marker. Pass the
+    scope ids via ``?workspace_id=&project_id=&environment_id=``; any omitted
+    scope simply contributes no layer.
+    """
+    resource_type = request.args.get('resource_type')
+    resource_id = request.args.get('resource_id')
+    if not resource_type or resource_id in (None, ''):
+        return _bad('resource_type and resource_id are required')
+
+    context = {
+        'workspace_id': request.args.get('workspace_id'),
+        'project_id': request.args.get('project_id'),
+        'environment_id': request.args.get('environment_id'),
+    }
+    variables = SharedResourceService.resolve_hierarchical(
+        resource_type, resource_id, context=context, mask_secrets=True
+    )
+    payload = {
+        'resource_type': resource_type,
+        'resource_id': str(resource_id),
+        'context': {k: v for k, v in context.items() if v not in (None, '')},
+        'variables': variables,
+    }
+    return jsonify(mask_sensitive(payload))

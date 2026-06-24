@@ -240,3 +240,171 @@ def test_api_tag_and_resolve_roundtrip(app, client, auth):
 
 def test_api_requires_auth(app, client):
     assert client.get('/api/v1/shared/variable-groups').status_code == 401
+
+
+# ----------------------------------------------------- hierarchical resolve
+
+def test_hierarchical_precedence_workspace_to_direct(app):
+    """workspace < project < environment < direct attachments (most specific wins)."""
+    from app.services.shared_resource_service import SharedResourceService as S
+
+    ws = S.create_group('workspace', 'ws-1', 'Workspace')
+    S.set_variable(ws.id, 'TIER', 'workspace', is_secret=False)
+    S.set_variable(ws.id, 'WS_ONLY', 'w', is_secret=False)
+
+    proj = S.create_group('project', 'proj-1', 'Project')
+    S.set_variable(proj.id, 'TIER', 'project', is_secret=False)
+    S.set_variable(proj.id, 'PROJ_ONLY', 'p', is_secret=False)
+
+    envg = S.create_group('environment', 'env-1', 'Environment')
+    S.set_variable(envg.id, 'TIER', 'environment', is_secret=False)
+
+    direct = S.create_group('workspace', 'ws-1', 'Direct Override')
+    S.set_variable(direct.id, 'TIER', 'direct', is_secret=False)
+    S.attach_group(direct.id, 'application', 100)
+
+    resolved = S.resolve_hierarchical(
+        'application', 100,
+        context={'workspace_id': 'ws-1', 'project_id': 'proj-1',
+                 'environment_id': 'env-1'},
+        mask_secrets=True,
+    )
+    by_key = {v['key']: v for v in resolved}
+
+    # Direct attachment wins the collision across every inherited scope.
+    assert by_key['TIER']['value'] == 'direct'
+    assert by_key['TIER']['source_scope'] == 'direct'
+    # Inherited-only keys survive with their own provenance.
+    assert by_key['WS_ONLY']['source_scope'] == 'workspace'
+    assert by_key['PROJ_ONLY']['source_scope'] == 'project'
+
+
+def test_hierarchical_environment_overrides_project_and_workspace(app):
+    from app.services.shared_resource_service import SharedResourceService as S
+
+    ws = S.create_group('workspace', 'ws-2', 'WS')
+    S.set_variable(ws.id, 'REGION', 'global', is_secret=False)
+    proj = S.create_group('project', 'proj-2', 'P')
+    S.set_variable(proj.id, 'REGION', 'project-region', is_secret=False)
+    envg = S.create_group('environment', 'env-2', 'E')
+    S.set_variable(envg.id, 'REGION', 'eu-west', is_secret=False)
+
+    resolved = S.resolve_hierarchical(
+        'service', 'web-7',
+        context={'workspace_id': 'ws-2', 'project_id': 'proj-2',
+                 'environment_id': 'env-2'},
+    )
+    by_key = {v['key']: v for v in resolved}
+    assert by_key['REGION']['value'] == 'eu-west'
+    assert by_key['REGION']['source_scope'] == 'environment'
+
+
+def test_hierarchical_masks_secrets_but_keeps_provenance(app):
+    from app.services.shared_resource_service import SharedResourceService as S
+
+    ws = S.create_group('workspace', 'ws-3', 'WS')
+    S.set_variable(ws.id, 'API_TOKEN', 'tok-abc', is_secret=True)
+
+    masked = S.resolve_hierarchical(
+        'database', 5, context={'workspace_id': 'ws-3'}, mask_secrets=True)
+    tok = {v['key']: v for v in masked}['API_TOKEN']
+    assert tok['value'] == '••••••••'
+    assert tok['is_secret'] is True
+    assert tok['source_scope'] == 'workspace'
+
+    revealed = S.resolve_hierarchical(
+        'database', 5, context={'workspace_id': 'ws-3'}, mask_secrets=False)
+    assert {v['key']: v['value'] for v in revealed}['API_TOKEN'] == 'tok-abc'
+
+
+def test_hierarchical_pure_layers_helper(app):
+    """The pure helper merges pre-fetched layers with provenance (no DB lookups)."""
+    from app.services.shared_resource_service import SharedResourceService as S
+
+    low = S.create_group('workspace', 'ws-pure', 'Low')
+    S.set_variable(low.id, 'X', 'low', is_secret=False)
+    S.set_variable(low.id, 'ONLY_LOW', 'l', is_secret=False)
+    high = S.create_group('environment', 'env-pure', 'High')
+    S.set_variable(high.id, 'X', 'high', is_secret=False)
+
+    resolved = S.resolve_hierarchical_from_layers(
+        [('workspace', [low]), ('environment', [high])], mask_secrets=True)
+    by_key = {v['key']: v for v in resolved}
+    assert by_key['X']['value'] == 'high'
+    assert by_key['X']['source_scope'] == 'environment'
+    assert by_key['ONLY_LOW']['source_scope'] == 'workspace'
+
+
+def test_hierarchical_interpolation_of_group_refs(app):
+    """{{group.KEY}} references resolve against the effective set; secrets ok."""
+    from app.services.shared_resource_service import SharedResourceService as S
+
+    g = S.create_group('workspace', 'ws-int', 'Refs')
+    S.set_variable(g.id, 'HOST', 'db.internal', is_secret=False)
+    S.set_variable(g.id, 'PORT', '5432', is_secret=False)
+    S.set_variable(g.id, 'DSN', 'postgres://{{group.HOST}}:{{group.PORT}}/app',
+                   is_secret=False)
+    # Unknown refs are left verbatim.
+    S.set_variable(g.id, 'KEEP', 'prefix-{{group.MISSING}}', is_secret=False)
+
+    resolved = S.resolve_hierarchical(
+        'application', 200, context={'workspace_id': 'ws-int'})
+    by_key = {v['key']: v['value'] for v in resolved}
+    assert by_key['DSN'] == 'postgres://db.internal:5432/app'
+    assert by_key['KEEP'] == 'prefix-{{group.MISSING}}'
+
+
+def test_hierarchical_api_roundtrip(app, client, auth):
+    # Seed a workspace-scoped group + attach a direct override, then resolve.
+    r = client.post('/api/v1/shared/variable-groups',
+                    json={'scope_type': 'workspace', 'scope_id': 'ws-api',
+                          'name': 'WS'}, headers=auth)
+    ws_id = r.get_json()['id']
+    client.post(f'/api/v1/shared/variable-groups/{ws_id}/variables',
+                json={'key': 'TIER', 'value': 'workspace'}, headers=auth)
+
+    r = client.post('/api/v1/shared/variable-groups',
+                    json={'scope_type': 'workspace', 'scope_id': 'ws-api',
+                          'name': 'Direct'}, headers=auth)
+    direct_id = r.get_json()['id']
+    client.post(f'/api/v1/shared/variable-groups/{direct_id}/variables',
+                json={'key': 'TIER', 'value': 'direct'}, headers=auth)
+    client.post(f'/api/v1/shared/variable-groups/{direct_id}/attach',
+                json={'resource_type': 'application', 'resource_id': 99},
+                headers=auth)
+
+    r = client.get('/api/v1/shared/resolved/hierarchical'
+                   '?resource_type=application&resource_id=99&workspace_id=ws-api',
+                   headers=auth)
+    assert r.status_code == 200
+    body = r.get_json()
+    by_key = {v['key']: v for v in body['variables']}
+    assert by_key['TIER']['value'] == 'direct'
+    assert by_key['TIER']['source_scope'] == 'direct'
+
+
+# --------------------------------------------------------------- audit trail
+
+def test_audit_rows_written_on_mutations(app):
+    """Tag/group/variable/attachment mutations emit best-effort audit rows."""
+    from app.services.shared_resource_service import SharedResourceService as S
+    from app.models import AuditLog
+
+    before = AuditLog.query.count()
+
+    S.add_tag('application', 1, 'prod')
+    group = S.create_group('workspace', 'ws-a', 'Audited')
+    S.set_variable(group.id, 'K', 'v')
+    S.attach_group(group.id, 'application', 1)
+    S.detach_group(group.id, 'application', 1)
+    S.remove_tag('application', 1, 'prod')
+    S.delete_group(group.id)
+
+    rows = AuditLog.query.filter(AuditLog.id > 0).all()
+    ops = {r.get_details().get('op')
+           for r in rows
+           if r.get_details().get('feature') == 'shared_resource'}
+    # Every mutation kind left a marker row.
+    assert {'tag.add', 'tag.remove', 'group.create', 'variable.create',
+            'group.attach', 'group.detach', 'group.delete'} <= ops
+    assert AuditLog.query.count() > before

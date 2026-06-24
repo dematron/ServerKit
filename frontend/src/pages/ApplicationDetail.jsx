@@ -18,6 +18,8 @@ import WafPanel from '../components/apps/WafPanel';
 import PreviewList from '../components/previews/PreviewList';
 import DeploymentTimeline from '../components/deployments/DeploymentTimeline';
 import BuildpackPreview from '../components/buildpack/BuildpackPreview';
+import TagsPanel from '../components/shared/TagsPanel';
+import EnvironmentVariablesPanel from '../components/shared/EnvironmentVariablesPanel';
 import { getServiceType, getStatusConfig } from '../utils/serviceTypes';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -541,6 +543,21 @@ const OverviewTab = ({ app, onUpdate }) => {
                         </div>
                     </div>
                 )}
+
+                {/* Tags Panel (polymorphic shared resource) */}
+                <div className="app-panel">
+                    <div className="app-panel-header">Tags</div>
+                    <div className="app-panel-body">
+                        <TagsPanel resourceType="application" resourceId={app.id} />
+                    </div>
+                </div>
+
+                {/* Shared Variables Panel (resolved from attached groups) */}
+                <div className="app-panel">
+                    <div className="app-panel-body">
+                        <EnvironmentVariablesPanel resourceType="application" resourceId={app.id} />
+                    </div>
+                </div>
             </div>
 
             {showLinkModal && (

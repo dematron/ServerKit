@@ -36,6 +36,19 @@
         }
     }
 
+    &__elapsed {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-1;
+        font-size: $font-size-xs;
+        color: $text-tertiary;
+        font-variant-numeric: tabular-nums;
+
+        svg {
+            opacity: 0.7;
+        }
+    }
+
     &__error {
         display: flex;
         align-items: flex-start;
@@ -160,6 +173,64 @@
             color: $danger;
             border-left-color: $danger-border;
         }
+    }
+
+    // Live, auto-scrolling activity log trail.
+    &__trail {
+        margin-top: $space-4;
+        border: 1px solid $border-color;
+        border-radius: $radius-md;
+        background: $bg-elevated;
+        overflow: hidden;
+    }
+
+    &__trail-head {
+        padding: $space-2 $space-3;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-semibold;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: $text-tertiary;
+        border-bottom: 1px solid $border-color;
+    }
+
+    &__trail-list {
+        list-style: none;
+        margin: 0;
+        padding: $space-2 0;
+        max-height: 180px;
+        overflow-y: auto;
+        scroll-behavior: smooth;
+    }
+
+    &__trail-row {
+        display: flex;
+        gap: $space-3;
+        padding: 2px $space-3;
+        font-family: $font-mono;
+        font-size: $font-size-xs;
+        line-height: 1.6;
+        color: $text-secondary;
+
+        &--succeeded {
+            color: $success;
+        }
+
+        &--failed {
+            color: $danger;
+        }
+    }
+
+    &__trail-time {
+        flex-shrink: 0;
+        color: $text-tertiary;
+        font-variant-numeric: tabular-nums;
+    }
+
+    &__trail-msg {
+        flex: 1;
+        min-width: 0;
+        word-break: break-word;
     }
 
     &__loading {

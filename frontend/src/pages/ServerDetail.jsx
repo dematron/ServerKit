@@ -33,6 +33,7 @@ import SystemStatusCard from '../components/serverdetail/SystemStatusCard';
 import OnboardingWizard from '../components/server/OnboardingWizard';
 import ProxyStackPanel from '../components/proxy/ProxyStackPanel';
 import RemoteAccess from '../pages/RemoteAccess';
+import TagsPanel from '../components/shared/TagsPanel';
 import EmptyState from '../components/EmptyState';
 import { BellRing, Boxes, Container, Clock3, Cloud } from 'lucide-react';
 
@@ -2099,6 +2100,19 @@ const SettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) => {
                         </div>
                     )}
                 </div>
+            </div>
+
+            <div className="form-section form-section--accent shared-resources-section">
+                <div className="form-section__header">
+                    <span className="form-section__icon"><TagIcon /></span>
+                    <div>
+                        <h3>Tags</h3>
+                        <p className="section-description">
+                            Free-form labels for grouping and filtering this server across the panel.
+                        </p>
+                    </div>
+                </div>
+                <TagsPanel resourceType="server" resourceId={server.id} />
             </div>
 
             <DangerZone

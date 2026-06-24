@@ -16,6 +16,8 @@ group wins** on key collisions ("last attachment wins"). Each resolved entry
 records the ``group_id``/``group_name`` it came from so callers can show
 provenance.
 """
+import re
+
 from app import db
 from app.models.shared_resource import (
     ResourceTag,
@@ -23,6 +25,33 @@ from app.models.shared_resource import (
     SharedVariableGroup,
     SharedVariableGroupAttachment,
 )
+
+
+def _audit(action, **kwargs):
+    """Best-effort audit log for a shared-resource mutation.
+
+    Audit logging must never break the underlying write, so any failure here
+    (missing request context, telemetry hiccup, etc.) is swallowed. We reuse
+    the generic ``resource.*`` actions plus a ``feature: 'shared_resource'``
+    marker in ``details`` so these rows are filterable without a new action
+    constant or DB table.
+    """
+    try:
+        from app.services.audit_service import AuditService
+        details = kwargs.pop('details', None) or {}
+        details.setdefault('feature', 'shared_resource')
+        AuditService.log(action, details=details, **kwargs)
+    except Exception:
+        pass
+
+
+def _current_user_id():
+    """Resolve the acting user id from the JWT, or None outside a request."""
+    try:
+        from flask_jwt_extended import get_jwt_identity
+        return get_jwt_identity()
+    except Exception:
+        return None
 
 
 class SharedResourceService:
@@ -69,6 +98,12 @@ class SharedResourceService:
             return ResourceTag.query.filter_by(
                 resource_type=resource_type, resource_id=rid, tag=tag
             ).first()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type=resource_type,
+            details={'op': 'tag.add', 'resource_id': rid, 'tag': tag},
+        )
         return row
 
     @staticmethod
@@ -82,6 +117,13 @@ class SharedResourceService:
             return False
         db.session.delete(row)
         db.session.commit()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type=resource_type,
+            details={'op': 'tag.remove', 'resource_id': rid,
+                     'tag': (tag or '').strip()},
+        )
         return True
 
     @staticmethod
@@ -121,6 +163,15 @@ class SharedResourceService:
         )
         db.session.add(group)
         db.session.commit()
+        _audit(
+            'resource.create',
+            user_id=_current_user_id(),
+            target_type='shared_variable_group',
+            target_id=group.id,
+            details={'op': 'group.create', 'scope_type': scope_type,
+                     'scope_id': SharedResourceService._rid(scope_id),
+                     'name': group.name},
+        )
         return group
 
     @staticmethod
@@ -150,6 +201,13 @@ class SharedResourceService:
         if description is not None:
             group.description = description or None
         db.session.commit()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type='shared_variable_group',
+            target_id=group.id,
+            details={'op': 'group.update', 'name': group.name},
+        )
         return group
 
     @staticmethod
@@ -158,8 +216,16 @@ class SharedResourceService:
         group = SharedVariableGroup.query.get(group_id)
         if not group:
             return False
+        name = group.name
         db.session.delete(group)
         db.session.commit()
+        _audit(
+            'resource.delete',
+            user_id=_current_user_id(),
+            target_type='shared_variable_group',
+            target_id=group_id,
+            details={'op': 'group.delete', 'name': name},
+        )
         return True
 
     # --------------------------------------------- variables within a group
@@ -175,6 +241,7 @@ class SharedResourceService:
             raise ValueError('key is required')
 
         var = SharedVariable.query.filter_by(group_id=group_id, key=key).first()
+        created = var is None
         if var is None:
             var = SharedVariable(group_id=group_id, key=key, is_secret=bool(is_secret))
             var.value = value if value is not None else ''
@@ -183,6 +250,14 @@ class SharedResourceService:
             var.value = value if value is not None else ''
             var.is_secret = bool(is_secret)
         db.session.commit()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type='shared_variable_group',
+            target_id=group_id,
+            details={'op': 'variable.create' if created else 'variable.update',
+                     'key': key, 'is_secret': bool(is_secret)},
+        )
         return var
 
     @staticmethod
@@ -195,6 +270,14 @@ class SharedResourceService:
         if is_secret is not None:
             var.is_secret = bool(is_secret)
         db.session.commit()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type='shared_variable_group',
+            target_id=var.group_id,
+            details={'op': 'variable.update', 'key': var.key,
+                     'is_secret': bool(var.is_secret)},
+        )
         return var
 
     @staticmethod
@@ -202,8 +285,16 @@ class SharedResourceService:
         var = SharedVariable.query.get(variable_id)
         if not var:
             return False
+        group_id, key = var.group_id, var.key
         db.session.delete(var)
         db.session.commit()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type='shared_variable_group',
+            target_id=group_id,
+            details={'op': 'variable.delete', 'key': key},
+        )
         return True
 
     @staticmethod
@@ -239,6 +330,13 @@ class SharedResourceService:
             return SharedVariableGroupAttachment.query.filter_by(
                 group_id=group_id, resource_type=resource_type, resource_id=rid
             ).first()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type=resource_type,
+            details={'op': 'group.attach', 'resource_id': rid,
+                     'group_id': group_id},
+        )
         return att
 
     @staticmethod
@@ -252,6 +350,13 @@ class SharedResourceService:
             return False
         db.session.delete(att)
         db.session.commit()
+        _audit(
+            'resource.update',
+            user_id=_current_user_id(),
+            target_type=resource_type,
+            details={'op': 'group.detach', 'resource_id': rid,
+                     'group_id': group_id},
+        )
         return True
 
     @staticmethod
@@ -295,3 +400,134 @@ class SharedResourceService:
                 }
 
         return [resolved[k] for k in sorted(resolved.keys())]
+
+    # ------------------------------------------------ hierarchical resolve
+
+    # Precedence ladder, lowest → highest. The most specific scope wins on a
+    # key collision, with directly-attached groups overriding every inherited
+    # scope. ``resource`` is reserved for a resource's own direct variables and
+    # always wins last.
+    SCOPE_PRECEDENCE = ('workspace', 'project', 'environment', 'direct', 'resource')
+
+    # Matches ``{{group.KEY}}`` references for cross-variable interpolation.
+    _REF_RE = re.compile(r'\{\{\s*group\.([A-Za-z0-9_.\-]+)\s*\}\}')
+
+    @staticmethod
+    def _interpolate(value, plaintext_by_key, _depth=0):
+        """Resolve ``{{group.KEY}}`` references within a plaintext value.
+
+        References point at other resolved keys (the plaintext map). Unknown
+        references are left verbatim. Recursion is depth-bounded so a cycle
+        (A→B→A) degrades to the raw token instead of looping forever. This only
+        runs on already-decrypted plaintext, so secrets are interpolated before
+        masking — never the mask glyphs.
+        """
+        if not isinstance(value, str) or '{{' not in value or _depth > 8:
+            return value
+
+        def _sub(match):
+            ref_key = match.group(1)
+            if ref_key not in plaintext_by_key:
+                return match.group(0)  # leave unknown refs untouched
+            return SharedResourceService._interpolate(
+                plaintext_by_key[ref_key], plaintext_by_key, _depth + 1
+            )
+
+        return SharedResourceService._REF_RE.sub(_sub, value)
+
+    @staticmethod
+    def resolve_hierarchical_from_layers(layers, direct_vars=None,
+                                         mask_secrets=True, interpolate=True):
+        """Pure merge over pre-fetched layers — the unit-testable core.
+
+        ``layers`` is an ordered iterable of ``(source_scope, groups)`` tuples
+        applied lowest → highest precedence; each ``groups`` is an iterable of
+        :class:`SharedVariableGroup`. ``direct_vars`` is an optional iterable of
+        :class:`SharedVariable` representing the resource's own direct variables,
+        which always take top precedence (``source_scope='resource'``).
+
+        A later layer overrides an earlier one on key collisions ("most specific
+        wins"). Each resolved entry records the ``source_scope`` it won at plus
+        its source group. Secrets are masked in the returned ``value`` when
+        ``mask_secrets`` is set, but ``{{group.KEY}}`` interpolation runs on the
+        decrypted plaintext first so references resolve correctly regardless of
+        masking.
+        """
+        # First pass (lowest → highest): accumulate the winning entry per key
+        # along with its decrypted plaintext, so interpolation can see the
+        # final effective set.
+        resolved = {}
+        plaintext_by_key = {}
+
+        def _apply(source_scope, var, group):
+            plaintext = var.value  # decrypted
+            resolved[var.key] = {
+                'key': var.key,
+                'plaintext': plaintext,
+                'is_secret': bool(var.is_secret),
+                'group_id': group.id if group is not None else None,
+                'group_name': group.name if group is not None else None,
+                'source_scope': source_scope,
+            }
+            plaintext_by_key[var.key] = plaintext
+
+        for source_scope, groups in layers:
+            for group in (groups or []):
+                for var in group.variables:
+                    _apply(source_scope, var, group)
+
+        for var in (direct_vars or []):
+            _apply('resource', var, None)
+
+        # Second pass: interpolate references against the final plaintext map,
+        # then mask. Two passes keep references stable even when the referenced
+        # value is overridden by a more specific scope.
+        out = []
+        for key in sorted(resolved.keys()):
+            entry = resolved[key]
+            plaintext = entry.pop('plaintext')
+            if interpolate:
+                plaintext = SharedResourceService._interpolate(
+                    plaintext, plaintext_by_key
+                )
+            entry['value'] = ('••••••••' if (mask_secrets and entry['is_secret'])
+                              else plaintext)
+            out.append(entry)
+        return out
+
+    @staticmethod
+    def resolve_hierarchical(resource_type, resource_id, context=None,
+                             mask_secrets=True, interpolate=True):
+        """DB-backed hierarchical resolution for a resource.
+
+        ``context`` may carry ``workspace_id``, ``project_id`` and
+        ``environment_id``. Groups scoped to each (by ``scope_type``/``scope_id``)
+        form the inherited layers; the resource's directly-attached groups form
+        the ``direct`` layer on top. Precedence, lowest → highest:
+
+            workspace < project < environment < direct attachments
+
+        See :meth:`resolve_hierarchical_from_layers` for the pure merge.
+        """
+        context = context or {}
+        layers = []
+
+        def _scoped(scope_type, scope_id):
+            if scope_id in (None, ''):
+                return []
+            return SharedResourceService.list_groups(
+                scope_type=scope_type, scope_id=scope_id
+            )
+
+        layers.append(('workspace', _scoped('workspace', context.get('workspace_id'))))
+        layers.append(('project', _scoped('project', context.get('project_id'))))
+        layers.append(('environment',
+                       _scoped('environment', context.get('environment_id'))))
+        layers.append(('direct',
+                       SharedResourceService.list_attached_groups(
+                           resource_type, resource_id)))
+
+        return SharedResourceService.resolve_hierarchical_from_layers(
+            layers, direct_vars=None, mask_secrets=mask_secrets,
+            interpolate=interpolate,
+        )

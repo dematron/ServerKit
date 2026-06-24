@@ -6,6 +6,13 @@ export async function getServerProxy(serverId) {
     return this.request(`/servers/${serverId}/proxy`);
 }
 
+// Fleet-wide proxy posture: one row per server. Returns { servers: [...] }.
+// Backed by GET /api/v1/servers/proxy/overview (a static prefix that never
+// collides with the per-server /servers/<id>/proxy route).
+export async function getFleetProxyOverview() {
+    return this.request('/servers/proxy/overview');
+}
+
 export async function getServerProxyComposePreview(serverId, options = {}) {
     const params = new URLSearchParams();
     if (options.proxyType) params.set('proxy_type', options.proxyType);

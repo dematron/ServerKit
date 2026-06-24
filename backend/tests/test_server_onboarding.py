@@ -7,6 +7,7 @@ after `validating` are idempotent stubs that chain via `advance`).
 import pytest
 
 from app import db
+from app.models.audit_log import AuditLog
 from app.models.server import Server
 from app.models.server_onboarding_log import ServerOnboardingLog
 from app.services.server_onboarding_service import ServerOnboardingService as SOS
@@ -146,3 +147,196 @@ def test_register_jobs_is_callable(app):
         from app.jobs import registry
         from app.services.server_onboarding_service import ONBOARDING_JOB_KIND
         assert registry.is_registered(ONBOARDING_JOB_KIND)
+
+
+# --------------------------------------------------------------------------- #
+# pre_flight_check — PURE function matrices (no app context needed)
+# --------------------------------------------------------------------------- #
+
+def test_preflight_fully_compatible_host():
+    result = SOS.pre_flight_check({
+        'architecture': 'x86_64',
+        'os_type': 'linux',
+        'distro': 'ubuntu',
+        'kernel': '5.15.0-89-generic',
+        'cpu_cores': 4,
+        'total_memory': 8 * 1024 * 1024 * 1024,
+    })
+    assert result['compatible'] is True
+    assert result['blocking'] == []
+    by_name = {c['name']: c for c in result['checks']}
+    assert by_name['architecture']['ok'] is True
+    assert by_name['distro']['ok'] is True
+    assert by_name['kernel']['ok'] is True
+    assert by_name['cpu']['ok'] is True
+    assert by_name['memory']['ok'] is True
+
+
+def test_preflight_arm64_alias_supported():
+    result = SOS.pre_flight_check({'architecture': 'aarch64', 'os_type': 'linux'})
+    assert result['compatible'] is True
+    by_name = {c['name']: c for c in result['checks']}
+    assert by_name['architecture']['ok'] is True
+
+
+def test_preflight_unsupported_arch_blocks():
+    result = SOS.pre_flight_check({'architecture': 'ppc64le', 'os_type': 'linux'})
+    assert result['compatible'] is False
+    assert 'architecture' in result['blocking']
+
+
+def test_preflight_non_linux_os_blocks():
+    result = SOS.pre_flight_check({
+        'architecture': 'x86_64', 'os_type': 'windows',
+    })
+    assert result['compatible'] is False
+    assert 'os' in result['blocking']
+
+
+def test_preflight_old_kernel_blocks():
+    result = SOS.pre_flight_check({
+        'architecture': 'x86_64', 'os_type': 'linux', 'kernel': '2.6.32',
+    })
+    assert result['compatible'] is False
+    assert 'kernel' in result['blocking']
+
+
+def test_preflight_too_little_memory_blocks():
+    result = SOS.pre_flight_check({
+        'architecture': 'x86_64', 'os_type': 'linux',
+        'total_memory': 128 * 1024 * 1024,  # 128 MiB
+    })
+    assert result['compatible'] is False
+    assert 'memory' in result['blocking']
+
+
+def test_preflight_zero_cpu_blocks():
+    result = SOS.pre_flight_check({
+        'architecture': 'x86_64', 'os_type': 'linux', 'cpu_cores': 0,
+    })
+    assert result['compatible'] is False
+    assert 'cpu' in result['blocking']
+
+
+def test_preflight_sparse_info_is_unknown_not_blocking():
+    # Empty system_info: nothing is known, so nothing blocks.
+    result = SOS.pre_flight_check({})
+    assert result['compatible'] is True
+    assert result['blocking'] == []
+    # All checks are "unknown" (ok is None).
+    assert all(c['ok'] is None for c in result['checks'])
+
+
+def test_preflight_unrecognized_distro_blocks():
+    result = SOS.pre_flight_check({
+        'architecture': 'x86_64', 'os_type': 'linux', 'distro': 'plan9',
+    })
+    assert result['compatible'] is False
+    assert 'distro' in result['blocking']
+
+
+def test_preflight_none_input_safe():
+    # None must not crash and must be treated as fully-unknown.
+    result = SOS.pre_flight_check(None)
+    assert result['compatible'] is True
+
+
+def test_preflight_stringy_values_coerced():
+    result = SOS.pre_flight_check({
+        'architecture': 'amd64', 'os_type': 'linux',
+        'cpu_cores': '2', 'total_memory': str(2 * 1024 * 1024 * 1024),
+    })
+    assert result['compatible'] is True
+    by_name = {c['name']: c for c in result['checks']}
+    assert by_name['cpu']['ok'] is True
+    assert by_name['memory']['ok'] is True
+
+
+# --------------------------------------------------------------------------- #
+# Real-but-guarded steps + audit emission
+# --------------------------------------------------------------------------- #
+
+def test_incompatible_host_fails_at_validate(app):
+    with app.app_context():
+        # Reachable endpoint but a known-bad architecture -> preflight blocks.
+        server = _make_server(architecture='ppc64le', os_type='linux')
+        status = SOS.start(server.id)
+        assert status['state'] == SOS.STATE_FAILED
+
+        failed = ServerOnboardingLog.query.filter_by(
+            server_id=server.id, status=ServerOnboardingLog.STATUS_FAILED
+        ).all()
+        assert any(f.state == SOS.STATE_VALIDATING for f in failed)
+        # The failure detail carries the pre-flight result.
+        detail = failed[0].get_detail()
+        assert detail.get('preflight', {}).get('compatible') is False
+
+
+def test_guarded_steps_reach_ready_on_dev(app):
+    # On Windows/dev (and on Linux without the tooling) every install/pair step
+    # degrades to a safe success, so the pipeline still completes.
+    with app.app_context():
+        server = _make_server()
+        status = SOS.start(server.id)
+        assert status['state'] == SOS.STATE_READY
+
+        # Each step logged a succeeded row with a human-readable message.
+        succeeded = ServerOnboardingLog.query.filter_by(
+            server_id=server.id, status=ServerOnboardingLog.STATUS_SUCCEEDED
+        ).all()
+        states_done = {r.state for r in succeeded}
+        assert SOS.STATE_INSTALLING_PREREQS in states_done
+        assert SOS.STATE_INSTALLING_DOCKER in states_done
+        assert SOS.STATE_PAIRING_AGENT in states_done
+
+
+def test_install_prerequisites_idempotent_detail(app):
+    # Calling the underlying helper twice must never raise and must return a
+    # (message, detail) pair both times (degrades on dev).
+    with app.app_context():
+        msg1, detail1 = SOS._do_install_prerequisites()
+        msg2, detail2 = SOS._do_install_prerequisites()
+        assert isinstance(msg1, str) and isinstance(detail1, dict)
+        assert isinstance(msg2, str) and isinstance(detail2, dict)
+
+
+def test_pair_agent_records_waiting_when_not_enrolled(app):
+    with app.app_context():
+        # Endpoint present (so validate passes) but no agent credentials.
+        server = _make_server(agent_id=None)
+        SOS.start(server.id)
+
+        pair_logs = ServerOnboardingLog.query.filter_by(
+            server_id=server.id, state=SOS.STATE_PAIRING_AGENT,
+            status=ServerOnboardingLog.STATUS_SUCCEEDED,
+        ).all()
+        assert len(pair_logs) >= 1
+        detail = pair_logs[-1].get_detail()
+        assert detail.get('registered') is False
+        assert 'waiting' in detail
+
+
+def test_audit_rows_written_for_transitions(app):
+    with app.app_context():
+        server = _make_server()
+        SOS.start(server.id)
+
+        actions = {a.action for a in AuditLog.query.all()}
+        assert 'server.onboarding.started' in actions
+        assert 'server.onboarding.step' in actions
+        assert 'server.onboarding.completed' in actions
+
+        # The started audit stashes the server id inside details (target_id is
+        # an Integer column, server ids are UUID strings).
+        started = AuditLog.query.filter_by(
+            action='server.onboarding.started').first()
+        assert started is not None
+        assert started.get_details().get('server_id') == server.id
+
+
+def test_audit_failure_row_written(app):
+    with app.app_context():
+        server = _make_server(hostname=None, ip_address=None, agent_id=None)
+        SOS.start(server.id)
+        actions = {a.action for a in AuditLog.query.all()}
+        assert 'server.onboarding.failed' in actions

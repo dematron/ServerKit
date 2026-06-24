@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import api from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 import { Button } from '@/components/ui/button';
 import { Pill } from '../ds';
-import { CheckCircle2, Loader2, Circle, XCircle, RotateCw } from 'lucide-react';
+import { CheckCircle2, Loader2, Circle, XCircle, RotateCw, Clock } from 'lucide-react';
 
 // The canonical ordered lifecycle steps. The backend returns the same list in
 // `status.states`, but we keep a labeled copy so the wizard renders before the
 // first poll resolves.
 const STEPS = [
-    { id: 'validating', label: 'Validate', description: 'Check server details & reachability' },
+    { id: 'validating', label: 'Validate', description: 'Check server details & compatibility' },
     { id: 'installing_prerequisites', label: 'Prerequisites', description: 'Install base packages' },
     { id: 'installing_docker', label: 'Docker', description: 'Ensure Docker is available' },
     { id: 'pairing_agent', label: 'Pair Agent', description: 'Connect the management agent' },
@@ -27,9 +27,8 @@ const IN_FLIGHT = new Set([
 // Map a step's position relative to the current state to a visual status.
 function stepStatus(stepId, currentState) {
     if (currentState === 'failed') {
-        // On failure, mark everything up to (but not including) the failed step
-        // as done; we can't always know which step failed here, so lean on the
-        // progress log for per-step detail. The header pill carries the failure.
+        // On failure, lean on the per-step failed log row (computed by the
+        // caller) to mark the failed step; everything else stays pending here.
         return 'pending';
     }
     const currentIdx = STEPS.findIndex((s) => s.id === currentState);
@@ -47,10 +46,28 @@ const STEP_ICON = {
     pending: Circle,
 };
 
+// Format an elapsed duration (ms) as a compact "1m 12s" / "8s" string.
+function formatElapsed(ms) {
+    if (ms == null || ms < 0) return '0s';
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+}
+
+// Short HH:MM:SS clock for a log row's created_at timestamp.
+function formatLogTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour12: false });
+}
+
 /**
  * OnboardingWizard — presentational + polling view of a server's onboarding
- * lifecycle. Shows the ordered steps, the current state, per-step log messages,
- * and a Retry button when onboarding has failed.
+ * lifecycle. Shows the ordered steps with per-step status icons, a live
+ * auto-scrolling log trail, elapsed time, and a Retry button on failure.
  *
  * Props:
  *   serverId        — required
@@ -62,7 +79,10 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
     const [status, setStatus] = useState(null);
     const [loading, setLoading] = useState(true);
     const [retrying, setRetrying] = useState(false);
+    // `now` ticks once a second so the elapsed timer stays live while polling.
+    const [now, setNow] = useState(() => Date.now());
     const lastStateRef = useRef(initialState || null);
+    const logTrailRef = useRef(null);
 
     const loadStatus = useCallback(async () => {
         try {
@@ -93,11 +113,19 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
         return () => clearInterval(interval);
     }, [status, loadStatus]);
 
+    // Keep the elapsed timer ticking only while non-terminal.
+    useEffect(() => {
+        if (!status || status.is_terminal) return undefined;
+        const tick = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(tick);
+    }, [status]);
+
     async function handleRetry() {
         setRetrying(true);
         try {
             const data = await api.retryServerOnboarding(serverId);
             setStatus(data);
+            lastStateRef.current = data?.state || lastStateRef.current;
             toast.success('Retrying onboarding');
             loadStatus();
         } catch (err) {
@@ -110,7 +138,7 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
     const state = status?.state || initialState || 'pending';
     const failed = state === 'failed';
     const ready = state === 'ready';
-    const progress = status?.progress || [];
+    const progress = useMemo(() => status?.progress || [], [status]);
 
     // Group log messages by step so each step row can show its own trail.
     const logsByState = progress.reduce((acc, row) => {
@@ -123,6 +151,23 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
         ? [...progress].reverse().find((r) => r.status === 'failed')
         : null;
 
+    // Elapsed time from the first to the last (or current) log entry.
+    const elapsed = useMemo(() => {
+        if (progress.length === 0) return null;
+        const firstTs = new Date(progress[0].created_at).getTime();
+        if (Number.isNaN(firstTs)) return null;
+        const endTs = (status?.is_terminal && status?.updated_at)
+            ? new Date(status.updated_at).getTime()
+            : now;
+        return endTs - firstTs;
+    }, [progress, status, now]);
+
+    // Auto-scroll the live log trail to the bottom as new rows arrive.
+    useEffect(() => {
+        const el = logTrailRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+    }, [progress.length]);
+
     const headerPillKind = failed ? 'red' : ready ? 'green' : 'amber';
     const headerLabel = failed ? 'Failed' : ready ? 'Ready' : 'In progress';
 
@@ -132,6 +177,12 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
                 <div className="onboarding-wizard__title">
                     <h3>Server Onboarding</h3>
                     <Pill kind={headerPillKind}>{headerLabel}</Pill>
+                    {elapsed != null && (
+                        <span className="onboarding-wizard__elapsed">
+                            <Clock size={13} />
+                            {formatElapsed(elapsed)}
+                        </span>
+                    )}
                 </div>
                 {failed && (
                     <Button
@@ -180,23 +231,36 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
                                     <span className="onboarding-wizard__step-label">{step.label}</span>
                                 </div>
                                 <p className="onboarding-wizard__step-desc">{step.description}</p>
-                                {stepLogs.length > 0 && (
-                                    <ul className="onboarding-wizard__step-logs">
-                                        {stepLogs.map((log) => (
-                                            <li
-                                                key={log.id}
-                                                className={`onboarding-wizard__log onboarding-wizard__log--${log.status}`}
-                                            >
-                                                {log.message}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
                             </div>
                         </li>
                     );
                 })}
             </ol>
+
+            {progress.length > 0 && (
+                <div className="onboarding-wizard__trail">
+                    <div className="onboarding-wizard__trail-head">Activity log</div>
+                    <ul
+                        ref={logTrailRef}
+                        className="onboarding-wizard__trail-list"
+                        aria-live="polite"
+                    >
+                        {progress.map((log) => (
+                            <li
+                                key={log.id}
+                                className={`onboarding-wizard__trail-row onboarding-wizard__trail-row--${log.status}`}
+                            >
+                                <span className="onboarding-wizard__trail-time">
+                                    {formatLogTime(log.created_at)}
+                                </span>
+                                <span className="onboarding-wizard__trail-msg">
+                                    {log.message || log.status}
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
 
             {loading && !status && (
                 <p className="onboarding-wizard__loading">Loading onboarding status…</p>

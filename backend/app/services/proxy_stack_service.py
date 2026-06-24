@@ -478,6 +478,71 @@ class ProxyStackService:
             return None
 
     @staticmethod
+    def fleet_overview():
+        """Fleet-wide proxy posture: one row per server.
+
+        Best-effort and guarded — never raises. Joins every ``Server`` with its
+        ``ProxyStack`` (if one exists). Servers that never opted into a managed
+        stack report the host-nginx default (``proxy_type='nginx'``,
+        ``status='host'``) rather than being omitted, so the dashboard shows the
+        *whole* fleet, not just the servers with a configured stack.
+
+        Returns a list of flat dicts:
+          ``{server_id, server_name, proxy_type, status, last_regenerated_at,
+             networks_count}``
+        """
+        try:
+            from app.models.server import Server
+            from app.models.proxy_stack import ProxyStack
+        except Exception as e:  # pragma: no cover - import guard
+            logger.warning(f"fleet_overview imports failed: {e}")
+            return []
+
+        try:
+            servers = Server.query.order_by(Server.name).all()
+        except Exception as e:  # pragma: no cover - DB guard
+            logger.warning(f"fleet_overview server query failed: {e}")
+            return []
+
+        # One query for all stacks, keyed by server_id, to avoid N+1 lookups.
+        stacks_by_server = {}
+        try:
+            for stack in ProxyStack.query.all():
+                stacks_by_server[stack.server_id] = stack
+        except Exception as e:  # pragma: no cover - DB guard
+            logger.warning(f"fleet_overview stack query failed: {e}")
+
+        overview = []
+        for server in servers:
+            stack = stacks_by_server.get(server.id)
+            if stack is not None:
+                overview.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'proxy_type': stack.proxy_type or 'nginx',
+                    'status': stack.status or 'unknown',
+                    'last_regenerated_at': (
+                        stack.last_regenerated_at.isoformat()
+                        if stack.last_regenerated_at else None
+                    ),
+                    'networks_count': len(stack.networks_list()),
+                })
+            else:
+                # No managed stack → host nginx is in charge. 'host' is a
+                # distinct status from the stack states (running/stopped/...) so
+                # the UI can render "host default" rather than a runtime state.
+                overview.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'proxy_type': 'nginx',
+                    'status': 'host',
+                    'last_regenerated_at': None,
+                    'networks_count': 0,
+                })
+
+        return overview
+
+    @staticmethod
     def status(server_id):
         """Best-effort runtime status of the proxy stack.
 

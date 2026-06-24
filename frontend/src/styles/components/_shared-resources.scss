@@ -355,3 +355,14 @@
         }
     }
 }
+
+// ---------- Embedded section (resource detail pages) ----------
+// Spacing for the reusable panels when dropped into a settings/overview
+// form-section (e.g. ServerDetail). The panels carry their own internal
+// layout; this just gives the section a sensible top gap.
+
+.shared-resources-section {
+    .shared-tags {
+        margin-top: $space-2;
+    }
+}

@@ -5,13 +5,18 @@ Formalizes "add a server" as an observable lifecycle:
     pending -> validating -> installing_prerequisites -> installing_docker
             -> pairing_agent -> ready    (or -> failed at any step)
 
-Phase 1 scope:
+Phase 4 scope:
+  * A pure :meth:`pre_flight_check` compatibility gate (arch / distro family /
+    kernel / CPU / memory) that is fully unit-testable and runs at the top of
+    `validate`.
   * `validate` is a real, best-effort transition (server exists, has an
-    endpoint or agent, optional reachability probe).
-  * `install_prerequisites` / `install_docker` / `pair_agent` are structured,
-    idempotent STUBS — they record a started/succeeded pair and advance. The
-    real install automation lands in a later phase. They must never crash on
-    Windows/dev (all Unix-only work is guarded).
+    endpoint or agent, optional reachability probe + pre-flight gate).
+  * `install_prerequisites` / `install_docker` / `pair_agent` are REAL but
+    heavily GUARDED. On Linux with a package manager / sudo they do real work
+    (best-effort); on Windows/dev, or when the host lacks the tooling, they log
+    a ``skipped`` detail and succeed. They are idempotent and never raise.
+  * Every transition emits an :class:`AuditService` row, and `ready` / `failed`
+    fire a best-effort notification.
 
 Each transition appends a `ServerOnboardingLog` row and mirrors a compact
 snapshot onto `Server.onboarding_progress` so the wizard can poll cheaply.
@@ -23,6 +28,8 @@ callers drive the machine synchronously via `start()` / `validate()` /
 """
 import json
 import logging
+import os
+import re
 from datetime import datetime
 
 from flask import current_app, has_app_context
@@ -38,6 +45,25 @@ ONBOARDING_JOB_KIND = 'server.onboarding.advance'
 
 # Number of recent log rows mirrored into Server.onboarding_progress.
 _PROGRESS_SNAPSHOT_LIMIT = 40
+
+# Base packages every managed host should carry. Kept small + universally
+# available across Debian/RHEL families so the install is unlikely to fail.
+_BASE_PACKAGES = ('curl', 'ca-certificates')
+
+# Pre-flight compatibility envelope.
+_SUPPORTED_ARCHES = {
+    'x86_64': 'x86_64', 'amd64': 'x86_64', 'x64': 'x86_64',
+    'arm64': 'arm64', 'aarch64': 'arm64',
+}
+_SUPPORTED_DISTRO_FAMILIES = {
+    'debian', 'ubuntu', 'rhel', 'redhat', 'fedora', 'centos', 'rocky',
+    'almalinux', 'alma', 'amazon', 'amzn', 'linux',
+}
+# Conservative floors. Docker + the agent are light, but these guard against
+# obviously-too-small hosts (and stale/embedded kernels).
+_MIN_KERNEL = (3, 10)        # RHEL 7 era — Docker's documented floor.
+_MIN_CPU_CORES = 1
+_MIN_MEMORY_BYTES = 512 * 1024 * 1024  # 512 MiB
 
 
 class ServerOnboardingService:
@@ -142,20 +168,199 @@ class ServerOnboardingService:
         db.session.commit()
         cls._audit('server.onboarding.failed', server,
                    {'state': state, 'message': message})
+        cls._notify('server.onboarding.failed', server,
+                    {'state': state, 'message': message, 'summary': message})
 
     @classmethod
     def _audit(cls, action, server, details):
-        """Best-effort audit; never let an audit failure break onboarding."""
+        """Best-effort audit; never let an audit failure break onboarding.
+
+        ``AuditLog.target_id`` is an Integer column while ``Server.id`` is a
+        UUID string, so we stash the server id inside ``details`` (where it's
+        always queryable) and leave ``target_id`` unset.
+        """
         try:
             from app.services.audit_service import AuditService
+            payload = {'server_id': server.id}
+            payload.update(details or {})
             AuditService.log(
                 action=action,
                 target_type='server',
-                target_id=server.id,
-                details=details or {},
+                details=payload,
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug('onboarding audit %s failed: %s', action, exc)
+
+    @classmethod
+    def _notify(cls, event, server, data):
+        """Best-effort terminal-state notification. Never raises."""
+        try:
+            from app.plugins_sdk import notify
+            payload = {
+                'server': server.name or server.id,
+                'server_id': server.id,
+                'hostname': server.hostname,
+            }
+            payload.update(data or {})
+            notify.send(event, to='admins', data=payload, category='system')
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug('onboarding notify %s failed: %s', event, exc)
+
+    # ------------------------------------------------------------------ #
+    # Pre-flight compatibility check (PURE — fully unit-testable)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _coerce_int(value):
+        """Best-effort int from possibly-stringy/None system_info values."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _parse_kernel(cls, raw):
+        """Return a (major, minor) tuple from a kernel string like
+        ``5.15.0-89-generic`` / ``4.18.0-477.el8`` — or None if unparseable."""
+        if not raw:
+            return None
+        m = re.match(r'\s*(\d+)\.(\d+)', str(raw))
+        if not m:
+            return None
+        return (int(m.group(1)), int(m.group(2)))
+
+    @classmethod
+    def pre_flight_check(cls, system_info):
+        """Pure compatibility gate for a candidate host.
+
+        ``system_info`` is a plain dict (typically derived from the agent's
+        capabilities report or the Server row). Recognized keys (all optional):
+
+            architecture / arch        e.g. 'x86_64', 'arm64', 'amd64'
+            os_type                    e.g. 'linux', 'windows', 'darwin'
+            distro / distro_family /   e.g. 'ubuntu', 'debian', 'rocky'
+                os_id / platform
+            kernel / kernel_version    e.g. '5.15.0-89-generic'
+            cpu_cores                  int
+            total_memory               bytes (int)
+
+        Returns::
+
+            {
+              'compatible': bool,        # False iff any blocking check failed
+              'checks': [{'name','ok','detail'}, ...],
+              'blocking': ['<name>', ...],  # subset of failed, hard checks
+            }
+
+        A check with ``ok is None`` is "unknown" (info not supplied) — never
+        blocking, so a sparse system_info won't wrongly reject a host. Only a
+        check that is *known and bad* blocks.
+        """
+        info = system_info or {}
+        checks = []
+        blocking = []
+
+        def add(name, ok, detail, hard=True):
+            checks.append({'name': name, 'ok': ok, 'detail': detail})
+            if hard and ok is False:
+                blocking.append(name)
+
+        # --- architecture ---
+        raw_arch = (info.get('architecture') or info.get('arch') or '')
+        arch = str(raw_arch).strip().lower()
+        if not arch:
+            add('architecture', None, 'Architecture not reported')
+        elif arch in _SUPPORTED_ARCHES:
+            add('architecture', True,
+                f'{raw_arch} (supported as {_SUPPORTED_ARCHES[arch]})')
+        else:
+            add('architecture', False,
+                f'Unsupported architecture: {raw_arch}')
+
+        # --- OS / distro family ---
+        os_type = str(info.get('os_type') or '').strip().lower()
+        if os_type and os_type not in ('linux', ''):
+            add('os', False,
+                f'Unsupported OS: {os_type} (Linux required for provisioning)')
+        else:
+            distro = str(info.get('distro') or info.get('distro_family')
+                         or info.get('os_id') or info.get('platform')
+                         or '').strip().lower()
+            if not distro:
+                add('distro', None, 'Distro not reported')
+            else:
+                family = distro.split()[0] if distro else ''
+                if any(fam in distro for fam in _SUPPORTED_DISTRO_FAMILIES) \
+                        or family in _SUPPORTED_DISTRO_FAMILIES:
+                    add('distro', True, f'Supported distro family: {distro}')
+                else:
+                    add('distro', False, f'Unrecognized distro: {distro}')
+
+        # --- kernel ---
+        kernel = cls._parse_kernel(info.get('kernel')
+                                   or info.get('kernel_version'))
+        if kernel is None:
+            add('kernel', None, 'Kernel version not reported')
+        elif kernel >= _MIN_KERNEL:
+            add('kernel', True,
+                f'Kernel {kernel[0]}.{kernel[1]} OK '
+                f'(>= {_MIN_KERNEL[0]}.{_MIN_KERNEL[1]})')
+        else:
+            add('kernel', False,
+                f'Kernel {kernel[0]}.{kernel[1]} too old '
+                f'(need >= {_MIN_KERNEL[0]}.{_MIN_KERNEL[1]})')
+
+        # --- CPU ---
+        cores = cls._coerce_int(info.get('cpu_cores'))
+        if cores is None:
+            add('cpu', None, 'CPU core count not reported')
+        elif cores >= _MIN_CPU_CORES:
+            add('cpu', True, f'{cores} core(s)')
+        else:
+            add('cpu', False,
+                f'{cores} core(s) (need >= {_MIN_CPU_CORES})')
+
+        # --- memory ---
+        mem = cls._coerce_int(info.get('total_memory'))
+        if mem is None:
+            add('memory', None, 'Total memory not reported')
+        elif mem >= _MIN_MEMORY_BYTES:
+            add('memory', True,
+                f'{mem // (1024 * 1024)} MiB')
+        else:
+            add('memory', False,
+                f'{mem // (1024 * 1024)} MiB '
+                f'(need >= {_MIN_MEMORY_BYTES // (1024 * 1024)} MiB)')
+
+        return {
+            'compatible': len(blocking) == 0,
+            'checks': checks,
+            'blocking': blocking,
+        }
+
+    @staticmethod
+    def _system_info_for(server):
+        """Build the pre_flight_check input dict from a Server row.
+
+        Prefers the agent's cached capability snapshot where available, falling
+        back to the columns the row already carries.
+        """
+        caps = server.cached_capabilities or {}
+        return {
+            'architecture': server.architecture or caps.get('architecture'),
+            'os_type': server.os_type or caps.get('os_type'),
+            'distro': server.platform or caps.get('distro'),
+            'os_id': server.os_version,
+            'kernel': caps.get('kernel') or caps.get('kernel_version'),
+            'cpu_cores': server.cpu_cores,
+            'total_memory': server.total_memory,
+        }
 
     @staticmethod
     def _is_testing():
@@ -235,12 +440,17 @@ class ServerOnboardingService:
 
         reachable = cls._check_reachable(server)
 
+        # Pure compatibility gate — only blocks when the host reports something
+        # known-incompatible. A sparse/unknown system_info passes.
+        preflight = cls.pre_flight_check(cls._system_info_for(server))
+
         detail = {
             'has_endpoint': has_endpoint,
             'has_agent': has_agent,
             'reachable': reachable,
             'hostname': server.hostname,
             'ip_address': server.ip_address,
+            'preflight': preflight,
         }
 
         if not has_endpoint and not has_agent:
@@ -251,10 +461,21 @@ class ServerOnboardingService:
             )
             return cls.get_status(server.id)
 
+        if not preflight['compatible']:
+            cls._fail(
+                server, cls.STATE_VALIDATING,
+                'Host failed the pre-flight compatibility check: '
+                + ', '.join(preflight['blocking']),
+                detail=detail,
+            )
+            return cls.get_status(server.id)
+
         cls._log(server, cls.STATE_VALIDATING, ServerOnboardingLog.STATUS_SUCCEEDED,
                  message='Validation passed', detail=detail, commit=False)
         cls._set_state(server, cls.STATE_INSTALLING_PREREQS)
         db.session.commit()
+        cls._audit('server.onboarding.step', server,
+                   {'state': cls.STATE_VALIDATING, 'status': 'succeeded'})
 
         # Continue down the chain.
         return cls.advance(server)
@@ -278,23 +499,95 @@ class ServerOnboardingService:
 
     @classmethod
     def install_prerequisites(cls, server):
-        """STUB: install base prerequisites. Idempotent + safe on any OS.
+        """Install base prerequisites — real on Linux, a safe no-op elsewhere.
 
-        Phase 4 will run real package installs via the agent. For now we record
-        a started/succeeded pair and advance.
+        On a Linux host with a detectable package manager we install a small,
+        universally-available base set (curl, ca-certificates) via
+        ``PackageManager.install``. On Windows/dev, or when no package manager
+        is present, we record a ``skipped`` detail and succeed. Idempotent:
+        already-installed packages are detected and not reinstalled.
+        Never raises.
         """
-        return cls._run_stub_step(
+        done_msg, detail = cls._do_install_prerequisites()
+        return cls._run_step(
             server,
             state=cls.STATE_INSTALLING_PREREQS,
             start_msg='Installing prerequisites',
-            done_msg='Prerequisites ready (stub)',
-            detail={'stub': True, 'note': 'real installs land in a later phase'},
+            done_msg=done_msg,
+            detail=detail,
         )
 
     @classmethod
+    def _do_install_prerequisites(cls):
+        """Best-effort prerequisite install. Returns (done_msg, detail)."""
+        from app.utils.system import PackageManager
+
+        if os.name == 'nt':
+            return ('Prerequisites skipped (not a Linux host)',
+                    {'skipped': True, 'reason': 'windows/dev'})
+
+        try:
+            manager = PackageManager.detect()
+        except Exception as exc:  # pragma: no cover - defensive
+            return ('Prerequisites skipped (package manager probe failed)',
+                    {'skipped': True, 'reason': f'detect error: {exc}'})
+
+        if not manager:
+            return ('Prerequisites skipped (no supported package manager)',
+                    {'skipped': True, 'reason': 'no package manager'})
+
+        # Idempotent: only install what's missing.
+        missing = []
+        for pkg in _BASE_PACKAGES:
+            try:
+                if not PackageManager.is_installed(pkg):
+                    missing.append(pkg)
+            except Exception:  # pragma: no cover - defensive
+                missing.append(pkg)
+
+        if not missing:
+            return ('Prerequisites already present',
+                    {'manager': manager, 'installed': [],
+                     'already_present': list(_BASE_PACKAGES)})
+
+        try:
+            result = PackageManager.install(list(missing))
+            ok = getattr(result, 'returncode', 1) == 0
+        except Exception as exc:
+            return (f'Prerequisite install best-effort failed: {exc}',
+                    {'manager': manager, 'attempted': missing,
+                     'best_effort_error': str(exc)})
+
+        if ok:
+            return (f'Installed prerequisites: {", ".join(missing)}',
+                    {'manager': manager, 'installed': missing})
+        return ('Prerequisite install completed with warnings',
+                {'manager': manager, 'attempted': missing,
+                 'returncode': getattr(result, 'returncode', None)})
+
+    @classmethod
     def install_docker(cls, server):
-        """STUB: ensure Docker is installed. Idempotent + safe on any OS."""
-        from app.utils.system import is_command_available
+        """Ensure Docker is available — real on Linux, a safe no-op elsewhere.
+
+        If ``docker`` is already on PATH we record it and succeed. Otherwise on
+        a Linux host with sudo/a package manager we make a best-effort install
+        attempt (the distro's docker.io / docker package); on Windows/dev or
+        without the tooling we record a ``skipped`` detail and succeed so the
+        pipeline still completes. Never raises.
+        """
+        done_msg, detail = cls._do_install_docker()
+        return cls._run_step(
+            server,
+            state=cls.STATE_INSTALLING_DOCKER,
+            start_msg='Installing Docker',
+            done_msg=done_msg,
+            detail=detail,
+        )
+
+    @classmethod
+    def _do_install_docker(cls):
+        """Best-effort Docker install. Returns (done_msg, detail)."""
+        from app.utils.system import PackageManager, is_command_available
 
         docker_present = False
         try:
@@ -302,42 +595,101 @@ class ServerOnboardingService:
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug('docker presence check failed: %s', exc)
 
-        return cls._run_stub_step(
-            server,
-            state=cls.STATE_INSTALLING_DOCKER,
-            start_msg='Installing Docker',
-            done_msg=('Docker already present' if docker_present
-                      else 'Docker install queued (stub)'),
-            detail={'stub': True, 'docker_present': docker_present},
-        )
+        if docker_present:
+            return 'Docker already present', {'docker_present': True}
+
+        if os.name == 'nt':
+            return ('Docker install skipped (not a Linux host)',
+                    {'skipped': True, 'reason': 'windows/dev',
+                     'docker_present': False})
+
+        try:
+            manager = PackageManager.detect()
+        except Exception as exc:  # pragma: no cover - defensive
+            manager = None
+            logger.debug('docker install pm probe failed: %s', exc)
+
+        if not manager:
+            return ('Docker install skipped (no supported package manager)',
+                    {'skipped': True, 'reason': 'no package manager',
+                     'docker_present': False})
+
+        # Distro-appropriate package name. Debian/Ubuntu ship docker.io; the
+        # RHEL family uses the docker package (or podman-docker on minimal
+        # images). This is intentionally best-effort — a full
+        # get.docker.com convenience-script run lands with agent-driven
+        # provisioning; here we just try the distro package so a fresh host
+        # isn't left empty-handed.
+        pkg = 'docker.io' if manager == 'apt' else 'docker'
+        try:
+            result = PackageManager.install(pkg)
+            ok = getattr(result, 'returncode', 1) == 0
+        except Exception as exc:
+            return (f'Docker install best-effort failed: {exc}',
+                    {'manager': manager, 'attempted': pkg,
+                     'best_effort_error': str(exc), 'docker_present': False})
+
+        if ok:
+            return (f'Installed Docker ({pkg})',
+                    {'manager': manager, 'installed': pkg})
+        return ('Docker install completed with warnings',
+                {'manager': manager, 'attempted': pkg,
+                 'returncode': getattr(result, 'returncode', None)})
 
     @classmethod
     def pair_agent(cls, server):
-        """STUB: pair the management agent. Idempotent + safe on any OS.
+        """Pair the management agent — guarded, idempotent, never raises.
 
-        If an agent is already connected we treat pairing as satisfied; the
-        real token mint / install handshake lands in a later phase.
+        Resolution order:
+          * Agent already connected (live socket)  -> satisfied.
+          * Server row already carries agent credentials/id -> satisfied
+            (registered, may just be momentarily offline).
+          * Otherwise -> the step succeeds but records a ``waiting`` detail
+            describing what the operator must do (run the install/enroll
+            command on the host). We don't hard-fail: a server can be fully
+            "ready" in the panel and have its agent connect a moment later.
         """
-        already_paired = False
-        try:
-            from app.services.agent_registry import agent_registry
-            already_paired = agent_registry.is_agent_connected(server.id)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug('agent pairing check failed: %s', exc)
-
-        return cls._run_stub_step(
+        done_msg, detail = cls._do_pair_agent(server)
+        return cls._run_step(
             server,
             state=cls.STATE_PAIRING_AGENT,
             start_msg='Pairing agent',
-            done_msg=('Agent already paired' if already_paired
-                      else 'Agent pairing prepared (stub)'),
-            detail={'stub': True, 'already_paired': already_paired},
+            done_msg=done_msg,
+            detail=detail,
         )
 
     @classmethod
-    def _run_stub_step(cls, server, state, start_msg, done_msg, detail=None):
-        """Shared body for the stubbed install/pair steps: log started, log
-        succeeded, advance to the next state, return status."""
+    def _do_pair_agent(cls, server):
+        """Best-effort agent pairing resolution. Returns (done_msg, detail)."""
+        connected = False
+        try:
+            from app.services.agent_registry import agent_registry
+            connected = agent_registry.is_agent_connected(server.id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug('agent pairing check failed: %s', exc)
+
+        if connected:
+            return 'Agent connected', {'connected': True, 'registered': True}
+
+        # Credentials/identity already minted for this server?
+        registered = bool(server.agent_id or server.api_key_hash
+                          or server.registration_token_hash)
+
+        if registered:
+            return ('Agent registered (awaiting connection)',
+                    {'connected': False, 'registered': True,
+                     'waiting': 'Agent enrolled but not currently connected.'})
+
+        return ('Agent not yet enrolled',
+                {'connected': False, 'registered': False,
+                 'waiting': ('Run the agent install/enroll command on the '
+                             'host to complete pairing. Onboarding will '
+                             'finish; the agent can connect afterward.')})
+
+    @classmethod
+    def _run_step(cls, server, state, start_msg, done_msg, detail=None):
+        """Shared body for the install/pair steps: log started, log succeeded,
+        emit an audit row, advance to the next state, return status."""
         cls._set_state(server, state)
         cls._log(server, state, ServerOnboardingLog.STATUS_STARTED,
                  message=start_msg, commit=True)
@@ -349,6 +701,8 @@ class ServerOnboardingService:
         if nxt:
             cls._set_state(server, nxt)
         db.session.commit()
+        cls._audit('server.onboarding.step', server,
+                   {'state': state, 'status': 'succeeded', 'message': done_msg})
         return cls.advance(server)
 
     # ------------------------------------------------------------------ #
@@ -403,8 +757,10 @@ class ServerOnboardingService:
 
         if state in (cls.STATE_INSTALLING_PREREQS, cls.STATE_INSTALLING_DOCKER,
                      cls.STATE_PAIRING_AGENT):
-            # Wrap stubbed steps so an unexpected error fails gracefully
-            # instead of crashing the consumer.
+            # Wrap the install/pair steps so an unexpected error fails
+            # gracefully instead of crashing the consumer. The steps are
+            # already guarded + never raise on their own; this is belt-and-
+            # suspenders for anything truly unforeseen.
             try:
                 return step(server)
             except Exception as exc:  # pragma: no cover - defensive
@@ -427,6 +783,8 @@ class ServerOnboardingService:
         cls._log(server, cls.STATE_READY, ServerOnboardingLog.STATUS_SUCCEEDED,
                  message='Server ready', commit=True)
         cls._audit('server.onboarding.completed', server, {'server_id': server.id})
+        cls._notify('server.onboarding.ready', server,
+                    {'summary': f'Server {server.name or server.id} is ready.'})
 
     @classmethod
     def retry(cls, server_id):

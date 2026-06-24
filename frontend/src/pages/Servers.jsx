@@ -931,7 +931,7 @@ Install-ServerKitAgent -Server "${window.location.origin}" -Token "${registratio
                                 : 'Connect an existing agent or set up a brand-new machine.'}
                         </p>
                     </div>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+                    <button type="button" className="modal-close" onClick={onClose}>&times;</button>
                 </div>
 
                 {step === 1 && (
@@ -1192,14 +1192,14 @@ const ManageGroupsModal = ({ groups, onClose, onUpdated }) => {
                                         </span>
                                         <span className="group-count">{group.server_count || 0} servers</span>
                                         <div className="group-actions">
-                                            <button
+                                            <button type="button"
                                                 className="btn-icon"
                                                 onClick={() => setEditingGroup(group.id)}
                                                 title="Edit"
                                             >
                                                 <EditIcon />
                                             </button>
-                                            <button
+                                            <button type="button"
                                                 className="btn-icon danger"
                                                 onClick={() => handleDeleteGroup(group.id)}
                                                 title="Delete"

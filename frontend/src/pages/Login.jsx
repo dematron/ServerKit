@@ -258,7 +258,7 @@ const Login = () => {
                 {ssoProviders && ssoProviders.length > 0 && (
                     <div className="sso-providers">
                         {ssoProviders.map(p => (
-                            <button
+                            <button type="button"
                                 key={p.id}
                                 className={`btn-sso btn-sso--${p.id}`}
                                 onClick={() => handleSSOLogin(p.id)}

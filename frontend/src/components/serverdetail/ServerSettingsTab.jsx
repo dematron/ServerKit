@@ -285,7 +285,7 @@ const ServerSettingsTab = ({ server, onUpdate, onRegenerateToken, onDelete }) =>
                                         {connectionInfo?.ip_address === ip && (
                                             <Pill kind="green" dot={false}>Current</Pill>
                                         )}
-                                        <button
+                                        <button type="button"
                                             className="btn-icon danger"
                                             onClick={() => handleRemoveIP(ip)}
                                             title="Remove"

@@ -74,7 +74,7 @@ const ConnectionEdge = ({
                 >
                     <span className="edge-label-text">{label}</span>
                     {selected && data?.onDelete && (
-                        <button
+                        <button type="button"
                             className="edge-delete-btn"
                             onClick={(e) => {
                                 e.stopPropagation();

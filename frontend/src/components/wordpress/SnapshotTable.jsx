@@ -99,7 +99,7 @@ const SnapshotTable = ({ snapshots, onRestore, onDelete, loading = false }) => {
                                 )}
                             </td>
                             <td className="wp-cell-actions">
-                                <button
+                                <button type="button"
                                     className="wp-row-action"
                                     title="Restore"
                                     onClick={() => setConfirmRestore(snapshot)}
@@ -107,7 +107,7 @@ const SnapshotTable = ({ snapshots, onRestore, onDelete, loading = false }) => {
                                 >
                                     <RotateCcw size={14} />
                                 </button>
-                                <button
+                                <button type="button"
                                     className="wp-row-action wp-row-action--danger"
                                     title="Delete"
                                     onClick={() => setConfirmDelete(snapshot)}

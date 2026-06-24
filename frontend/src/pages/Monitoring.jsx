@@ -326,7 +326,7 @@ const Monitoring = () => {
             {error && (
                 <div className="alert alert-danger">
                     {error}
-                    <button onClick={() => setError(null)} className="alert-close">&times;</button>
+                    <button type="button" onClick={() => setError(null)} className="alert-close">&times;</button>
                 </div>
             )}
 

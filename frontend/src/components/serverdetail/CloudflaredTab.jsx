@@ -304,7 +304,7 @@ const CloudflaredTab = ({ serverId, serverStatus }) => {
                                         >
                                             Route subdomain
                                         </Button>
-                                        <button
+                                        <button type="button"
                                             className="btn-icon danger"
                                             onClick={() => handleDelete(t)}
                                             title="Delete"

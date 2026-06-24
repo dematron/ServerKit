@@ -1038,7 +1038,7 @@ function Git({ basePath = '/git' }) {
             {pageError && (
                 <div className="error-banner">
                     {pageError}
-                    <button onClick={() => setPageError('')} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer' }}>×</button>
+                    <button type="button" onClick={() => setPageError('')} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer' }}>×</button>
                 </div>
             )}
 
@@ -1132,9 +1132,9 @@ function Git({ basePath = '/git' }) {
                             <div className="files-browser">
                                 {currentPath && (
                                     <div className="breadcrumb">
-                                        <button onClick={() => navigateToPath('')}>{selectedRepo.name}</button>
+                                        <button type="button" onClick={() => navigateToPath('')}>{selectedRepo.name}</button>
                                         {currentPath.split('/').map((part, i, arr) => (
-                                            <span key={i}><span className="separator">/</span><button onClick={() => navigateToPath(arr.slice(0, i + 1).join('/'))}>{part}</button></span>
+                                            <span key={i}><span className="separator">/</span><button type="button" onClick={() => navigateToPath(arr.slice(0, i + 1).join('/'))}>{part}</button></span>
                                         ))}
                                     </div>
                                 )}

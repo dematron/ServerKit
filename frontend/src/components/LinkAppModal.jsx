@@ -88,7 +88,7 @@ const LinkAppModal = ({ app, onClose, onLinked }) => {
                             Create another {app.app_type} app first, or ensure existing apps
                             are not already linked.
                         </p>
-                        <button className="btn btn-secondary" onClick={onClose}>
+                        <button type="button" className="btn btn-secondary" onClick={onClose}>
                             Close
                         </button>
                     </div>

@@ -43,7 +43,7 @@ const NotificationConfigPanel = ({ node, onChange, onClose, onDelete }) => {
                 <Label>Channel</Label>
                 <div className="channel-grid">
                     {channels.map(({ id, icon: Icon, label: chLabel }) => (
-                        <button
+                        <button type="button"
                             key={id}
                             className={`channel-btn ${channel === id ? 'active' : ''}`}
                             onClick={() => onChange({ ...data, channel: id })}

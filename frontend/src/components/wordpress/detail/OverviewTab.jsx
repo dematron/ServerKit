@@ -261,7 +261,7 @@ const OverviewTab = ({ site, onUpdate }) => {
                                 </>
                             )}
                             {site.is_production && (site.environments || []).length < 2 && (
-                                <button
+                                <button type="button"
                                     className="quick-action-btn"
                                     onClick={() => setShowEnvModal(true)}
                                 >
@@ -269,7 +269,7 @@ const OverviewTab = ({ site, onUpdate }) => {
                                     Create Environment
                                 </button>
                             )}
-                            <button
+                            <button type="button"
                                 className="quick-action-btn"
                                 onClick={handleQuickSnapshot}
                                 disabled={creatingSnapshot}
@@ -278,7 +278,7 @@ const OverviewTab = ({ site, onUpdate }) => {
                                 {creatingSnapshot ? 'Creating...' : 'Create Snapshot'}
                             </button>
                             {site.environments?.length > 0 && (
-                                <button
+                                <button type="button"
                                     className="quick-action-btn"
                                     onClick={handleSyncAll}
                                     disabled={syncingAll}
@@ -287,7 +287,7 @@ const OverviewTab = ({ site, onUpdate }) => {
                                     {syncingAll ? 'Syncing...' : 'Sync All Envs'}
                                 </button>
                             )}
-                            <button
+                            <button type="button"
                                 className="quick-action-btn"
                                 onClick={handleFlushCache}
                                 disabled={flushingCache}
@@ -295,7 +295,7 @@ const OverviewTab = ({ site, onUpdate }) => {
                                 <Trash2 size={16} />
                                 {flushingCache ? 'Flushing...' : 'Purge Cache'}
                             </button>
-                            <button
+                            <button type="button"
                                 className="quick-action-btn"
                                 onClick={handleTogglePageCache}
                                 disabled={togglingPageCache}
@@ -306,14 +306,14 @@ const OverviewTab = ({ site, onUpdate }) => {
                                     ? 'Working...'
                                     : (pageCacheActive ? 'Page Cache: On' : 'Enable Page Cache')}
                             </button>
-                            <button
+                            <button type="button"
                                 className="quick-action-btn"
                                 onClick={() => setShowSearchReplace(true)}
                             >
                                 <Replace size={16} />
                                 Search &amp; Replace
                             </button>
-                            <button
+                            <button type="button"
                                 className="quick-action-btn"
                                 onClick={handleHarden}
                                 disabled={hardening}
@@ -321,7 +321,7 @@ const OverviewTab = ({ site, onUpdate }) => {
                                 <ShieldCheck size={16} />
                                 {hardening ? 'Hardening...' : 'Harden'}
                             </button>
-                            <button
+                            <button type="button"
                                 className="quick-action-btn"
                                 onClick={handleToggleObjectCache}
                                 disabled={togglingCache}

@@ -210,14 +210,14 @@ const CronTab = ({ serverId, serverStatus }) => {
                                     </Pill>
                                 </td>
                                 <td className="actions-cell">
-                                    <button
+                                    <button type="button"
                                         className="btn-icon"
                                         onClick={() => handleToggle(job)}
                                         title={job.enabled ? 'Disable' : 'Enable'}
                                     >
                                         {job.enabled ? <StopIcon /> : <PlayIcon />}
                                     </button>
-                                    <button
+                                    <button type="button"
                                         className="btn-icon danger"
                                         onClick={() => handleRemove(job)}
                                         title="Remove"

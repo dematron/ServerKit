@@ -244,7 +244,7 @@ const Docker = () => {
                             </div>
                             <div className="dx-resource-nav">
                                 {availableServers.map(server => (
-                                    <button
+                                    <button type="button"
                                         key={server.id}
                                         className={`dx-resource-nav-item ${selectedServer.id === server.id ? 'active' : ''}`}
                                         onClick={() => setSelectedServer(server)}
@@ -267,7 +267,7 @@ const Docker = () => {
                             {tabs.map(tab => {
                                 const Icon = tab.icon;
                                 return (
-                                    <button
+                                    <button type="button"
                                         key={tab.id}
                                         className={`dx-resource-nav-item ${activeTab === tab.id ? 'active' : ''}`}
                                         onClick={() => setActiveTab(tab.id)}

@@ -79,7 +79,7 @@ const SetupStepIntent = ({ selections, onComplete }) => {
             </div>
 
             <div className="wizard-nav" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
-                <button className="btn-wizard-next" onClick={handleContinue}>
+                <button type="button" className="btn-wizard-next" onClick={handleContinue}>
                     Continue
                 </button>
             </div>

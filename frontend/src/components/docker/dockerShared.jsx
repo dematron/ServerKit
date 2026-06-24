@@ -3,7 +3,7 @@ import { Trash2 } from 'lucide-react';
 // Icon Action button used by remaining (legacy) tabs (Images, Networks, Volumes).
 // Containers tab now renders cards with full action buttons inline.
 export const IconAction = ({ title, onClick, color, children, disabled }) => (
-    <button
+    <button type="button"
         className="docker-icon-action"
         title={title}
         onClick={onClick}

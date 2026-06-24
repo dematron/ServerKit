@@ -302,7 +302,7 @@ const ContainersTab = ({ onStatsChange }) => {
                         { id: 'running', label: 'Running', count: counts.running },
                         { id: 'stopped', label: 'Stopped', count: counts.stopped },
                     ].map(c => (
-                        <button
+                        <button type="button"
                             key={c.id}
                             className={`filter-chip ${statusFilter === c.id ? 'active' : ''}`}
                             onClick={() => setStatusFilter(c.id)}
@@ -324,7 +324,7 @@ const ContainersTab = ({ onStatsChange }) => {
                             <option value="memory">RAM</option>
                             <option value="created">Created</option>
                         </select>
-                        <button
+                        <button type="button"
                             className="lv-icon-btn"
                             onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
                             title={`Sort ${sortDirection === 'asc' ? 'ascending' : 'descending'}`}
@@ -451,11 +451,11 @@ const ContainersTab = ({ onStatsChange }) => {
                                                     <span className="dx-muted-line">{container.created || container.CreatedAt || '-'}</span>
                                                 </td>
                                                 <td className="dx-row-actions" onClick={(e) => e.stopPropagation()}>
-                                                    <button className="dx-row-action" onClick={() => setLogsContainer(container)} title="Logs">
+                                                    <button type="button" className="dx-row-action" onClick={() => setLogsContainer(container)} title="Logs">
                                                         <FileText size={13} />
                                                     </button>
                                                     {isRunning && !isRemote && (
-                                                        <button className="dx-row-action" onClick={() => setExecContainer(container)} title="Exec">
+                                                        <button type="button" className="dx-row-action" onClick={() => setExecContainer(container)} title="Exec">
                                                             <TerminalLucide size={13} />
                                                         </button>
                                                     )}
@@ -465,19 +465,19 @@ const ContainersTab = ({ onStatsChange }) => {
                                                         </span>
                                                     ) : isRunning ? (
                                                         <>
-                                                            <button className="dx-row-action" onClick={() => handleAction(containerId, 'restart')} title="Restart">
+                                                            <button type="button" className="dx-row-action" onClick={() => handleAction(containerId, 'restart')} title="Restart">
                                                                 <RotateCw size={13} />
                                                             </button>
-                                                            <button className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'stop')} title="Stop">
+                                                            <button type="button" className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'stop')} title="Stop">
                                                                 <Square size={13} />
                                                             </button>
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <button className="dx-row-action is-success" onClick={() => handleAction(containerId, 'start')} title="Start">
+                                                            <button type="button" className="dx-row-action is-success" onClick={() => handleAction(containerId, 'start')} title="Start">
                                                                 <Play size={13} />
                                                             </button>
-                                                            <button className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'remove')} title="Remove">
+                                                            <button type="button" className="dx-row-action is-danger" onClick={() => handleAction(containerId, 'remove')} title="Remove">
                                                                 <Trash2 size={13} />
                                                             </button>
                                                         </>
@@ -614,10 +614,10 @@ const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec
                     <h3 title={getContainerName(container)}>{getContainerName(container)}</h3>
                     <span>{shortId(containerId)}</span>
                 </div>
-                <button className="dx-row-action" onClick={copyContainerId} title="Copy container ID">
+                <button type="button" className="dx-row-action" onClick={copyContainerId} title="Copy container ID">
                     <Copy size={13} />
                 </button>
-                <button className="dx-row-action" onClick={onClose} title="Close details">
+                <button type="button" className="dx-row-action" onClick={onClose} title="Close details">
                     <X size={13} />
                 </button>
             </div>
@@ -630,11 +630,11 @@ const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec
             </div>
 
             <div className="dx-inspector-actions">
-                <button className="dx-action-btn" onClick={() => onOpenLogs(container)}>
+                <button type="button" className="dx-action-btn" onClick={() => onOpenLogs(container)}>
                     <FileText size={13} /> Logs
                 </button>
                 {isRunning && !isRemote && (
-                    <button className="dx-action-btn" onClick={() => onOpenExec(container)}>
+                    <button type="button" className="dx-action-btn" onClick={() => onOpenExec(container)}>
                         <TerminalLucide size={13} /> Exec
                     </button>
                 )}
@@ -644,19 +644,19 @@ const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec
                     </span>
                 ) : isRunning ? (
                     <>
-                        <button className="dx-action-btn" onClick={() => onAction(containerId, 'restart')}>
+                        <button type="button" className="dx-action-btn" onClick={() => onAction(containerId, 'restart')}>
                             <RotateCw size={13} /> Restart
                         </button>
-                        <button className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'stop')}>
+                        <button type="button" className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'stop')}>
                             <Square size={13} /> Stop
                         </button>
                     </>
                 ) : (
                     <>
-                        <button className="dx-action-btn is-success" onClick={() => onAction(containerId, 'start')}>
+                        <button type="button" className="dx-action-btn is-success" onClick={() => onAction(containerId, 'start')}>
                             <Play size={13} /> Start
                         </button>
-                        <button className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'remove')}>
+                        <button type="button" className="dx-action-btn is-danger" onClick={() => onAction(containerId, 'remove')}>
                             <Trash2 size={13} /> Remove
                         </button>
                     </>
@@ -665,7 +665,7 @@ const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec
 
             <div className="dx-inspector-tabs">
                 {['overview', 'ports', 'mounts', 'env'].map(section => (
-                    <button
+                    <button type="button"
                         key={section}
                         className={activeSection === section ? 'active' : ''}
                         onClick={() => setActiveSection(section)}
@@ -953,7 +953,7 @@ const ContainerLogsModal = ({ container, onClose }) => {
                         <h3>{getContainerName(container)}</h3>
                         <p className="preview-drawer-path">{getContainerImage(container)} - {shortId(containerId)}</p>
                     </div>
-                    <button className="preview-drawer-close" onClick={onClose}>
+                    <button type="button" className="preview-drawer-close" onClick={onClose}>
                         <X size={18} />
                     </button>
                 </header>

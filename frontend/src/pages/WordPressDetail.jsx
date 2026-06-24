@@ -316,7 +316,7 @@ const WordPressDetail = () => {
                         )}
                     </div>
                 ) : (
-                    <button
+                    <button type="button"
                         className="wp-detail__connect-repo"
                         onClick={() => navigate(`/wordpress/${id}/settings/git`)}
                     >

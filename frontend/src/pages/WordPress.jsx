@@ -323,14 +323,14 @@ function WordPress() {
             searchPlaceholder="Search sites…"
             toolbarExtra={allTags.length > 0 && (
                 <div className="wp-tag-filter">
-                    <button
+                    <button type="button"
                         className={`wp-tag-chip wp-tag-chip--filter ${activeTag === null ? 'is-active' : ''}`}
                         onClick={() => setActiveTag(null)}
                     >
                         All tags
                     </button>
                     {allTags.map(tag => (
-                        <button
+                        <button type="button"
                             key={tag}
                             className={`wp-tag-chip wp-tag-chip--filter ${activeTag === tag ? 'is-active' : ''}`}
                             onClick={() => setActiveTag(tag)}

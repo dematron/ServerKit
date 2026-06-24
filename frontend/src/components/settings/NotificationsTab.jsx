@@ -375,7 +375,7 @@ const NotificationsTab = () => {
             )}
 
             <div className="notification-tabs">
-                <button
+                <button type="button"
                     className={`notification-tab ${activeSection === 'personal' ? 'active' : ''}`}
                     onClick={() => setActiveSection('personal')}
                 >
@@ -386,7 +386,7 @@ const NotificationsTab = () => {
                     My Preferences
                 </button>
                 {isAdmin && (
-                    <button
+                    <button type="button"
                         className={`notification-tab ${activeSection === 'admin' ? 'active' : ''}`}
                         onClick={() => setActiveSection('admin')}
                     >

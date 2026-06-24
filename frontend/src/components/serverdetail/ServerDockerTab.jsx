@@ -150,13 +150,13 @@ const ServerDockerTab = ({ serverId, serverStatus, server }) => {
                 </div>
             )}
             <div className="docker-sub-tabs">
-                <button
+                <button type="button"
                     className={`sub-tab ${subTab === 'containers' ? 'active' : ''}`}
                     onClick={() => setSubTab('containers')}
                 >
                     Containers ({containers.length})
                 </button>
-                <button
+                <button type="button"
                     className={`sub-tab ${subTab === 'images' ? 'active' : ''}`}
                     onClick={() => setSubTab('images')}
                 >
@@ -198,14 +198,14 @@ const ServerDockerTab = ({ serverId, serverStatus, server }) => {
                                             <td className="actions-cell">
                                                 {isRunning ? (
                                                     <>
-                                                        <button
+                                                        <button type="button"
                                                             className="btn-icon"
                                                             onClick={() => handleContainerAction(container.id, 'restart')}
                                                             title="Restart"
                                                         >
                                                             <RefreshIcon />
                                                         </button>
-                                                        <button
+                                                        <button type="button"
                                                             className="btn-icon danger"
                                                             onClick={() => handleContainerAction(container.id, 'stop')}
                                                             title="Stop"
@@ -215,14 +215,14 @@ const ServerDockerTab = ({ serverId, serverStatus, server }) => {
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <button
+                                                        <button type="button"
                                                             className="btn-icon success"
                                                             onClick={() => handleContainerAction(container.id, 'start')}
                                                             title="Start"
                                                         >
                                                             <PlayIcon />
                                                         </button>
-                                                        <button
+                                                        <button type="button"
                                                             className="btn-icon danger"
                                                             onClick={() => handleContainerAction(container.id, 'remove')}
                                                             title="Remove"

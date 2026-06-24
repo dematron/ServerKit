@@ -251,7 +251,7 @@ function ScreenshotView({ baseUrl, fetchJson, intervalMs, scale, quality }) {
 
     return (
         <div className="sk-gui__viewport">
-            <button
+            <button type="button"
                 className="sk-gui__viewport-btn"
                 onClick={() => setPaused(p => !p)}
             >

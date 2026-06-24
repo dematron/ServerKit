@@ -102,7 +102,7 @@ const SidebarSettings = () => {
 
                 <div className="sidebar-presets">
                     {Object.entries(SIDEBAR_PRESETS).map(([key, profile]) => (
-                        <button
+                        <button type="button"
                             key={key}
                             className={`sidebar-preset-card ${preset === key ? 'active' : ''}`}
                             onClick={() => handlePresetChange(key)}
@@ -121,7 +121,7 @@ const SidebarSettings = () => {
                             )}
                         </button>
                     ))}
-                    <button
+                    <button type="button"
                         className={`sidebar-preset-card ${preset === 'custom' ? 'active' : ''}`}
                         onClick={() => handlePresetChange('custom')}
                     >

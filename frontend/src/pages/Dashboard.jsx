@@ -356,7 +356,7 @@ const Dashboard = () => {
                         <span className="clock-zone">{serverTime?.timezone_id || 'UTC'}</span>
                     </div>
                     <div className="refresh-control">
-                        <button
+                        <button type="button"
                             className="btn-refresh"
                             onClick={handleRefreshAll}
                             title="Refresh now"
@@ -451,15 +451,15 @@ const Dashboard = () => {
                         specs: () => (
                             <div key="specs" className="spec-panel">
                                 <h3 className="spec-panel-title">Quick Actions</h3>
-                                <button className="btn-action" onClick={() => navigate('/servers')}>
+                                <button type="button" className="btn-action" onClick={() => navigate('/servers')}>
                                     <span>Manage Servers</span>
                                     <span><Server size={14} /></span>
                                 </button>
-                                <button className="btn-action" onClick={() => navigate('/docker')}>
+                                <button type="button" className="btn-action" onClick={() => navigate('/docker')}>
                                     <span>Docker Containers</span>
                                     <span><Container size={14} /></span>
                                 </button>
-                                <button className="btn-action" onClick={() => navigate('/terminal')}>
+                                <button type="button" className="btn-action" onClick={() => navigate('/terminal')}>
                                     <span>Open Terminal</span>
                                     <span><Terminal size={14} /></span>
                                 </button>

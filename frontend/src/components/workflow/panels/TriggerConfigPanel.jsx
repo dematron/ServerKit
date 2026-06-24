@@ -81,7 +81,7 @@ const TriggerConfigPanel = ({ node, onChange, onClose, onDelete }) => {
                 <Label>Trigger Type</Label>
                 <div className="trigger-type-grid">
                     {triggerTypes.map(({ id, icon: Icon, label: typeLabel, desc }) => (
-                        <button
+                        <button type="button"
                             key={id}
                             className={`trigger-type-btn ${triggerType === id ? 'active' : ''}`}
                             onClick={() => handleTypeChange(id)}

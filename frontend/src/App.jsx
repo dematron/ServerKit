@@ -45,6 +45,7 @@ import { MARKET_TABS } from './components/marketplace/marketTabs';
 import { WORDPRESS_TABS } from './components/wordpress/wordpressTabs';
 import { BACKUP_TABS } from './components/backups/backupTabs';
 import { SECURITY_TABS } from './components/security/securityTabs';
+import { ORG_TABS } from './components/organization/organizationTabs';
 import Downloads from './pages/Downloads';
 import WordPress from './pages/WordPress';
 import WordPressDetail from './pages/WordPressDetail';
@@ -362,11 +363,16 @@ function AppRoutes() {
                 <Route path="servers/:id" element={<ServerDetail />} />
                 <Route path="servers/:id/:tab" element={<ServerDetail />} />
                 <Route path="agent-plugins" element={<Navigate to="/marketplace" replace />} />
-                <Route path="projects" element={<Projects />} />
+                {/* Organization tab group — Projects / Shared Variables /
+                    Workspaces share one PageTopbar + tabs (ORG_TABS) instead of
+                    a collapsible sidebar sub-menu. Detail routes stay outside. */}
+                <Route element={<TabGroupLayout tabs={ORG_TABS} />}>
+                    <Route path="projects" element={<Projects />} />
+                    <Route path="shared-variables" element={<SharedVariables />} />
+                    <Route path="workspaces" element={<Workspaces />} />
+                </Route>
                 <Route path="projects/:id" element={<ProjectDetail />} />
                 <Route path="projects/:id/:tab" element={<ProjectDetail />} />
-                <Route path="shared-variables" element={<SharedVariables />} />
-                <Route path="workspaces" element={<Workspaces />} />
                 <Route path="workspaces/:id" element={<WorkspaceDetail />} />
                 <Route path="workspaces/:id/:tab" element={<WorkspaceDetail />} />
                 <Route path="workspaces/:id/:tab/:section" element={<WorkspaceDetail />} />

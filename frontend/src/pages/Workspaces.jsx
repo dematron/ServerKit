@@ -5,7 +5,8 @@ import { useToast } from '../contexts/ToastContext';
 import Spinner from '../components/Spinner';
 import EmptyState from '../components/EmptyState';
 import { LayoutGrid, Plus, ChevronRight, Search } from 'lucide-react';
-import { PageTopbar, Pill, SegControl, ServiceTile } from '@/components/ds';
+import { Pill, SegControl, ServiceTile } from '@/components/ds';
+import { useTopbarActions } from '@/hooks/useTopbarActions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -49,6 +50,13 @@ const Workspaces = () => {
 
     useEffect(() => { loadWorkspaces(); }, [loadWorkspaces]);
 
+    useTopbarActions(() => (
+        <Button size="sm" onClick={() => setShowCreateModal(true)}>
+            <Plus size={16} />
+            New Workspace
+        </Button>
+    ), []);
+
     const handleCreate = async () => {
         try {
             await api.createWorkspace(form);
@@ -61,7 +69,7 @@ const Workspaces = () => {
         }
     };
 
-    if (loading) return <div className="page-container workspaces-page"><Spinner /></div>;
+    if (loading) return <div className="sk-tabgroup__inner workspaces-page"><Spinner /></div>;
 
     const q = search.trim().toLowerCase();
     const shownWorkspaces = workspaces.filter(ws => {
@@ -75,19 +83,7 @@ const Workspaces = () => {
     const activeCount = workspaces.filter(ws => ws.status === 'active').length;
 
     return (
-        <div className="page-container workspaces-page">
-            <PageTopbar
-                icon={<LayoutGrid size={18} />}
-                title="Workspaces"
-                meta={`${workspaces.length} workspace${workspaces.length !== 1 ? 's' : ''}`}
-                actions={(
-                    <Button size="sm" onClick={() => setShowCreateModal(true)}>
-                        <Plus size={16} />
-                        New Workspace
-                    </Button>
-                )}
-            />
-
+        <div className="sk-tabgroup__inner workspaces-page">
             {workspaces.length === 0 ? (
                 <EmptyState
                     icon={LayoutGrid}

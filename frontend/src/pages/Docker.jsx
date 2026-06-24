@@ -14,7 +14,7 @@ import { MetricCard } from '@/components/ds';
 import {
     Box, Layers, HardDrive, Network as NetworkIcon, Search, X, RefreshCw,
     Trash2, Play, Square, RotateCw, Terminal as TerminalLucide, FileText,
-    Activity, Clock3, Copy, Database, Gauge, Package, Server as ServerIcon, ArrowUpDown,
+    Activity, Clock3, Copy, Database, Gauge, Package, Server as ServerIcon, ArrowUpDown, Lock,
 } from 'lucide-react';
 
 // Server context for Docker operations
@@ -92,6 +92,17 @@ const getContainerState = (container) => {
 };
 
 const isContainerRunning = (container) => getContainerState(container) === 'running';
+
+// ServerKit's own infrastructure containers run the panel itself, so we don't
+// expose lifecycle controls (start/stop/restart/remove) for them — the backend
+// rejects those calls anyway. Trust the backend `protected` flag when present;
+// fall back to a name check for shapes (e.g. remote agents) that omit it.
+const SELF_CONTAINER_HINTS = ['serverkit-frontend', 'serverkit_frontend', 'serverkit-backend', 'serverkit_backend'];
+const isProtectedContainer = (container) => {
+    if (container?.protected === true) return true;
+    const name = getContainerName(container).toLowerCase().replace(/\//g, '');
+    return SELF_CONTAINER_HINTS.some(hint => name.includes(hint));
+};
 
 const getContainerStatusLabel = (container) => {
     if (isContainerRunning(container)) return 'Running';
@@ -925,6 +936,7 @@ const ContainersTab = ({ onStatsChange }) => {
                                         const containerId = getContainerId(container);
                                         const stats = parseStats(containerStats[containerId]);
                                         const isRunning = isContainerRunning(container);
+                                        const isProtected = isProtectedContainer(container);
                                         const ports = formatPorts(container.ports);
                                         const isSelected = getContainerId(selectedContainer) === containerId;
                                         return (
@@ -987,7 +999,11 @@ const ContainersTab = ({ onStatsChange }) => {
                                                             <TerminalLucide size={13} />
                                                         </button>
                                                     )}
-                                                    {isRunning ? (
+                                                    {isProtected ? (
+                                                        <span className="dx-row-protected" title="ServerKit system container — managed by the panel, lifecycle controls are disabled">
+                                                            <Lock size={11} /> System
+                                                        </span>
+                                                    ) : isRunning ? (
                                                         <>
                                                             <button className="dx-row-action" onClick={() => handleAction(containerId, 'restart')} title="Restart">
                                                                 <RotateCw size={13} />
@@ -1136,6 +1152,7 @@ const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec
     }
 
     const isRunning = isContainerRunning(container);
+    const isProtected = isProtectedContainer(container);
     const ports = formatPorts(container.ports);
     const envVars = details?.Config?.Env || [];
     const mounts = details?.Mounts || [];
@@ -1190,7 +1207,11 @@ const ContainerInspector = ({ container, stats, onAction, onOpenLogs, onOpenExec
                         <TerminalLucide size={13} /> Exec
                     </button>
                 )}
-                {isRunning ? (
+                {isProtected ? (
+                    <span className="dx-action-protected" title="ServerKit system container — managed by the panel, lifecycle controls are disabled">
+                        <Lock size={13} /> System container
+                    </span>
+                ) : isRunning ? (
                     <>
                         <button className="dx-action-btn" onClick={() => onAction(containerId, 'restart')}>
                             <RotateCw size={13} /> Restart

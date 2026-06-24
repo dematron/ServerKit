@@ -20,6 +20,7 @@ import {
     BulkActionsBar,
 } from '../components/wordpress';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import Modal from '@/components/Modal';
 import Spinner from '../components/Spinner';
 import EmptyState from '../components/EmptyState';
 import { FolderGit2 } from 'lucide-react';
@@ -857,14 +858,8 @@ const CreatePipelineEnvModal = ({ onClose, onCreate, productionDomain, existingT
     });
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Create Environment</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
-                </div>
-
-                <form onSubmit={handleSubmit}>
+        <Modal open onClose={onClose} title="Create Environment">
+            <form onSubmit={handleSubmit}>
                     <div className="form-group">
                         <Label>Environment Type</Label>
                         <select name="type" value={formData.type} onChange={handleChange}>
@@ -1037,8 +1032,7 @@ const CreatePipelineEnvModal = ({ onClose, onCreate, productionDomain, existingT
                         </Button>
                     </div>
                 </form>
-            </div>
-        </div>
+        </Modal>
     );
 };
 

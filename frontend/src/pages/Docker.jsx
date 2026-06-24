@@ -6,6 +6,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import LogToolbar from '../components/log-viewer/LogToolbar';
 import LogContent from '../components/log-viewer/LogContent';
 import EmptyState from '../components/EmptyState';
+import Modal from '@/components/Modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -1922,44 +1923,38 @@ const ComposeLogsModal = ({ project, onClose }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Logs: {projectName}</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title={`Logs: ${projectName}`} size="lg">
+            <div className="modal-body">
+                <div className="logs-controls flex flex-wrap items-center gap-2 mb-2">
+                    <label>Service:</label>
+                    <select
+                        value={selectedService}
+                        onChange={(e) => setSelectedService(e.target.value)}
+                        className="py-2 px-2"
+                    >
+                        <option value="">All Services</option>
+                        {services.map(service => (
+                            <option key={service} value={service}>{service}</option>
+                        ))}
+                    </select>
+                    <label>Lines:</label>
+                    <select value={tail} onChange={(e) => setTail(Number(e.target.value))} className="py-2 px-2">
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                        <option value={200}>200</option>
+                        <option value={500}>500</option>
+                        <option value={1000}>1000</option>
+                    </select>
                 </div>
-                <div className="modal-body">
-                    <div className="logs-controls flex flex-wrap items-center gap-2 mb-2">
-                        <label>Service:</label>
-                        <select
-                            value={selectedService}
-                            onChange={(e) => setSelectedService(e.target.value)}
-                            className="py-2 px-2"
-                        >
-                            <option value="">All Services</option>
-                            {services.map(service => (
-                                <option key={service} value={service}>{service}</option>
-                            ))}
-                        </select>
-                        <label>Lines:</label>
-                        <select value={tail} onChange={(e) => setTail(Number(e.target.value))} className="py-2 px-2">
-                            <option value={50}>50</option>
-                            <option value={100}>100</option>
-                            <option value={200}>200</option>
-                            <option value={500}>500</option>
-                            <option value={1000}>1000</option>
-                        </select>
-                    </div>
-                    <pre className="log-viewer">{loading ? 'Loading...' : logs}</pre>
-                </div>
-                <div className="modal-actions">
-                    <Button variant="outline" onClick={loadLogs} disabled={loading}>
-                        {loading ? 'Loading...' : 'Refresh'}
-                    </Button>
-                    <Button onClick={onClose}>Close</Button>
-                </div>
+                <pre className="log-viewer">{loading ? 'Loading...' : logs}</pre>
             </div>
-        </div>
+            <div className="modal-actions">
+                <Button variant="outline" onClick={loadLogs} disabled={loading}>
+                    {loading ? 'Loading...' : 'Refresh'}
+                </Button>
+                <Button onClick={onClose}>Close</Button>
+            </div>
+        </Modal>
     );
 };
 
@@ -2009,83 +2004,76 @@ const RunContainerModal = ({ onClose, onCreated }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Run Container</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title="Run Container" size="md">
+            {error && <div className="error-message">{error}</div>}
+
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <label>Image *</label>
+                    <Input
+                        type="text"
+                        name="image"
+                        value={formData.image}
+                        onChange={handleChange}
+                        placeholder="nginx:latest"
+                        required
+                    />
                 </div>
 
-                {error && <div className="error-message">{error}</div>}
+                <div className="form-group">
+                    <label>Container Name</label>
+                    <Input
+                        type="text"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleChange}
+                        placeholder="my-container"
+                    />
+                </div>
 
-                <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label>Image *</label>
-                        <Input
-                            type="text"
-                            name="image"
-                            value={formData.image}
-                            onChange={handleChange}
-                            placeholder="nginx:latest"
-                            required
-                        />
-                    </div>
+                <div className="form-group">
+                    <label>Ports (comma-separated)</label>
+                    <Input
+                        type="text"
+                        name="ports"
+                        value={formData.ports}
+                        onChange={handleChange}
+                        placeholder="8080:80, 443:443"
+                    />
+                </div>
 
-                    <div className="form-group">
-                        <label>Container Name</label>
-                        <Input
-                            type="text"
-                            name="name"
-                            value={formData.name}
-                            onChange={handleChange}
-                            placeholder="my-container"
-                        />
-                    </div>
+                <div className="form-group">
+                    <label>Volumes (comma-separated)</label>
+                    <Input
+                        type="text"
+                        name="volumes"
+                        value={formData.volumes}
+                        onChange={handleChange}
+                        placeholder="/host/path:/container/path"
+                    />
+                </div>
 
-                    <div className="form-group">
-                        <label>Ports (comma-separated)</label>
-                        <Input
-                            type="text"
-                            name="ports"
-                            value={formData.ports}
-                            onChange={handleChange}
-                            placeholder="8080:80, 443:443"
-                        />
-                    </div>
+                <div className="form-group">
+                    <label>Environment Variables (one per line, KEY=value)</label>
+                    <Textarea
+                        name="env"
+                        value={formData.env}
+                        onChange={handleChange}
+                        placeholder="NODE_ENV=production&#10;API_KEY=xxx"
+                        rows={4}
+                    />
+                </div>
 
-                    <div className="form-group">
-                        <label>Volumes (comma-separated)</label>
-                        <Input
-                            type="text"
-                            name="volumes"
-                            value={formData.volumes}
-                            onChange={handleChange}
-                            placeholder="/host/path:/container/path"
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label>Environment Variables (one per line, KEY=value)</label>
-                        <Textarea
-                            name="env"
-                            value={formData.env}
-                            onChange={handleChange}
-                            placeholder="NODE_ENV=production&#10;API_KEY=xxx"
-                            rows={4}
-                        />
-                    </div>
-
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={loading}>
-                            {loading ? 'Running...' : 'Run Container'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={loading}>
+                        {loading ? 'Running...' : 'Run Container'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 
@@ -2305,57 +2293,51 @@ const ContainerExecModal = ({ container, onClose }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Exec: {getContainerName(container)}</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
-                </div>
-                <div className="modal-body exec-modal-body">
-                    <div className="exec-output" ref={outputRef}>
-                        {output.length === 0 ? (
-                            <div className="exec-welcome">
-                                <p>Execute commands in container <code>{getContainerName(container)}</code></p>
-                                <p className="text-muted">Type a command and press Enter</p>
+        <Modal open onClose={onClose} title={`Exec: ${getContainerName(container)}`} size="lg">
+            <div className="modal-body exec-modal-body">
+                <div className="exec-output" ref={outputRef}>
+                    {output.length === 0 ? (
+                        <div className="exec-welcome">
+                            <p>Execute commands in container <code>{getContainerName(container)}</code></p>
+                            <p className="text-muted">Type a command and press Enter</p>
+                        </div>
+                    ) : (
+                        output.map((line, idx) => (
+                            <div key={idx} className={`exec-line exec-${line.type}`}>
+                                <pre>{line.text}</pre>
                             </div>
-                        ) : (
-                            output.map((line, idx) => (
-                                <div key={idx} className={`exec-line exec-${line.type}`}>
-                                    <pre>{line.text}</pre>
-                                </div>
-                            ))
-                        )}
-                        {loading && (
-                            <div className="exec-line exec-loading">
-                                <span className="spinner-inline"></span> Running...
-                            </div>
-                        )}
-                    </div>
-                    <form onSubmit={executeCommand} className="exec-input-form">
-                        <span className="exec-prompt">$</span>
-                        <input
-                            ref={inputRef}
-                            type="text"
-                            value={command}
-                            onChange={(e) => setCommand(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Enter command..."
-                            className="exec-input"
-                            disabled={loading}
-                            autoComplete="off"
-                            spellCheck="false"
-                        />
-                        <Button type="submit" size="sm" disabled={loading || !command.trim()}>
-                            Run
-                        </Button>
-                    </form>
+                        ))
+                    )}
+                    {loading && (
+                        <div className="exec-line exec-loading">
+                            <span className="spinner-inline"></span> Running...
+                        </div>
+                    )}
                 </div>
-                <div className="modal-actions">
-                    <Button variant="outline" onClick={clearOutput}>Clear</Button>
-                    <Button onClick={onClose}>Close</Button>
-                </div>
+                <form onSubmit={executeCommand} className="exec-input-form">
+                    <span className="exec-prompt">$</span>
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={command}
+                        onChange={(e) => setCommand(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Enter command..."
+                        className="exec-input"
+                        disabled={loading}
+                        autoComplete="off"
+                        spellCheck="false"
+                    />
+                    <Button type="submit" size="sm" disabled={loading || !command.trim()}>
+                        Run
+                    </Button>
+                </form>
             </div>
-        </div>
+            <div className="modal-actions">
+                <Button variant="outline" onClick={clearOutput}>Clear</Button>
+                <Button onClick={onClose}>Close</Button>
+            </div>
+        </Modal>
     );
 };
 
@@ -2388,48 +2370,41 @@ const PullImageModal = ({ onClose, onPulled }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Pull Image</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title="Pull Image" size="md">
+            {error && <div className="error-message">{error}</div>}
+
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <label>Image Name *</label>
+                    <Input
+                        type="text"
+                        value={image}
+                        onChange={(e) => setImage(e.target.value)}
+                        placeholder="nginx, mysql, redis"
+                        required
+                    />
                 </div>
 
-                {error && <div className="error-message">{error}</div>}
+                <div className="form-group">
+                    <label>Tag</label>
+                    <Input
+                        type="text"
+                        value={tag}
+                        onChange={(e) => setTag(e.target.value)}
+                        placeholder="latest"
+                    />
+                </div>
 
-                <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label>Image Name *</label>
-                        <Input
-                            type="text"
-                            value={image}
-                            onChange={(e) => setImage(e.target.value)}
-                            placeholder="nginx, mysql, redis"
-                            required
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label>Tag</label>
-                        <Input
-                            type="text"
-                            value={tag}
-                            onChange={(e) => setTag(e.target.value)}
-                            placeholder="latest"
-                        />
-                    </div>
-
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={loading}>
-                            {loading ? 'Pulling...' : 'Pull Image'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={loading}>
+                        {loading ? 'Pulling...' : 'Pull Image'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 
@@ -2456,47 +2431,40 @@ const CreateNetworkModal = ({ onClose, onCreated }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Create Network</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title="Create Network" size="md">
+            {error && <div className="error-message">{error}</div>}
+
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <label>Network Name *</label>
+                    <Input
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="my-network"
+                        required
+                    />
                 </div>
 
-                {error && <div className="error-message">{error}</div>}
+                <div className="form-group">
+                    <label>Driver</label>
+                    <select value={driver} onChange={(e) => setDriver(e.target.value)}>
+                        <option value="bridge">bridge</option>
+                        <option value="overlay">overlay</option>
+                        <option value="macvlan">macvlan</option>
+                    </select>
+                </div>
 
-                <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label>Network Name *</label>
-                        <Input
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder="my-network"
-                            required
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label>Driver</label>
-                        <select value={driver} onChange={(e) => setDriver(e.target.value)}>
-                            <option value="bridge">bridge</option>
-                            <option value="overlay">overlay</option>
-                            <option value="macvlan">macvlan</option>
-                        </select>
-                    </div>
-
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={loading}>
-                            {loading ? 'Creating...' : 'Create Network'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={loading}>
+                        {loading ? 'Creating...' : 'Create Network'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 
@@ -2522,38 +2490,31 @@ const CreateVolumeModal = ({ onClose, onCreated }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Create Volume</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title="Create Volume" size="md">
+            {error && <div className="error-message">{error}</div>}
+
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <label>Volume Name *</label>
+                    <Input
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="my-volume"
+                        required
+                    />
                 </div>
 
-                {error && <div className="error-message">{error}</div>}
-
-                <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label>Volume Name *</label>
-                        <Input
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder="my-volume"
-                            required
-                        />
-                    </div>
-
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={loading}>
-                            {loading ? 'Creating...' : 'Create Volume'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={loading}>
+                        {loading ? 'Creating...' : 'Create Volume'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 

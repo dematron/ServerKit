@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Pill, EnvTag } from '@/components/ds';
+import Modal from '@/components/Modal';
 
 const VALID_TABS = ['overview', 'environment', 'packages', 'gunicorn', 'commands', 'ops', 'waf', 'build', 'deploy', 'previews', 'logs', 'settings'];
 
@@ -1168,13 +1169,7 @@ const BuildTab = ({ appId, appPath, app }) => {
                 </div>
             )}
 
-            {showConfigModal && (
-                <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2>Build Configuration</h2>
-                            <button className="modal-close" onClick={() => setShowConfigModal(false)}>&times;</button>
-                        </div>
+            <Modal open={showConfigModal} onClose={() => setShowConfigModal(false)} title="Build Configuration">
                         <form onSubmit={handleConfigureBuild}>
                             <div className="form-group">
                                 <label>Build Method</label>
@@ -1237,9 +1232,7 @@ const BuildTab = ({ appId, appPath, app }) => {
                                 </Button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+            </Modal>
         </div>
     );
 };
@@ -1678,13 +1671,7 @@ const DeployTab = ({ appId, appPath }) => {
                 <DeploymentTimeline appId={appId} />
             </div>
 
-            {showConfigModal && (
-                <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2>Configure Deployment</h2>
-                            <button className="modal-close" onClick={() => setShowConfigModal(false)}>&times;</button>
-                        </div>
+            <Modal open={showConfigModal} onClose={() => setShowConfigModal(false)} title="Configure Deployment">
                         <form onSubmit={handleConfigureDeployment}>
                             <div className="form-group">
                                 <label>Repository URL</label>
@@ -1742,9 +1729,7 @@ const DeployTab = ({ appId, appPath }) => {
                                 </Button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+            </Modal>
         </div>
     );
 };

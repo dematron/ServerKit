@@ -18,6 +18,7 @@ import { ErrorBoundary, ErrorState } from '../components/ErrorBoundary';
 import { useConfirm } from '../hooks/useConfirm';
 import { DangerZone } from '../components/DangerZone';
 import EmptyState from '../components/EmptyState';
+import Modal from '@/components/Modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -573,34 +574,26 @@ const WordPressDetail = () => {
             )}
 
             {/* Clone Site Modal */}
-            {showCloneModal && (
-                <div className="modal-overlay" onClick={() => !cloning && setShowCloneModal(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2>Clone Site</h2>
-                            <button className="modal-close" onClick={() => !cloning && setShowCloneModal(false)}>&times;</button>
-                        </div>
-                        <form onSubmit={(e) => { e.preventDefault(); handleClone(); }}>
-                            <p className="hint">Creates a brand-new independent WordPress site (its own Docker stack and database) seeded from <strong>{site.name}</strong>, with fresh admin credentials shown once.</p>
-                            <div className="form-group">
-                                <Label>New Site Name *</Label>
-                                <Input
-                                    type="text"
-                                    value={cloneName}
-                                    onChange={(e) => setCloneName(e.target.value)}
-                                    placeholder={`${site.name}-copy`}
-                                    autoFocus
-                                    disabled={cloning}
-                                />
-                            </div>
-                            <div className="modal-actions">
-                                <Button type="button" variant="outline" onClick={() => setShowCloneModal(false)} disabled={cloning}>Cancel</Button>
-                                <Button type="submit" disabled={cloning || !cloneName.trim()}>{cloning ? 'Cloning...' : 'Clone Site'}</Button>
-                            </div>
-                        </form>
+            <Modal open={showCloneModal} onClose={() => !cloning && setShowCloneModal(false)} title="Clone Site">
+                <form onSubmit={(e) => { e.preventDefault(); handleClone(); }}>
+                    <p className="hint">Creates a brand-new independent WordPress site (its own Docker stack and database) seeded from <strong>{site.name}</strong>, with fresh admin credentials shown once.</p>
+                    <div className="form-group">
+                        <Label>New Site Name *</Label>
+                        <Input
+                            type="text"
+                            value={cloneName}
+                            onChange={(e) => setCloneName(e.target.value)}
+                            placeholder={`${site.name}-copy`}
+                            autoFocus
+                            disabled={cloning}
+                        />
                     </div>
-                </div>
-            )}
+                    <div className="modal-actions">
+                        <Button type="button" variant="outline" onClick={() => setShowCloneModal(false)} disabled={cloning}>Cancel</Button>
+                        <Button type="submit" disabled={cloning || !cloneName.trim()}>{cloning ? 'Cloning...' : 'Clone Site'}</Button>
+                    </div>
+                </form>
+            </Modal>
 
             {/* Tab Content */}
             <div className="app-detail-content">
@@ -2599,52 +2592,45 @@ const SearchReplaceModal = ({ onClose, onSubmit }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Search &amp; Replace</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title="Search & Replace">
+            <form onSubmit={(e) => { e.preventDefault(); run(false); }}>
+                <p className="hint">Replaces a string across all database tables (e.g. an old domain). Always preview with a dry run first.</p>
+
+                <div className="form-group">
+                    <Label>Search for *</Label>
+                    <Input
+                        type="text"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="https://old-domain.com"
+                        required
+                    />
                 </div>
 
-                <form onSubmit={(e) => { e.preventDefault(); run(false); }}>
-                    <p className="hint">Replaces a string across all database tables (e.g. an old domain). Always preview with a dry run first.</p>
+                <div className="form-group">
+                    <Label>Replace with *</Label>
+                    <Input
+                        type="text"
+                        value={replace}
+                        onChange={(e) => setReplace(e.target.value)}
+                        placeholder="https://new-domain.com"
+                        required
+                    />
+                </div>
 
-                    <div className="form-group">
-                        <Label>Search for *</Label>
-                        <Input
-                            type="text"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder="https://old-domain.com"
-                            required
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <Label>Replace with *</Label>
-                        <Input
-                            type="text"
-                            value={replace}
-                            onChange={(e) => setReplace(e.target.value)}
-                            placeholder="https://new-domain.com"
-                            required
-                        />
-                    </div>
-
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="button" variant="outline" onClick={() => run(true)} disabled={loading || !search.trim() || !replace.trim()}>
-                            {loading ? 'Running...' : 'Dry Run'}
-                        </Button>
-                        <Button type="submit" disabled={loading || !search.trim() || !replace.trim()}>
-                            {loading ? 'Running...' : 'Run Replace'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => run(true)} disabled={loading || !search.trim() || !replace.trim()}>
+                        {loading ? 'Running...' : 'Dry Run'}
+                    </Button>
+                    <Button type="submit" disabled={loading || !search.trim() || !replace.trim()}>
+                        {loading ? 'Running...' : 'Run Replace'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 
@@ -2667,45 +2653,39 @@ const DeleteSiteModal = ({ siteName, onClose, onConfirm }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Delete Site</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
-                </div>
-                <form onSubmit={handleSubmit}>
-                    <p className="hint">This permanently deletes <strong>{siteName}</strong>, all its environments, files and databases. This cannot be undone.</p>
-                    <div className="form-group">
-                        <label className="checkbox-label">
-                            <input
-                                type="checkbox"
-                                checked={createBackup}
-                                onChange={(e) => setCreateBackup(e.target.checked)}
-                            />
-                            <span>Create a final files + database backup before deleting</span>
-                        </label>
-                    </div>
-                    <div className="form-group">
-                        <Label>Type <strong>{siteName}</strong> to confirm *</Label>
-                        <Input
-                            type="text"
-                            value={typed}
-                            onChange={(e) => setTyped(e.target.value)}
-                            placeholder={siteName}
-                            autoFocus
+        <Modal open onClose={onClose} title="Delete Site">
+            <form onSubmit={handleSubmit}>
+                <p className="hint">This permanently deletes <strong>{siteName}</strong>, all its environments, files and databases. This cannot be undone.</p>
+                <div className="form-group">
+                    <label className="checkbox-label">
+                        <input
+                            type="checkbox"
+                            checked={createBackup}
+                            onChange={(e) => setCreateBackup(e.target.checked)}
                         />
-                    </div>
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" variant="destructive" disabled={loading || !canDelete}>
-                            {loading ? 'Deleting...' : 'Delete Site'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                        <span>Create a final files + database backup before deleting</span>
+                    </label>
+                </div>
+                <div className="form-group">
+                    <Label>Type <strong>{siteName}</strong> to confirm *</Label>
+                    <Input
+                        type="text"
+                        value={typed}
+                        onChange={(e) => setTyped(e.target.value)}
+                        placeholder={siteName}
+                        autoFocus
+                    />
+                </div>
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" variant="destructive" disabled={loading || !canDelete}>
+                        {loading ? 'Deleting...' : 'Delete Site'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 
@@ -2984,93 +2964,86 @@ const CreateEnvironmentModal = ({ onClose, onCreate, productionDomain, hasStagin
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Create Environment</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title="Create Environment">
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <Label>Environment Type</Label>
+                    <select name="type" value={formData.type} onChange={handleChange}>
+                        {!hasDev && <option value="development">Development</option>}
+                        {!hasStaging && <option value="staging">Staging</option>}
+                    </select>
                 </div>
 
-                <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <Label>Environment Type</Label>
-                        <select name="type" value={formData.type} onChange={handleChange}>
-                            {!hasDev && <option value="development">Development</option>}
-                            {!hasStaging && <option value="staging">Staging</option>}
-                        </select>
-                    </div>
+                <div className="form-group">
+                    <Label>Environment Name *</Label>
+                    <Input
+                        type="text"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleChange}
+                        placeholder="My Site Dev"
+                        required
+                    />
+                </div>
 
-                    <div className="form-group">
-                        <Label>Environment Name *</Label>
-                        <Input
-                            type="text"
-                            name="name"
-                            value={formData.name}
-                            onChange={handleChange}
-                            placeholder="My Site Dev"
-                            required
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <Label>Domain</Label>
-                        <Input
-                            type="text"
-                            name="domain"
-                            value={formData.domain}
-                            onChange={handleChange}
-                            placeholder={suggestedDomain || 'dev.example.com'}
-                        />
-                        {suggestedDomain && !formData.domain && (
-                            <span className="form-hint form-hint-domain">
-                                Will use: <code>{suggestedDomain}</code>
-                            </span>
-                        )}
-                        {!suggestedDomain && !formData.domain && (
-                            <span className="form-hint">Enter a domain or leave empty to auto-generate</span>
-                        )}
-                    </div>
-
-                    {displayDomain && (
-                        <div className="env-preview-url">
-                            <span className="preview-label">Environment URL:</span>
-                            <span className="preview-url">https://{displayDomain}</span>
-                        </div>
+                <div className="form-group">
+                    <Label>Domain</Label>
+                    <Input
+                        type="text"
+                        name="domain"
+                        value={formData.domain}
+                        onChange={handleChange}
+                        placeholder={suggestedDomain || 'dev.example.com'}
+                    />
+                    {suggestedDomain && !formData.domain && (
+                        <span className="form-hint form-hint-domain">
+                            Will use: <code>{suggestedDomain}</code>
+                        </span>
                     )}
+                    {!suggestedDomain && !formData.domain && (
+                        <span className="form-hint">Enter a domain or leave empty to auto-generate</span>
+                    )}
+                </div>
 
-                    <div className="form-group">
-                        <label className="checkbox-label">
-                            <input
-                                type="checkbox"
-                                name="cloneDb"
-                                checked={formData.cloneDb}
-                                onChange={handleChange}
-                            />
-                            <span>Clone production database</span>
-                        </label>
+                {displayDomain && (
+                    <div className="env-preview-url">
+                        <span className="preview-label">Environment URL:</span>
+                        <span className="preview-url">https://{displayDomain}</span>
                     </div>
+                )}
 
-                    <div className="form-group">
-                        <Label>Sync Schedule (optional)</Label>
-                        <select name="syncSchedule" value={formData.syncSchedule} onChange={handleChange}>
-                            <option value="">No automatic sync</option>
-                            <option value="0 3 * * 0">Weekly (Sunday 3am)</option>
-                            <option value="0 3 * * *">Daily (3am)</option>
-                        </select>
-                        <span className="form-hint">Automatically sync database from production</span>
-                    </div>
+                <div className="form-group">
+                    <label className="checkbox-label">
+                        <input
+                            type="checkbox"
+                            name="cloneDb"
+                            checked={formData.cloneDb}
+                            onChange={handleChange}
+                        />
+                        <span>Clone production database</span>
+                    </label>
+                </div>
 
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={loading}>
-                            {loading ? 'Creating...' : 'Create Environment'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                <div className="form-group">
+                    <Label>Sync Schedule (optional)</Label>
+                    <select name="syncSchedule" value={formData.syncSchedule} onChange={handleChange}>
+                        <option value="">No automatic sync</option>
+                        <option value="0 3 * * 0">Weekly (Sunday 3am)</option>
+                        <option value="0 3 * * *">Daily (3am)</option>
+                    </select>
+                    <span className="form-hint">Automatically sync database from production</span>
+                </div>
+
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={loading}>
+                        {loading ? 'Creating...' : 'Create Environment'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 
@@ -3230,58 +3203,51 @@ const CreateSnapshotModal = ({ onClose, onCreate }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Create Snapshot</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Modal open onClose={onClose} title="Create Snapshot">
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <Label>Snapshot Name *</Label>
+                    <Input
+                        type="text"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleChange}
+                        required
+                    />
                 </div>
 
-                <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <Label>Snapshot Name *</Label>
-                        <Input
-                            type="text"
-                            name="name"
-                            value={formData.name}
-                            onChange={handleChange}
-                            required
-                        />
-                    </div>
+                <div className="form-group">
+                    <Label>Description</Label>
+                    <Textarea
+                        name="description"
+                        value={formData.description}
+                        onChange={handleChange}
+                        placeholder="Optional description..."
+                        rows={3}
+                    />
+                </div>
 
-                    <div className="form-group">
-                        <Label>Description</Label>
-                        <Textarea
-                            name="description"
-                            value={formData.description}
-                            onChange={handleChange}
-                            placeholder="Optional description..."
-                            rows={3}
-                        />
-                    </div>
+                <div className="form-group">
+                    <Label>Tag</Label>
+                    <Input
+                        type="text"
+                        name="tag"
+                        value={formData.tag}
+                        onChange={handleChange}
+                        placeholder="e.g., v1.0.0, before-update"
+                    />
+                </div>
 
-                    <div className="form-group">
-                        <Label>Tag</Label>
-                        <Input
-                            type="text"
-                            name="tag"
-                            value={formData.tag}
-                            onChange={handleChange}
-                            placeholder="e.g., v1.0.0, before-update"
-                        />
-                    </div>
-
-                    <div className="modal-actions">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={loading}>
-                            {loading ? 'Creating...' : 'Create Snapshot'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                <div className="modal-actions">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={loading}>
+                        {loading ? 'Creating...' : 'Create Snapshot'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 

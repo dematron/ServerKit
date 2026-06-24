@@ -15,6 +15,7 @@ import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import EmptyState from '../components/EmptyState';
+import Modal from '@/components/Modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DataTable } from '@/components/ds';
@@ -1152,13 +1153,7 @@ const ManageGroupsModal = ({ groups, onClose, onUpdated }) => {
     }
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>Manage Server Groups</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
-                </div>
-
+        <Modal open onClose={onClose} title="Manage Server Groups">
                 <form onSubmit={handleCreateGroup} className="group-form">
                     <Input
                         type="text"
@@ -1222,8 +1217,7 @@ const ManageGroupsModal = ({ groups, onClose, onUpdated }) => {
                 <div className="modal-actions">
                     <Button onClick={onClose}>Done</Button>
                 </div>
-            </div>
-        </div>
+        </Modal>
     );
 };
 

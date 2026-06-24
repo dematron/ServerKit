@@ -3,7 +3,7 @@ import api from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 import { Button } from '@/components/ui/button';
 import { Pill } from '../ds';
-import { CheckCircle2, Loader2, Circle, XCircle, RotateCw, Clock } from 'lucide-react';
+import { CheckCircle2, Loader2, Circle, XCircle, RotateCw, Clock, ChevronDown } from 'lucide-react';
 
 // The canonical ordered lifecycle steps. The backend returns the same list in
 // `status.states`, but we keep a labeled copy so the wizard renders before the
@@ -81,6 +81,9 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
     const [retrying, setRetrying] = useState(false);
     // `now` ticks once a second so the elapsed timer stays live while polling.
     const [now, setNow] = useState(() => Date.now());
+    // The activity log collapses into a "Step history" summary; users opt in to
+    // the full trail. `null` means "follow the default" (auto by entry count).
+    const [historyOpen, setHistoryOpen] = useState(null);
     const lastStateRef = useRef(initialState || null);
     const logTrailRef = useRef(null);
 
@@ -168,6 +171,57 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
         if (el) el.scrollTop = el.scrollHeight;
     }, [progress.length]);
 
+    // "Step X of N" + a coarse progress fraction derived from the current
+    // state's position in the ordered step list. `ready` counts as complete;
+    // a failed run shows whatever step it reached. Step numbers are 1-based.
+    const totalSteps = STEPS.length;
+    const stepNumber = useMemo(() => {
+        if (ready) return totalSteps;
+        const idx = STEPS.findIndex((s) => s.id === state);
+        if (idx === -1) return 1; // pre-first-poll / unknown → step 1
+        return idx + 1;
+    }, [state, ready, totalSteps]);
+    // Completed steps drive both the bar and the ETA. When ready, all are done;
+    // otherwise the in-flight step isn't yet complete, so it's (stepNumber - 1).
+    const completedSteps = ready ? totalSteps : Math.max(stepNumber - 1, 0);
+    const progressPct = Math.round((completedSteps / totalSteps) * 100);
+
+    // Rough ETA: average wall-clock duration of the completed steps × the steps
+    // still remaining. Only shown when we can estimate with confidence — i.e. at
+    // least one step has completed and the run is still in flight. We measure
+    // per-step span from the first log of each ordered state.
+    const eta = useMemo(() => {
+        if (ready || failed || status?.is_terminal) return null;
+        if (completedSteps < 1) return null;
+        // Earliest timestamp seen for each step state, in step order.
+        const firstTsByStep = STEPS.map((s) => {
+            const rows = logsByState[s.id] || [];
+            if (rows.length === 0) return null;
+            const ts = new Date(rows[0].created_at).getTime();
+            return Number.isNaN(ts) ? null : ts;
+        });
+        // Durations of completed steps = gap between consecutive step starts.
+        const durations = [];
+        for (let i = 0; i < completedSteps; i += 1) {
+            const start = firstTsByStep[i];
+            const next = firstTsByStep[i + 1] ?? (i + 1 === completedSteps ? now : null);
+            if (start != null && next != null && next > start) {
+                durations.push(next - start);
+            }
+        }
+        if (durations.length === 0) return null;
+        const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
+        const remaining = totalSteps - completedSteps;
+        if (remaining <= 0) return null;
+        const ms = avg * remaining;
+        const minutes = Math.max(1, Math.round(ms / 60000));
+        return `~${minutes} min remaining`;
+    }, [ready, failed, status, completedSteps, logsByState, now, totalSteps]);
+
+    // Collapse the history once it's long enough to be a summary; let the user
+    // override either way once they've clicked.
+    const trailExpanded = historyOpen ?? progress.length <= 4;
+
     const headerPillKind = failed ? 'red' : ready ? 'green' : 'amber';
     const headerLabel = failed ? 'Failed' : ready ? 'Ready' : 'In progress';
 
@@ -195,6 +249,30 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
                         {retrying ? 'Retrying…' : 'Retry'}
                     </Button>
                 )}
+            </div>
+
+            <div className="onboarding-wizard__progress">
+                <div className="onboarding-wizard__progress-head">
+                    <span className="onboarding-wizard__progress-step">
+                        {ready ? 'Complete' : `Step ${stepNumber} of ${totalSteps}`}
+                    </span>
+                    {eta && (
+                        <span className="onboarding-wizard__progress-eta">{eta}</span>
+                    )}
+                </div>
+                <div
+                    className="onboarding-wizard__progress-track"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={progressPct}
+                    aria-label="Onboarding progress"
+                >
+                    <span
+                        className={`onboarding-wizard__progress-fill${failed ? ' onboarding-wizard__progress-fill--failed' : ''}`}
+                        style={{ width: `${progressPct}%` }}
+                    />
+                </div>
             </div>
 
             {failureLog && (
@@ -239,26 +317,41 @@ const OnboardingWizard = ({ serverId, initialState, onStateChange }) => {
 
             {progress.length > 0 && (
                 <div className="onboarding-wizard__trail">
-                    <div className="onboarding-wizard__trail-head">Activity log</div>
-                    <ul
-                        ref={logTrailRef}
-                        className="onboarding-wizard__trail-list"
-                        aria-live="polite"
+                    <button
+                        type="button"
+                        className="onboarding-wizard__trail-head"
+                        aria-expanded={trailExpanded}
+                        onClick={() => setHistoryOpen(!trailExpanded)}
                     >
-                        {progress.map((log) => (
-                            <li
-                                key={log.id}
-                                className={`onboarding-wizard__trail-row onboarding-wizard__trail-row--${log.status}`}
-                            >
-                                <span className="onboarding-wizard__trail-time">
-                                    {formatLogTime(log.created_at)}
-                                </span>
-                                <span className="onboarding-wizard__trail-msg">
-                                    {log.message || log.status}
-                                </span>
-                            </li>
-                        ))}
-                    </ul>
+                        <ChevronDown
+                            size={14}
+                            className={`onboarding-wizard__trail-chevron${trailExpanded ? ' onboarding-wizard__trail-chevron--open' : ''}`}
+                            aria-hidden="true"
+                        />
+                        <span>Step history</span>
+                        <span className="onboarding-wizard__trail-count">{progress.length}</span>
+                    </button>
+                    {trailExpanded && (
+                        <ul
+                            ref={logTrailRef}
+                            className="onboarding-wizard__trail-list"
+                            aria-live="polite"
+                        >
+                            {progress.map((log) => (
+                                <li
+                                    key={log.id}
+                                    className={`onboarding-wizard__trail-row onboarding-wizard__trail-row--${log.status}`}
+                                >
+                                    <span className="onboarding-wizard__trail-time">
+                                        {formatLogTime(log.created_at)}
+                                    </span>
+                                    <span className="onboarding-wizard__trail-msg">
+                                        {log.message || log.status}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
             )}
 

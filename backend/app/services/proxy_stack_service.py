@@ -523,6 +523,9 @@ class ProxyStackService:
             app_count, mismatch_count = ProxyStackService._ingress_counts(
                 proxy_type, apps_by_server.get(server.id, [])
             )
+            recommendation = ProxyStackService._recommendation(
+                proxy_type, app_count, mismatch_count
+            )
             if stack is not None:
                 overview.append({
                     'server_id': server.id,
@@ -536,6 +539,7 @@ class ProxyStackService:
                     'networks_count': len(stack.networks_list()),
                     'app_count': app_count,
                     'mismatch_count': mismatch_count,
+                    'recommendation': recommendation,
                 })
             else:
                 # No managed stack → host nginx is in charge. 'host' is a
@@ -550,6 +554,7 @@ class ProxyStackService:
                     'networks_count': 0,
                     'app_count': app_count,
                     'mismatch_count': mismatch_count,
+                    'recommendation': recommendation,
                 })
 
         return overview
@@ -583,6 +588,36 @@ class ProxyStackService:
             if plane != expected:
                 mismatches += 1
         return len(apps), mismatches
+
+    @staticmethod
+    def _recommendation(proxy_type, app_count, mismatch_count):
+        """Turn a server's proxy posture into an actionable per-row hint.
+
+        Pure & deterministic (computed from the counts already in scope), so the
+        fleet table can tell the operator what to DO, not just what IS.
+
+          - any mismatch          -> warn  (align the apps or switch the proxy)
+          - stack proxy, no apps   -> info  (running but unused)
+          - host nginx, no apps    -> info  (nothing on this server yet)
+          - otherwise              -> ok    (apps aligned with the proxy)
+        """
+        proxy_type = (proxy_type or 'nginx').lower()
+        is_stack = proxy_type in ('traefik', 'caddy')
+
+        if mismatch_count > 0:
+            plural = 'app' if mismatch_count == 1 else 'apps'
+            return {
+                'level': 'warn',
+                'text': (
+                    f"{mismatch_count} {plural} expect a different ingress plane — "
+                    "align them or switch this server's proxy"
+                ),
+            }
+        if is_stack and app_count == 0:
+            return {'level': 'info', 'text': 'Proxy stack running with no apps yet'}
+        if not is_stack and app_count == 0:
+            return {'level': 'info', 'text': 'No apps on this server'}
+        return {'level': 'ok', 'text': 'Apps aligned with proxy'}
 
     @staticmethod
     def ingress_audit(server_id):

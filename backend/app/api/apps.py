@@ -414,6 +414,93 @@ def set_app_workspace(app_id):
     return jsonify({'message': 'Workspace updated', 'app': app.to_dict()}), 200
 
 
+@apps_bp.route('/move-to-project', methods=['POST'])
+@jwt_required()
+def move_apps_to_project():
+    """Bulk-assign apps to a project/environment (or unassign them).
+
+    Body: ``{app_ids: [...], project_id, environment_id}``.
+
+    Mirrors the per-create ``_resolve_project_env`` validation, but PER APP so a
+    mixed-workspace selection is handled safely:
+
+      - The project must belong to the app's own workspace.
+      - The environment must belong to that project.
+
+    Invalid pairings are silently dropped to None (the app is unassigned rather
+    than mis-assigned) — never an error. ``project_id: null`` unassigns. Only
+    apps the caller can edit are touched; the rest are skipped. Returns the
+    updated rows.
+    """
+    from app.models.project import Project
+    from app.models.environment import Environment
+
+    user = User.query.get(get_jwt_identity())
+    data = request.get_json() or {}
+
+    raw_ids = data.get('app_ids')
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({'error': 'app_ids must be a non-empty list'}), 400
+
+    def _as_int(v):
+        if v in (None, '', 'null'):
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    app_ids = [i for i in (_as_int(x) for x in raw_ids) if i is not None]
+    req_project_id = _as_int(data.get('project_id'))
+    req_environment_id = _as_int(data.get('environment_id'))
+
+    updated = []
+    skipped = []
+    for app_id in app_ids:
+        app = Application.query.get(app_id)
+        if not app:
+            skipped.append(app_id)
+            continue
+        if not _can_edit_app(user, app):
+            skipped.append(app_id)
+            continue
+
+        if req_project_id is None:
+            # Explicit unassign.
+            app.project_id = None
+            app.environment_id = None
+            updated.append(app)
+            continue
+
+        # Validate the project belongs to THIS app's workspace.
+        project = Project.query.get(req_project_id)
+        if project is None or project.workspace_id != app.workspace_id:
+            # Invalid for this app → drop the assignment (unassign), never error.
+            app.project_id = None
+            app.environment_id = None
+            updated.append(app)
+            continue
+
+        # Validate the environment belongs to the resolved project.
+        environment_id = req_environment_id
+        if environment_id is not None:
+            env = Environment.query.get(environment_id)
+            if env is None or env.project_id != project.id:
+                environment_id = None
+
+        app.project_id = project.id
+        app.environment_id = environment_id
+        updated.append(app)
+
+    db.session.commit()
+
+    return jsonify({
+        'message': f'Updated {len(updated)} application(s)',
+        'apps': [a.to_dict() for a in updated],
+        'skipped': skipped,
+    }), 200
+
+
 def _resolve_project_env(data, workspace_id):
     """Validate optional project_id/environment_id from a create payload against
     the app's workspace. Returns (project_id, environment_id) with invalid values

@@ -41,6 +41,14 @@ const STATUS_LABEL = {
     unknown: 'Unknown',
 };
 
+// Recommendation level → Pill kind. 'ok' reads green (aligned), 'info' is a
+// neutral note, 'warn' is amber so the operator can spot what needs action.
+const RECOMMENDATION_KIND = {
+    ok: 'green',
+    info: 'gray',
+    warn: 'amber',
+};
+
 function formatTimestamp(value) {
     if (!value) return 'Never';
     const date = new Date(value);
@@ -118,6 +126,7 @@ const FleetProxy = () => {
         { key: 'type', header: 'Proxy type' },
         { key: 'status', header: 'Status' },
         { key: 'apps', header: 'Apps' },
+        { key: 'recommendation', header: 'Recommendation' },
         { key: 'lastRegenerated', header: 'Last regenerated' },
         { key: 'networks', header: 'Networks' },
         { key: 'actions', header: '', className: 'fleet-proxy__col-actions' },
@@ -210,6 +219,20 @@ const FleetProxy = () => {
                                                 </Pill>
                                             )}
                                         </div>
+                                    </td>
+                                    <td>
+                                        {row.recommendation ? (
+                                            <Pill
+                                                kind={RECOMMENDATION_KIND[row.recommendation.level] || 'gray'}
+                                                dot={false}
+                                                className="fleet-proxy__recommendation"
+                                                title={row.recommendation.text}
+                                            >
+                                                {row.recommendation.text}
+                                            </Pill>
+                                        ) : (
+                                            <span className="fleet-proxy__muted">—</span>
+                                        )}
                                     </td>
                                     <td className="fleet-proxy__muted">
                                         {formatTimestamp(row.last_regenerated_at)}

@@ -44,13 +44,18 @@ def test_fleet_overview_one_row_per_server(app):
         assert ids == {sid_a, sid_b, sid_c}
 
         # Each row carries the expected flat shape (incl. ingress reconciliation
-        # counts so the dashboard can flag apps that disagree with the proxy).
+        # counts so the dashboard can flag apps that disagree with the proxy, and
+        # a per-row actionable recommendation).
         row = overview[0]
         assert set(row.keys()) == {
             'server_id', 'server_name', 'proxy_type', 'status',
             'last_regenerated_at', 'networks_count',
-            'app_count', 'mismatch_count',
+            'app_count', 'mismatch_count', 'recommendation',
         }
+        # The recommendation is a {level, text} hint. With no apps on a host-nginx
+        # server it's an informational "no apps" note, not a warning.
+        assert set(row['recommendation'].keys()) == {'level', 'text'}
+        assert row['recommendation']['level'] == 'info'
 
 
 def test_fleet_overview_host_default_for_unconfigured(app):
@@ -88,6 +93,46 @@ def test_fleet_overview_reflects_configured_stack(app):
         # Untouched server still reports the host default.
         assert by_id[sid_default]['proxy_type'] == 'nginx'
         assert by_id[sid_default]['status'] == 'host'
+
+
+def _make_app(server_id, app_type='docker', ingress_plane=None, name='a'):
+    from app import db
+    from app.models.application import Application
+    a = Application(
+        name=name, app_type=app_type, status='running',
+        server_id=server_id, user_id=1, ingress_plane=ingress_plane,
+    )
+    db.session.add(a)
+    db.session.commit()
+    return a
+
+
+def test_fleet_overview_recommendation_levels(app):
+    with app.app_context():
+        sid_warn = _make_server('warn-srv', 'agent-fp-warn')
+        sid_idle_stack = _make_server('idle-stack', 'agent-fp-idle')
+        sid_host_empty = _make_server('host-empty', 'agent-fp-empty')
+
+        # warn: a stack server with an app tagged for the host (nginx) plane.
+        PS.switch(sid_warn, 'traefik')
+        _make_app(sid_warn, 'php', name='php-on-traefik')   # nginx plane -> mismatch
+
+        # info: a stack server running with no apps yet.
+        PS.switch(sid_idle_stack, 'caddy')
+
+        rows = {r['server_id']: r for r in PS.fleet_overview()}
+
+        warn = rows[sid_warn]['recommendation']
+        assert warn['level'] == 'warn'
+        assert 'ingress plane' in warn['text']
+
+        idle = rows[sid_idle_stack]['recommendation']
+        assert idle['level'] == 'info'
+        assert 'no apps' in idle['text'].lower()
+
+        # info: host nginx server with no apps.
+        host = rows[sid_host_empty]['recommendation']
+        assert host['level'] == 'info'
 
 
 # ---------------------------------------------------------------------------

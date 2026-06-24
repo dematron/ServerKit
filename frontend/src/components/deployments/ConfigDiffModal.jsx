@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RotateCcw, X } from 'lucide-react';
+import { RotateCcw, X, Info } from 'lucide-react';
 import api from '../../services/api';
 import { Button } from '@/components/ui/button';
 import { useToast } from '../../contexts/ToastContext';
@@ -133,11 +133,19 @@ const ConfigDiffModal = ({ appId, snapId, against = 'previous', onClose, onResto
                     {!loading && !error && diff && (
                         <>
                             {meta && (
-                                <p className="config-diff__summary">
-                                    {meta.hasChanges
-                                        ? meta.summary
-                                        : 'No configuration changes vs the compared snapshot.'}
-                                </p>
+                                <div className="config-diff__summary-banner" role="status">
+                                    <Info size={16} className="config-diff__summary-icon" />
+                                    <div className="config-diff__summary-text">
+                                        <span className="config-diff__summary-label">
+                                            In plain language
+                                        </span>
+                                        <p className="config-diff__summary">
+                                            {meta.hasChanges && meta.summary
+                                                ? meta.summary
+                                                : 'No configuration changes vs the compared snapshot.'}
+                                        </p>
+                                    </div>
+                                </div>
                             )}
 
                             <DiffList
@@ -176,7 +184,9 @@ const ConfigDiffModal = ({ appId, snapId, against = 'previous', onClose, onResto
                     {confirmRestore ? (
                         <>
                             <span className="config-diff__confirm-text">
-                                Restore this configuration and redeploy?
+                                {meta && meta.hasChanges && meta.summary
+                                    ? `Restore this configuration and redeploy? ${meta.summary}.`
+                                    : 'Restore this configuration and redeploy?'}
                             </span>
                             <Button
                                 variant="outline"

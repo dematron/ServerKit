@@ -86,6 +86,11 @@ class Application(db.Model):
     domains = db.relationship('Domain', backref='application', lazy='subquery', cascade='all, delete-orphan')
     linked_app = db.relationship('Application', remote_side=[id], backref='linked_from', foreign_keys=[linked_app_id])
     server = db.relationship('Server', backref=db.backref('applications', lazy='dynamic'))
+    # Lightweight, read-only relationships to resolve the project/environment
+    # names in to_dict() (the FK columns above are the source of truth). No
+    # backref/cascade — these only exist so an app row can show where it lives.
+    project = db.relationship('Project', foreign_keys=[project_id], viewonly=True)
+    environment = db.relationship('Environment', foreign_keys=[environment_id], viewonly=True)
 
     def to_dict(self, include_linked=False):
         import json
@@ -125,6 +130,11 @@ class Application(db.Model):
             'workspace_id': self.workspace_id,
             'project_id': self.project_id,
             'environment_id': self.environment_id,
+            # Derived display names for the project/environment this app lives in
+            # (null when unassigned). Resolved via the viewonly relationships above
+            # and guarded for None so unassigned apps keep working.
+            'project_name': self.project.name if self.project else None,
+            'environment_name': self.environment.name if self.environment else None,
             'server_name': self.server.name if self.server else 'Local server',
             'domains': [d.to_dict() for d in self.domains]
         }

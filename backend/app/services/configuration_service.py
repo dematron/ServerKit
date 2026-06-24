@@ -170,7 +170,15 @@ class ConfigurationService:
 
     @classmethod
     def summarize_diff(cls, diff):
-        """Short human label for a diff, e.g. "3 env vars changed; image updated"."""
+        """Plain-language summary of a diff, e.g.
+
+            "3 environment variables and the image tag (1.2.1 → 1.1.9) changed"
+
+        Used both as a short snapshot row label and as the human-readable
+        sentence shown above the technical diff. Always <=255 chars. Returns
+        ``'no config changes'`` when nothing changed (kept verbatim — callers
+        and tests rely on it).
+        """
         parts = []
         env = diff.get('env', {})
         env_count = (
@@ -178,24 +186,48 @@ class ConfigurationService:
             + len(env.get('changed', []))
         )
         if env_count:
-            parts.append(f"{env_count} env var{'s' if env_count != 1 else ''} changed")
+            parts.append(
+                f"{env_count} environment variable{'s' if env_count != 1 else ''}"
+            )
 
         dom = diff.get('domains', {})
         dom_count = len(dom.get('added', [])) + len(dom.get('removed', []))
         if dom_count:
-            parts.append(f"{dom_count} domain{'s' if dom_count != 1 else ''} changed")
+            parts.append(f"{dom_count} domain{'s' if dom_count != 1 else ''}")
 
         vol = diff.get('volumes', {})
         vol_count = len(vol.get('added', [])) + len(vol.get('removed', []))
         if vol_count:
-            parts.append(f"{vol_count} volume{'s' if vol_count != 1 else ''} changed")
+            parts.append(f"{vol_count} volume{'s' if vol_count != 1 else ''}")
 
-        if diff.get('image', {}).get('changed'):
-            parts.append('image updated')
+        image = diff.get('image', {})
+        if image.get('changed'):
+            old_tag = image.get('old')
+            new_tag = image.get('new')
+            if old_tag or new_tag:
+                parts.append(
+                    f"the image tag ({old_tag or '—'} → {new_tag or '—'})"
+                )
+            else:
+                parts.append('the image tag')
+
         if diff.get('build_method', {}).get('changed'):
-            parts.append('build method changed')
+            parts.append('the build method')
 
-        return '; '.join(parts) if parts else 'no config changes'
+        if not parts:
+            return 'no config changes'
+
+        # Join into a natural sentence: "A, B and C changed".
+        if len(parts) == 1:
+            subject = parts[0]
+        else:
+            subject = f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+        sentence = f"{subject} changed"
+        # Capitalize the leading character without disturbing the rest
+        # (e.g. a leading number stays a number).
+        sentence = sentence[0].upper() + sentence[1:]
+        return sentence[:255]
 
     # ------------------------------------------------------------------ #
     # DB-backed resolution                                                #

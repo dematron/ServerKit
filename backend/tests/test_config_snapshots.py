@@ -155,6 +155,49 @@ def test_no_change_diff_is_empty():
     assert ConfigurationService.summarize_diff(diff) == 'no config changes'
 
 
+def test_summarize_diff_is_a_human_sentence_with_image_tag():
+    old = ConfigurationService.build_config(
+        env=[
+            {'key': 'A', 'value': '1', 'is_secret': False},
+            {'key': 'B', 'value': '1', 'is_secret': False},
+        ],
+        image_tag='app:1.2.1',
+    )
+    new = ConfigurationService.build_config(
+        env=[
+            {'key': 'A', 'value': '2', 'is_secret': False},
+            {'key': 'B', 'value': '2', 'is_secret': False},
+            {'key': 'C', 'value': '3', 'is_secret': False},
+        ],
+        image_tag='app:1.1.9',
+    )
+    diff = ConfigurationService.diff_configs(old, new)
+    summary = ConfigurationService.summarize_diff(diff)
+
+    # Reads as a sentence, names the image tag transition, and is bounded.
+    assert summary == (
+        '3 environment variables and the image tag '
+        '(app:1.2.1 → app:1.1.9) changed'
+    )
+    assert len(summary) <= 255
+    # Backward-compatible: still mentions env vars and the image.
+    assert 'environment variable' in summary
+    assert 'image tag' in summary
+
+
+def test_summarize_diff_single_env_var_is_singular():
+    old = ConfigurationService.build_config(
+        env=[{'key': 'A', 'value': '1', 'is_secret': False}]
+    )
+    new = ConfigurationService.build_config(
+        env=[{'key': 'A', 'value': '2', 'is_secret': False}]
+    )
+    summary = ConfigurationService.summarize_diff(
+        ConfigurationService.diff_configs(old, new)
+    )
+    assert summary == '1 environment variable changed'
+
+
 # --------------------------------------------------------------------------- #
 # DB-backed: snapshot lifecycle                                               #
 # --------------------------------------------------------------------------- #

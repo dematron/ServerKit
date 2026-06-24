@@ -6,6 +6,25 @@
     position: relative;
     display: inline-flex;
     align-items: center;
+    gap: $space-1;
+
+    // Always-visible secondary badge surfacing a degraded sub-state (e.g.
+    // "2 issues" or "2/3") so multi-container problems are readable without
+    // hovering for the tooltip. Subtle, amber-toned.
+    &__badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 1px $space-1;
+        border-radius: $radius-sm;
+        background: $warning-bg;
+        border: 1px solid $warning-border;
+        color: $warning;
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        line-height: 1.3;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
 
     &__tip {
         position: absolute;

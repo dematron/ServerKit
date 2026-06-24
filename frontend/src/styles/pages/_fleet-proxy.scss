@@ -147,6 +147,15 @@
         font-size: $font-size-sm;
     }
 
+    // Per-row actionable recommendation pill. The text can be a full sentence,
+    // so allow it to wrap and clamp its width rather than stretch the row.
+    &__recommendation {
+        max-width: 32ch;
+        white-space: normal;
+        text-align: left;
+        line-height: 1.3;
+    }
+
     &__col-actions {
         text-align: right;
         white-space: nowrap;

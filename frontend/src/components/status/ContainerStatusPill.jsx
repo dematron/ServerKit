@@ -34,9 +34,30 @@ export default function ContainerStatusPill({ status, fallbackLabel = 'Unknown' 
     // Native title for accessibility / keyboard; the custom tooltip is visual.
     const titleText = tooltipLines.join('\n');
 
+    // Surface a degraded sub-state without requiring a hover: when an app has
+    // more than one container and some are unhealthy (or there are reasons),
+    // show a small always-visible amber badge. Prefer the issue count when we
+    // have reasons, else the "healthy/total" ratio.
+    const showBadge = total > 1 && (healthy < total || reasons.length > 0);
+    const badgeLabel = reasons.length > 0
+        ? `${reasons.length} ${reasons.length === 1 ? 'issue' : 'issues'}`
+        : `${healthy}/${total}`;
+
     return (
         <span className="sk-cstatus" title={titleText}>
             <Pill kind={meta.kind}>{meta.label}</Pill>
+            {showBadge && (
+                <span
+                    className="sk-cstatus__badge"
+                    aria-label={
+                        reasons.length > 0
+                            ? `${reasons.length} container ${reasons.length === 1 ? 'issue' : 'issues'}`
+                            : `${healthy} of ${total} containers healthy`
+                    }
+                >
+                    {badgeLabel}
+                </span>
+            )}
             <span className="sk-cstatus__tip" role="tooltip">
                 <span className="sk-cstatus__tip-summary">{summary}</span>
                 {reasons.map((r, i) => (

@@ -124,3 +124,17 @@ export async function getResolvedVariables(resourceType, resourceId) {
     });
     return this.request(`/shared/resolved?${params.toString()}`);
 }
+
+// Hierarchical resolution — each entry carries a `source_scope` provenance
+// marker (workspace|project|environment|direct|resource). `context` may carry
+// workspace_id/project_id/environment_id to contribute inherited scope layers.
+export async function getResolvedVariablesHierarchical(resourceType, resourceId, context = {}) {
+    const params = new URLSearchParams({
+        resource_type: resourceType,
+        resource_id: String(resourceId),
+    });
+    ['workspace_id', 'project_id', 'environment_id'].forEach((k) => {
+        if (context[k] != null && context[k] !== '') params.set(k, String(context[k]));
+    });
+    return this.request(`/shared/resolved/hierarchical?${params.toString()}`);
+}

@@ -49,6 +49,52 @@
         }
     }
 
+    // "Step X of N" indicator + coarse progress bar derived from the current
+    // lifecycle position.
+    &__progress {
+        margin-bottom: $space-4;
+    }
+
+    &__progress-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: $space-3;
+        margin-bottom: $space-2;
+    }
+
+    &__progress-step {
+        font-size: $font-size-xs;
+        font-weight: $font-weight-medium;
+        color: $text-secondary;
+        font-variant-numeric: tabular-nums;
+    }
+
+    &__progress-eta {
+        font-size: $font-size-xs;
+        color: $text-tertiary;
+        font-variant-numeric: tabular-nums;
+    }
+
+    &__progress-track {
+        height: 6px;
+        border-radius: $radius-full;
+        background: $bg-elevated;
+        overflow: hidden;
+    }
+
+    &__progress-fill {
+        display: block;
+        height: 100%;
+        border-radius: $radius-full;
+        background: $accent-primary;
+        transition: width 0.3s ease;
+
+        &--failed {
+            background: $danger;
+        }
+    }
+
     &__error {
         display: flex;
         align-items: flex-start;
@@ -184,14 +230,47 @@
         overflow: hidden;
     }
 
+    // Step-history toggle: a full-width button that expands/collapses the
+    // detailed activity trail below it.
     &__trail-head {
+        display: flex;
+        align-items: center;
+        gap: $space-2;
+        width: 100%;
         padding: $space-2 $space-3;
+        background: none;
+        border: none;
+        border-bottom: 1px solid $border-color;
         font-size: $font-size-xs;
         font-weight: $font-weight-semibold;
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: $text-tertiary;
-        border-bottom: 1px solid $border-color;
+        cursor: pointer;
+        text-align: left;
+
+        &:hover {
+            color: $text-secondary;
+        }
+    }
+
+    &__trail-chevron {
+        flex-shrink: 0;
+        transition: transform 0.15s ease;
+
+        &--open {
+            transform: rotate(180deg);
+        }
+    }
+
+    &__trail-count {
+        margin-left: auto;
+        padding: 0 $space-2;
+        border-radius: $radius-full;
+        background: $bg-card;
+        color: $text-tertiary;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0;
     }
 
     &__trail-list {

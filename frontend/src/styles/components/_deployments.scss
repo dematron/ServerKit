@@ -164,13 +164,43 @@
         color: $text-secondary;
     }
 
+    // Plain-language summary, shown prominently above the technical diff so a
+    // less-technical user knows what they're looking at / rolling back.
+    &__summary-banner {
+        display: flex;
+        align-items: flex-start;
+        gap: $space-2;
+        padding: $space-3;
+        background: $info-bg;
+        border: 1px solid $info-border;
+        border-radius: $radius-md;
+    }
+
+    &__summary-icon {
+        flex-shrink: 0;
+        margin-top: 1px;
+        color: $info;
+    }
+
+    &__summary-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    &__summary-label {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: $text-tertiary;
+    }
+
     &__summary {
         margin: 0;
-        padding: $space-2 $space-3;
-        background: $bg-elevated;
-        border-radius: $radius-md;
-        color: $text-secondary;
-        font-size: 0.875rem;
+        color: $text-primary;
+        font-size: 0.9375rem;
+        line-height: 1.4;
     }
 
     &__section {

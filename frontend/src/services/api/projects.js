@@ -62,3 +62,20 @@ export async function reorderEnvironments(projectId, orderedIds) {
         body: { project_id: projectId, ordered_ids: orderedIds },
     });
 }
+
+// --- Apps <-> Project assignment ---
+
+// Bulk-assign applications to a project (and optionally an environment), or
+// unassign them by passing projectId = null. The backend validates the
+// project/environment against each app's workspace and silently drops invalid
+// pairings, so a mixed selection is safe. Returns { apps, skipped }.
+export async function moveAppsToProject(appIds, projectId, environmentId) {
+    return this.request('/apps/move-to-project', {
+        method: 'POST',
+        body: {
+            app_ids: appIds,
+            project_id: projectId ?? null,
+            environment_id: environmentId ?? null,
+        },
+    });
+}

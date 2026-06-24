@@ -126,6 +126,106 @@
         border-radius: $radius-md;
         font-size: $font-size-sm;
     }
+
+    &__hint--note {
+        color: $text-secondary;
+        border-left: 2px solid $warning-border;
+        background: $warning-bg;
+        padding: $space-2 $space-3;
+        border-radius: $radius-sm;
+    }
+}
+
+// ---------- Provenance / precedence ----------
+// A compact legend (workspace < project < environment < direct) plus a small
+// per-variable scope badge so users can see where each value comes from.
+
+.shared-vars-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: $space-2;
+    font-size: $font-size-xs;
+    color: $text-tertiary;
+
+    &__label {
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-weight: 600;
+    }
+
+    &__item {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-2;
+    }
+
+    &__lt {
+        color: $text-tertiary;
+        font-family: $font-mono;
+    }
+
+    &__note {
+        color: $text-tertiary;
+    }
+}
+
+// Scope badge — one per provenance source. Colors map to the design-system
+// status tokens so they read consistently across themes.
+.scope-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px $space-2;
+    border-radius: $radius-sm;
+    font-size: $font-size-xs;
+    font-weight: 600;
+    line-height: 1.5;
+    border: 1px solid transparent;
+    text-transform: capitalize;
+
+    &--workspace {
+        color: $text-secondary;
+        background: $bg-hover;
+        border-color: $border-subtle;
+    }
+
+    &--project {
+        color: $info;
+        background: $info-bg;
+        border-color: $info-border;
+    }
+
+    &--environment {
+        color: $success;
+        background: $success-bg;
+        border-color: $success-border;
+    }
+
+    &--direct,
+    &--resource {
+        color: $accent-primary;
+        background: rgba($accent-primary-raw, 0.12);
+        border-color: rgba($accent-primary-raw, 0.22);
+    }
+}
+
+// Conflict badge — the resolved shared variable shares a key with the app's own
+// local env var, so the local value is what the container actually uses.
+.conflict-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: $space-2;
+    padding: 1px $space-2;
+    border-radius: $radius-sm;
+    font-family: $font-main;
+    font-size: $font-size-xs;
+    font-weight: 600;
+    line-height: 1.5;
+    color: $warning;
+    background: $warning-bg;
+    border: 1px solid $warning-border;
+    white-space: nowrap;
+    cursor: help;
 }
 
 // Shared variables table (used in the resolved panel and the group detail)
@@ -165,11 +265,28 @@
 
     &__group {
         color: $text-tertiary;
+        white-space: nowrap;
+
+        .scope-badge {
+            margin-right: $space-2;
+        }
+    }
+
+    &__group-name {
+        color: $text-tertiary;
     }
 
     tr.is-secret &__key {
         border-left: 2px solid $warning;
         padding-left: $space-2;
+    }
+
+    // Row whose shared value is overridden by a local env var — dim the value
+    // since it is not the effective one for the container.
+    tr.has-conflict &__value {
+        color: $text-tertiary;
+        text-decoration: line-through;
+        text-decoration-color: $warning-border;
     }
 }
 

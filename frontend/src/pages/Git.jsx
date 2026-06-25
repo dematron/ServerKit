@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from 'react';
 import useTabParam from '../hooks/useTabParam';
 import { api } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
-import Spinner from '../components/Spinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { DangerZone } from '../components/DangerZone';
 import EmptyState from '../components/EmptyState';
@@ -656,7 +655,7 @@ function Git({ basePath = '/git' }) {
                 />
             );
         }
-        if (reposLoading) return <div className="loading-state"><Spinner /></div>;
+        if (reposLoading) return <EmptyState loading title="Loading repositories" />;
         if (repositories.length === 0) {
             return (
                 <EmptyState
@@ -771,7 +770,7 @@ function Git({ basePath = '/git' }) {
     );
 
     const renderWebhooks = () => {
-        if (webhooksLoading) return <div className="loading-state"><Spinner /></div>;
+        if (webhooksLoading) return <EmptyState loading title="Loading webhooks" />;
         if (webhooks.length === 0) {
             return (
                 <EmptyState
@@ -848,7 +847,7 @@ function Git({ basePath = '/git' }) {
     };
 
     const renderDeployments = () => {
-        if (deploymentsLoading) return <div className="loading-state"><Spinner /></div>;
+        if (deploymentsLoading) return <EmptyState loading title="Loading deployments" />;
         if (deployments.length === 0) {
             return (
                 <EmptyState
@@ -1022,7 +1021,7 @@ function Git({ basePath = '/git' }) {
             <div className="page-container--full-bleed sk-tabgroup git-page domains-page">
                 <div className="sk-tabgroup__content">
                     <div className="sk-tabgroup__inner">
-                        <div className="page-loading"><Spinner size="lg" /></div>
+                        <EmptyState loading size="lg" title="Loading Git" />
                     </div>
                 </div>
             </div>

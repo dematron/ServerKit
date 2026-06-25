@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
-import Spinner from '../components/Spinner';
 import EmptyState from '../components/EmptyState';
 import Modal from '@/components/Modal';
 import { LayoutGrid, Plus, ChevronRight, Search } from 'lucide-react';
@@ -70,7 +69,7 @@ const Workspaces = () => {
         }
     };
 
-    if (loading) return <div className="sk-tabgroup__inner workspaces-page"><Spinner /></div>;
+    if (loading) return <div className="sk-tabgroup__inner workspaces-page"><EmptyState loading title="Loading workspaces" /></div>;
 
     const q = search.trim().toLowerCase();
     const shownWorkspaces = workspaces.filter(ws => {

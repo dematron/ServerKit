@@ -16,14 +16,12 @@ import PackagesTab from '../components/service-detail/PackagesTab';
 import GunicornTab from '../components/service-detail/GunicornTab';
 import CommandsTab from '../components/service-detail/CommandsTab';
 import OverviewTab from '../components/service-detail/OverviewTab';
-// Tabs merged in from the retired ApplicationDetail page (§1 unification).
-import ContainerOpsPanel from '../components/apps/ContainerOpsPanel';
-import AppWafPanel from '../components/apps/AppWafPanel';
-import BuildTab from '../components/appdetail/BuildTab';
-import DeployTab from '../components/appdetail/DeployTab';
+// Container Ops / WAF / Build / Deploy (merged in from the retired
+// ApplicationDetail page in §1) now live under the Settings sub-nav, so they're
+// imported by SettingsTab rather than rendered as top-level tabs here.
 import PreviewList from '../components/previews/PreviewList';
 import EmptyState from '../components/EmptyState';
-import { Layers, FileArchive, RotateCcw, LayoutDashboard, History, ScrollText, Variable, Terminal, Activity, Package, Server, SquareTerminal, Settings, Boxes, Shield, Hammer, Rocket, Eye } from 'lucide-react';
+import { Layers, FileArchive, RotateCcw, LayoutDashboard, History, ScrollText, Variable, Terminal, Activity, Package, Server, SquareTerminal, Settings, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Pill, ServiceTile, PageTopbar } from '@/components/ds';
 
@@ -48,12 +46,18 @@ const TAB_LABELS = {
     packages: 'Packages',
     gunicorn: 'Gunicorn',
     commands: 'Commands',
-    ops: 'Container Ops',
-    waf: 'WAF',
-    build: 'Build',
-    deploy: 'Deploy',
     previews: 'Previews',
     settings: 'Settings',
+};
+
+// Tab slugs retired when Container Ops / WAF / Build / Deploy moved into the
+// Settings sub-nav — old links / bookmarks land on the right settings section
+// (Deploy folded into "Git & Deploy", so it redirects to settings/git).
+const RETIRED_TAB_REDIRECTS = {
+    ops: 'settings/ops',
+    waf: 'settings/waf',
+    build: 'settings/build',
+    deploy: 'settings/git',
 };
 
 // Per-tab glyph for the detail tab strip (matches the WordPress detail page).
@@ -67,16 +71,12 @@ const TAB_ICONS = {
     packages: Package,
     gunicorn: Server,
     commands: SquareTerminal,
-    ops: Boxes,
-    waf: Shield,
-    build: Hammer,
-    deploy: Rocket,
     previews: Eye,
     settings: Settings,
 };
 
 const ServiceDetail = () => {
-    const { id } = useParams();
+    const { id, tab: rawTab } = useParams();
     const navigate = useNavigate();
     const toast = useToast();
     const { confirm } = useConfirm();
@@ -99,6 +99,12 @@ const ServiceDetail = () => {
             navigate(`/wordpress/${id}`, { replace: true });
         }
     }, [service, id, navigate]);
+
+    // Forward retired top tabs (ops/waf/build/deploy) to their new Settings home.
+    useEffect(() => {
+        const target = RETIRED_TAB_REDIRECTS[rawTab];
+        if (target) navigate(`/services/${id}/${target}`, { replace: true });
+    }, [rawTab, id, navigate]);
 
     // Load upload versions
     useEffect(() => {
@@ -541,10 +547,6 @@ const ServiceDetail = () => {
                 {activeTab === 'packages' && service.isPython && <PackagesTab appId={service.id} />}
                 {activeTab === 'gunicorn' && service.isPython && <GunicornTab appId={service.id} />}
                 {activeTab === 'commands' && service.isPython && <CommandsTab appId={service.id} appType={service.app_type} />}
-                {activeTab === 'ops' && service.isDocker && <ContainerOpsPanel app={service} onChanged={reload} />}
-                {activeTab === 'waf' && <AppWafPanel app={service} onChanged={reload} />}
-                {activeTab === 'build' && <BuildTab appId={service.id} appPath={service.path} app={service} />}
-                {activeTab === 'deploy' && <DeployTab appId={service.id} appPath={service.path} />}
                 {activeTab === 'previews' && <PreviewList appId={service.id} />}
                 {activeTab === 'settings' && (
                     <SettingsTab

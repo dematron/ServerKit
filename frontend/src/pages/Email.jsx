@@ -3,7 +3,6 @@ import { Globe, AtSign, Forward, Server, Inbox, Mail, Send, KeyRound, ShieldAler
 import useTabParam from '../hooks/useTabParam';
 import { api } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
-import Spinner from '../components/Spinner';
 import EmptyState from '../components/EmptyState';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '@/components/Modal';
@@ -483,7 +482,7 @@ function Email() {
 
     // ── Render ──
 
-    if (loading) return <div className="page-container email-page"><div className="page-loading"><Spinner /></div></div>;
+    if (loading) return <div className="page-container email-page"><EmptyState loading title="Loading email settings" /></div>;
 
     const isInstalled = status?.installed;
 

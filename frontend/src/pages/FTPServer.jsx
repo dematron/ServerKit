@@ -8,7 +8,6 @@ import { useTopbarActions } from '@/hooks/useTopbarActions';
 import { api } from '../services/api';
 import { MetricCard, Pill } from '@/components/ds';
 import { useToast } from '../contexts/ToastContext';
-import Spinner from '../components/Spinner';
 import EmptyState from '../components/EmptyState';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '@/components/Modal';
@@ -282,11 +281,7 @@ function FTPServer() {
     );
 
     if (loading) {
-        return (
-            <div className="page-loading">
-                <Spinner size="lg" />
-            </div>
-        );
+        return <EmptyState loading size="lg" title="Loading FTP server" />;
     }
 
     const activeServer = status?.active_server;

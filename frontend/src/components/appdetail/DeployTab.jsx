@@ -12,7 +12,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Pill } from '@/components/ds';
 import Modal from '@/components/Modal';
 
-const DeployTab = ({ appId, appPath }) => {
+// `embedded` renders this inside the Settings → Git & Deploy section, where the
+// shared RepoConnectForm already owns the connect/disconnect + repo identity. In
+// that mode we drop the empty-state CTA and the repo-config fields (repo/branch/
+// auto-deploy) and surface only the deploy pipeline: run actions, deploy scripts,
+// history and config checkpoints.
+const DeployTab = ({ appId, appPath, embedded = false }) => {
     const toast = useToast();
     const { confirm: confirmDeploy } = useConfirm();
     const [config, setConfig] = useState(null);
@@ -160,6 +165,9 @@ const DeployTab = ({ appId, appPath }) => {
             )}
 
             {!config ? (
+                // Embedded: RepoConnectForm above handles connecting, so don't
+                // duplicate the CTA — just show nothing until a repo is linked.
+                embedded ? null : (
                 <div className="deploy-setup">
                     <EmptyState
                         icon={GitMerge}
@@ -168,6 +176,7 @@ const DeployTab = ({ appId, appPath }) => {
                         action={<Button onClick={() => setShowConfigModal(true)}>Configure Deployment</Button>}
                     />
                 </div>
+                )
             ) : (
                 <>
                     <div className="deploy-header">
@@ -176,10 +185,19 @@ const DeployTab = ({ appId, appPath }) => {
                                 <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
                                     <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
                                 </svg>
-                                <div>
-                                    <span className="repo-url">{config.repo_url}</span>
-                                    <span className="repo-branch">Branch: {config.branch}</span>
-                                </div>
+                                {/* Embedded: the connect form above already shows the
+                                    repo, so label the action instead of repeating it. */}
+                                {embedded ? (
+                                    <div>
+                                        <span className="repo-url">Manual deploy</span>
+                                        <span className="repo-branch">Pull latest &amp; redeploy {config.branch}</span>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <span className="repo-url">{config.repo_url}</span>
+                                        <span className="repo-branch">Branch: {config.branch}</span>
+                                    </div>
+                                )}
                             </div>
                             <div className="deploy-actions">
                                 <Button
@@ -202,19 +220,28 @@ const DeployTab = ({ appId, appPath }) => {
 
                     <div className="deploy-grid">
                         <div className="card">
-                            <h3>Configuration</h3>
-                            <InfoList>
-                                <InfoItem label="Repository" value={config.repo_url} mono />
-                                <InfoItem label="Branch" value={config.branch} />
-                                <InfoItem label="Auto Deploy" value={config.auto_deploy ? 'Enabled' : 'Disabled'} />
-                            </InfoList>
+                            <h3>{embedded ? 'Deploy Scripts' : 'Configuration'}</h3>
+                            {embedded ? (
+                                <InfoList>
+                                    <InfoItem label="Pre-deploy" value={config.pre_deploy_script || '—'} mono />
+                                    <InfoItem label="Post-deploy" value={config.post_deploy_script || '—'} mono />
+                                </InfoList>
+                            ) : (
+                                <InfoList>
+                                    <InfoItem label="Repository" value={config.repo_url} mono />
+                                    <InfoItem label="Branch" value={config.branch} />
+                                    <InfoItem label="Auto Deploy" value={config.auto_deploy ? 'Enabled' : 'Disabled'} />
+                                </InfoList>
+                            )}
                             <div className="card-actions">
                                 <Button variant="outline" size="sm" onClick={() => setShowConfigModal(true)}>
-                                    Edit
+                                    {embedded ? 'Edit Scripts' : 'Edit'}
                                 </Button>
-                                <Button variant="destructive" size="sm" onClick={handleRemoveDeployment}>
-                                    Remove
-                                </Button>
+                                {!embedded && (
+                                    <Button variant="destructive" size="sm" onClick={handleRemoveDeployment}>
+                                        Remove
+                                    </Button>
+                                )}
                             </div>
                         </div>
 
@@ -247,8 +274,14 @@ const DeployTab = ({ appId, appPath }) => {
                 <DeploymentTimeline appId={appId} />
             </div>
 
-            <Modal open={showConfigModal} onClose={() => setShowConfigModal(false)} title="Configure Deployment">
+            <Modal open={showConfigModal} onClose={() => setShowConfigModal(false)} title={embedded ? 'Edit Deploy Scripts' : 'Configure Deployment'}>
                         <form onSubmit={handleConfigureDeployment}>
+                            {/* In embedded mode repo/branch/auto-deploy are owned by the
+                                RepoConnectForm above; only the deploy scripts are edited
+                                here. The hidden fields stay seeded from `config` so saving
+                                preserves them. */}
+                            {!embedded && (
+                            <>
                             <div className="form-group">
                                 <label>Repository URL</label>
                                 <Input
@@ -278,6 +311,8 @@ const DeployTab = ({ appId, appPath }) => {
                                     <span>Enable auto-deploy on push</span>
                                 </label>
                             </div>
+                            </>
+                            )}
                             <div className="form-group">
                                 <label>Pre-deploy Script</label>
                                 <Textarea

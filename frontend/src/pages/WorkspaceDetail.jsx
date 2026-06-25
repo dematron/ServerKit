@@ -4,7 +4,6 @@ import useTabParam from '../hooks/useTabParam';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
-import Spinner from '../components/Spinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import EmptyState from '../components/EmptyState';
 import Modal from '@/components/Modal';
@@ -181,7 +180,7 @@ const WorkspaceDetail = () => {
         } catch (err) { toast.error(err.message); }
     };
 
-    if (loading) return <div className="page-container workspaces-page ws-detail"><Spinner /></div>;
+    if (loading) return <div className="page-container workspaces-page ws-detail"><EmptyState loading title="Loading workspace" /></div>;
 
     if (!ws) {
         return (

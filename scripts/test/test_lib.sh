@@ -57,7 +57,9 @@ for mgr in "${!expect_install[@]}"; do
 done
 [ "$allok" = "1" ] && ok "pkg_install emits the right command per manager (dry-run)"
 
-if ( set -Eeuo pipefail; PKG_MGR_OVERRIDE="" PKG_DRY_RUN=0 pkg_install git ) 2>/dev/null; then
+# Empty PATH genuinely hides every package manager (CI distro containers DO ship
+# one, so PKG_MGR_OVERRIDE="" alone would run a real install here).
+if ( set -Eeuo pipefail; PATH="" PKG_MGR_OVERRIDE="" PKG_DRY_RUN=0 pkg_install git ) 2>/dev/null; then
     bad "pkg_install must fail (return 1) when no manager is detected"
 else
     ok "pkg_install returns non-zero when no package manager is present"
@@ -110,7 +112,10 @@ else
     bad "is_container should be true for a docker cgroup"
 fi
 cg2="$WORK/cgroup-host"; printf '0::/init.scope\n' > "$cg2"
-if ( set -Eeuo pipefail; SERVERKIT_IS_CONTAINER="" SERVERKIT_CONTAINERENV_FILE="$WORK/none" SERVERKIT_DOCKERENV_FILE="$WORK/none" SERVERKIT_CGROUP_FILE="$cg2" is_container ); then
+# `container=""` neutralizes the ambient env var that RPM/SUSE base images set
+# (container=oci) — without it this case would see "we're in a container" via the
+# real environment and wrongly report true. We're isolating the cgroup path.
+if ( set -Eeuo pipefail; container="" SERVERKIT_IS_CONTAINER="" SERVERKIT_CONTAINERENV_FILE="$WORK/none" SERVERKIT_DOCKERENV_FILE="$WORK/none" SERVERKIT_CGROUP_FILE="$cg2" is_container ); then
     bad "is_container should be false on a plain host cgroup"
 else
     ok "is_container false on a non-container cgroup"

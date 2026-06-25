@@ -41,6 +41,10 @@ trap 'rm -rf "$WORK"' EXIT
 STUB_BIN="$WORK/bin"
 PY_STUB="$WORK/pybin"
 mkdir -p "$STUB_BIN" "$PY_STUB"
+# A no-op docker stub so the uninstall routine's `command -v docker` succeeds and
+# its compose-down branch runs deterministically — the CI containers don't have
+# docker installed, and we're only asserting on dry-run output anyway.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/docker"; chmod +x "$STUB_BIN/docker"
 mkpy() {  # mkpy <name> <major.minor>
     {
         printf '#!/usr/bin/env bash\n'
@@ -273,6 +277,17 @@ if [ ! -f "$ndB/conf.d/serverkit-tls.conf" ] && \
     ok "harden_global_tls edits nginx.conf in place (no duplicate) when ssl_protocols exists"
 else
     bad "harden_global_tls should have edited in place (Debian-style)"
+fi
+
+# --------------------------------------------------------------------------
+# T11 — choose_pkg_manager halts cleanly when no package manager is present
+# (empty PATH hides apt/dnf/yum/zypper/pacman/apk). No /etc writes happen
+# because the apt branch is never reached.
+# --------------------------------------------------------------------------
+if ( set -Eeuo pipefail; PATH=""; choose_pkg_manager ) >/dev/null 2>&1; then
+    bad "choose_pkg_manager should fail when no package manager exists"
+else
+    ok "choose_pkg_manager halts cleanly when no package manager is found"
 fi
 
 # --------------------------------------------------------------------------

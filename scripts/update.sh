@@ -120,7 +120,13 @@ HUE_ERR="$(paint 248 113 113)"; HUE_LINK="$(paint 103 232 249)"
 
 good()  { printf '  %s✔%s %s\n' "$HUE_OK"   "$RST" "$1"; }
 warn()  { printf '  %s▴%s %s\n' "$HUE_WARN" "$RST" "$1"; }
-halt()  { printf '  %s✘%s %s\n' "$HUE_ERR"  "$RST" "$1" >&2; exit 1; }
+# Every hard failure points at the full log so a stuck box is debuggable from a
+# single line (UPDATE_LOG is empty until init_logging runs, hence the guard).
+halt()  {
+    printf '  %s✘%s %s\n' "$HUE_ERR"  "$RST" "$1" >&2
+    [ -n "${UPDATE_LOG:-}" ] && printf '  %sfull log: %s%s\n' "$FOG" "$UPDATE_LOG" "$RST" >&2
+    exit 1
+}
 step()  { printf '  %s❯%s %s\n' "$HUE_LINK" "$RST" "$1"; }
 info()  { printf '  %s•%s %s\n' "$FOG"      "$RST" "$1"; }
 
@@ -231,6 +237,80 @@ run_or_dry() {
         info "[dry-run] would run: $*"
     else
         "$@"
+    fi
+}
+
+# Like run_or_dry, but runs the command inside <dir>. Under --dry-run it reports
+# the working directory it *would* run in instead of silently dropping the cd —
+# a chained `run_or_dry cd X && run_or_dry docker compose ...` used to print the
+# compose command with no hint of where it would execute.
+run_in_dir() {
+    local dir="$1"; shift
+    if [ "$DRY_RUN" = "1" ]; then
+        info "[dry-run] (cwd: $dir) would run: $*"
+    else
+        ( cd "$dir" && "$@" )
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Version comparison — skip the whole update when already current.
+# ---------------------------------------------------------------------------
+local_version() {
+    tr -d '\n\r ' < "$INSTALL_DIR/VERSION" 2>/dev/null || true
+}
+
+# True when two version strings match ignoring a leading "v" (1.7.1 == v1.7.1).
+versions_equal() {
+    [ "${1#v}" = "${2#v}" ]
+}
+
+# Resolve the release tag we would update to (pinned, or the latest on GitHub).
+remote_release_tag() {
+    if [ -n "$RELEASE_VERSION" ]; then
+        printf '%s' "$RELEASE_VERSION"
+        return 0
+    fi
+    curl -sf "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null \
+        | grep '"tag_name"' | head -1 | cut -d'"' -f4
+}
+
+# Return 0 when the install is already at the target version/ref (the caller
+# should then skip). Best-effort: --force always proceeds; offline always
+# proceeds (can't compare); an indeterminate comparison proceeds with the
+# update rather than wrongly blocking it.
+is_already_current() {
+    [ "$FORCE_UPDATE" = "1" ] && return 1
+    [ -n "$SERVERKIT_OFFLINE_TARBALL" ] && return 1
+
+    if [ "$USE_RELEASE" = "1" ]; then
+        local target local_v
+        target="$(remote_release_tag)"
+        [ -n "$target" ] || return 1
+        local_v="$(local_version)"
+        [ -n "$local_v" ] || return 1
+        versions_equal "$local_v" "$target" && return 0
+        return 1
+    fi
+
+    # Branch / main mode: compare the local checkout's HEAD against the remote
+    # branch HEAD. ls-remote needs no fetch and works on shallow clones.
+    local branch local_head remote_head
+    branch="${TARGET_BRANCH:-main}"
+    git -C "$INSTALL_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    local_head="$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null || true)"
+    remote_head="$(git -C "$INSTALL_DIR" ls-remote "https://github.com/${GITHUB_REPO}.git" \
+        "refs/heads/$branch" 2>/dev/null | awk '{print $1}' | head -1)"
+    [ -n "$local_head" ] && [ -n "$remote_head" ] && [ "$local_head" = "$remote_head" ] && return 0
+    return 1
+}
+
+# If already current, announce it and exit cleanly (unless --force).
+version_gate() {
+    if is_already_current; then
+        local v; v="$(local_version)"
+        good "Already up to date (version ${v:-unknown}). Use --force to update anyway."
+        exit 0
     fi
 }
 
@@ -416,8 +496,23 @@ migrate_database() {
     source "$venv/bin/activate"
     cd "$work_dir/backend"
 
-    if ! FLASK_ENV=production flask db upgrade; then
-        halt "Database migration failed. The previous installation is still active."
+    # For SQLite installs, migrate the COPY we placed in the *new* slot, not the
+    # database the .env points at via the /opt/serverkit symlink (which still
+    # resolves to the live OLD slot until atomic_switch). Touching the old slot's
+    # DB here would corrupt rollback: reverting the symlink would hand the old
+    # code a database already upgraded to the new schema. Pointing the migration
+    # at the slot-absolute path keeps the old slot's DB byte-for-byte intact.
+    local slot_db="$work_dir/backend/instance/serverkit.db"
+    if grep -qE '^DATABASE_URL=sqlite' "$work_dir/.env" 2>/dev/null && [ -f "$slot_db" ]; then
+        if ! DATABASE_URL="sqlite:///$slot_db" FLASK_ENV=production flask db upgrade; then
+            halt "Database migration failed. The previous installation is still active."
+        fi
+    else
+        # Non-SQLite (e.g. PostgreSQL): the DB is shared/external, so there is no
+        # per-slot copy to isolate — migrate it directly.
+        if ! FLASK_ENV=production flask db upgrade; then
+            halt "Database migration failed. The previous installation is still active."
+        fi
     fi
     good "Database migrated"
 }
@@ -691,6 +786,19 @@ refresh_config() {
 # ---------------------------------------------------------------------------
 # Rollback
 # ---------------------------------------------------------------------------
+# Probe the backend health endpoint; returns 0 if healthy within <timeout>s.
+# Side-effect free (unlike health_check, which triggers a rollback) so it is
+# safe to call *after* a rollback to confirm the restored version came back.
+quick_health() {
+    local timeout="${1:-30}" waited=0
+    while [ "$waited" -lt "$timeout" ]; do
+        curl -sf --max-time 5 http://127.0.0.1:5000/api/v1/system/health >/dev/null 2>&1 && return 0
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 1
+}
+
 rollback() {
     warn "Update failed — rolling back to previous slot..."
 
@@ -713,7 +821,13 @@ rollback() {
     systemctl start nginx 2>/dev/null || true
     wait_for_service nginx active 15 || true
 
-    halt "Rolled back to $(active_real_dir). Inspect logs: journalctl -u serverkit -n 50"
+    # Confirm the restored version actually answers — a rollback that itself
+    # comes up unhealthy is a far worse state to leave the operator guessing in.
+    if quick_health 30; then
+        halt "Rolled back to $(active_real_dir) and it is healthy. Inspect logs: journalctl -u serverkit -n 50"
+    else
+        halt "Rolled back to $(active_real_dir) but it is STILL UNHEALTHY — manual intervention needed. Logs: journalctl -u serverkit -n 50"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -907,7 +1021,16 @@ rollback_docker() {
     [ "$DOCKER_ROLLBACK_READY" = "1" ] || halt "New version is unhealthy and no rollback snapshot exists — inspect: cd $INSTALL_DIR && docker compose logs backend"
     warn "New version unhealthy — rolling back to the previous deployment..."
 
-    [ -n "$DOCKER_PREV_SHA" ] && git -C "$INSTALL_DIR" reset --hard "$DOCKER_PREV_SHA" 2>&1 | tail -n2 || true
+    # Guard the reset on a non-empty SHA: an empty SHA would make `git reset
+    # --hard ''` reset to HEAD (a no-op at best, surprising at worst). The image
+    # re-tag + bundle restore below still recover the previous deployment even
+    # when no commit was recorded.
+    if [ -n "$DOCKER_PREV_SHA" ]; then
+        git -C "$INSTALL_DIR" reset --hard "$DOCKER_PREV_SHA" 2>&1 | tail -n2 || \
+            warn "git reset to $DOCKER_PREV_SHA failed during rollback"
+    else
+        warn "No previous commit recorded — skipping git reset (images/bundle still restored)"
+    fi
     if [ -d "$INSTALL_DIR/frontend/dist.rollback" ]; then
         rm -rf "$INSTALL_DIR/frontend/dist"
         mv "$INSTALL_DIR/frontend/dist.rollback" "$INSTALL_DIR/frontend/dist"
@@ -918,7 +1041,20 @@ rollback_docker() {
             docker tag "$img:rollback" "$img:latest" 2>/dev/null || true
     done
     dc up -d 2>&1 | tail -n10 || true
-    halt "Rolled back to previous version (${DOCKER_PREV_SHA:-unknown}). Logs: cd $INSTALL_DIR && docker compose logs backend"
+
+    # Confirm the restored deployment came back healthy.
+    local waited=0 status=""
+    while [ "$waited" -lt 60 ]; do
+        status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' serverkit-backend 2>/dev/null || echo missing)"
+        { [ "$status" = "healthy" ] || [ "$status" = "none" ]; } && break
+        sleep 3
+        waited=$((waited + 3))
+    done
+    if [ "$status" = "healthy" ] || [ "$status" = "none" ]; then
+        halt "Rolled back to previous version (${DOCKER_PREV_SHA:-unknown}) and it is healthy. Logs: cd $INSTALL_DIR && docker compose logs backend"
+    else
+        halt "Rolled back to previous version (${DOCKER_PREV_SHA:-unknown}) but it is STILL UNHEALTHY (status: $status) — manual intervention needed. Logs: cd $INSTALL_DIR && docker compose logs backend"
+    fi
 }
 
 # Drop rollback artifacts once an upgrade is confirmed healthy.
@@ -944,12 +1080,21 @@ update_docker_compose() {
 
     # Resolve the git ref to update to (branch / release tag / main).
     local ref="origin/main"
+    local mode="main"
     if [ -n "$TARGET_BRANCH" ]; then
         ref="origin/$TARGET_BRANCH"
+        mode="branch:$TARGET_BRANCH"
     elif [ "$USE_RELEASE" = "1" ]; then
         ref="${RELEASE_VERSION:-$(git -C "$INSTALL_DIR" tag -l 'v*' --sort=-v:refname | head -n1)}"
         [ -n "$ref" ] || halt "Could not determine a release tag to update to"
+        mode="release"
     fi
+
+    # Skip when already current (unless --force). Capture the starting version
+    # for the summary before we touch the tree.
+    local old_version
+    old_version="$(local_version)"
+    version_gate
 
     phase "Database Backup"
     backup_docker_db
@@ -1042,10 +1187,13 @@ update_docker_compose() {
 
     printf '\n  %s%s✔  Update complete (Docker)%s   %s%s%s\n\n' \
         "$BLD" "$HUE_OK" "$RST" "$FOG" "$(clock)" "$RST"
-    printf '  Version   %s\n' "$new_version"
+    printf '  Updated   %s → %s\n' "${old_version:-unknown}" "$new_version"
+    printf '  Mode      docker/%s\n' "$mode"
+    printf '  Duration  %s\n' "$(clock)"
     printf '  Backend   %s\n' "$(docker inspect -f '{{.State.Status}}' serverkit-backend 2>/dev/null || echo unknown)"
-    printf '  Frontend  %s\n\n' "$(docker inspect -f '{{.State.Status}}' serverkit-frontend 2>/dev/null || echo unknown)"
-    printf '  %sCLI%s       serverkit status\n\n' "$BLD" "$RST"
+    printf '  Frontend  %s\n' "$(docker inspect -f '{{.State.Status}}' serverkit-frontend 2>/dev/null || echo unknown)"
+    [ -n "${UPDATE_LOG:-}" ] && printf '  Log       %s\n' "$UPDATE_LOG"
+    printf '\n  %sCLI%s       serverkit status\n\n' "$BLD" "$RST"
 }
 
 # ---------------------------------------------------------------------------
@@ -1091,6 +1239,20 @@ cleanup_on_exit() {
 trap cleanup_on_exit EXIT
 
 preflight_check
+
+# Capture where we are coming from and what mode this is, then skip the whole
+# update when the box is already current (unless --force). Doing this before any
+# backup/deploy work means an up-to-date box does zero churn.
+OLD_VERSION="$(local_version)"
+if [ "$USE_RELEASE" = "1" ]; then
+    UPDATE_MODE="release"
+elif [ -n "$TARGET_BRANCH" ]; then
+    UPDATE_MODE="branch:$TARGET_BRANCH"
+else
+    UPDATE_MODE="main"
+fi
+version_gate
+
 ensure_bluegreen_layout
 backup_current
 
@@ -1157,8 +1319,8 @@ atomic_switch "$NEXT_DIR"
 phase "Starting Services"
 run_or_dry systemctl start "$BACKEND_SERVICE"
 wait_for_service "$BACKEND_SERVICE" active 30 || warn "Backend did not report active within 30 seconds"
-run_or_dry cd "$INSTALL_DIR" && run_or_dry docker compose up -d --force-recreate frontend
-run_or_dry docker compose up -d backend
+run_in_dir "$INSTALL_DIR" docker compose up -d --force-recreate frontend
+run_in_dir "$INSTALL_DIR" docker compose up -d backend
 run_or_dry systemctl start nginx
 wait_for_service nginx active 15 || warn "nginx did not report active within 15 seconds"
 good "Services started"
@@ -1173,10 +1335,14 @@ ensure_firewall || true
 cleanup
 
 # Summary.
+NEW_VERSION="$(local_version)"
 printf '\n  %s%s✔  Update complete%s   %s%s%s\n\n' \
     "$BLD" "$HUE_OK" "$RST" "$FOG" "$(clock)" "$RST"
-printf '  Version   %s\n' "$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '\n\r ' || echo "unknown")"
+printf '  Updated   %s → %s\n' "${OLD_VERSION:-unknown}" "${NEW_VERSION:-unknown}"
+printf '  Mode      %s\n' "${UPDATE_MODE:-main}"
+printf '  Duration  %s\n' "$(clock)"
 printf '  Active    %s\n' "$(active_real_dir)"
 printf '  Backend   %s\n' "$(systemctl is-active serverkit 2>/dev/null || echo unknown)"
 printf '  Nginx     %s\n\n' "$(systemctl is-active nginx 2>/dev/null || echo unknown)"
+[ -n "${UPDATE_LOG:-}" ] && printf '  Log       %s\n\n' "$UPDATE_LOG"
 printf '  %sCLI%s       serverkit status\n\n' "$BLD" "$RST"

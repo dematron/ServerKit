@@ -202,5 +202,62 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# T8 — version comparison: versions_equal ignores a leading "v".
+# --------------------------------------------------------------------------
+if ( set -Eeuo pipefail; versions_equal v1.7.1 1.7.1 ) && \
+   ( set -Eeuo pipefail; versions_equal 1.7.1 1.7.1 ) && \
+   ! ( set -Eeuo pipefail; versions_equal 1.7.0 1.7.1 ); then
+    ok "versions_equal matches across a leading 'v' and rejects mismatches"
+else
+    bad "versions_equal comparison is wrong"
+fi
+
+# --------------------------------------------------------------------------
+# T9 — is_already_current short-circuits to "proceed" (non-zero) under --force
+# and offline, without any network/git access.
+# --------------------------------------------------------------------------
+if ( set -Eeuo pipefail; FORCE_UPDATE=1; is_already_current ); then
+    bad "is_already_current must proceed (non-zero) under --force"
+else
+    ok "is_already_current proceeds under --force (skips the version check)"
+fi
+if ( set -Eeuo pipefail; FORCE_UPDATE=0; SERVERKIT_OFFLINE_TARBALL=/x; is_already_current ); then
+    bad "is_already_current must proceed (non-zero) when offline"
+else
+    ok "is_already_current proceeds when offline (can't compare)"
+fi
+
+# --------------------------------------------------------------------------
+# T10 — the rollback-safety fix: migrate_database must run the migration
+# against the NEW slot's database copy (slot-absolute path), never the
+# /opt/serverkit symlink that still resolves to the live old slot. A flask
+# stub captures the DATABASE_URL the migration actually used.
+# --------------------------------------------------------------------------
+t="$WORK/t10/serverkit-b"
+mkdir -p "$t/venv/bin" "$t/backend/instance"
+: > "$t/venv/bin/activate"                              # sourceable no-op
+: > "$t/backend/instance/serverkit.db"                  # the slot's DB copy
+printf 'DATABASE_URL=sqlite:///opt/serverkit/backend/instance/serverkit.db\n' > "$t/.env"
+FLASK_CAP="$WORK/t10/flask-saw-dburl"
+cat > "$STUB_BIN/flask" <<EOF
+#!/usr/bin/env bash
+printf '%s' "\${DATABASE_URL:-NONE}" > "$FLASK_CAP"
+exit 0
+EOF
+chmod +x "$STUB_BIN/flask"
+(
+    set -Eeuo pipefail
+    DRY_RUN=0
+    migrate_database "$t"
+) >/dev/null 2>&1
+saw="$(tr -d '\r' < "$FLASK_CAP" 2>/dev/null || true)"
+if [ "$saw" = "sqlite:///$t/backend/instance/serverkit.db" ]; then
+    ok "migrate_database targets the new slot's DB, leaving the old slot untouched"
+else
+    bad "migrate_database used [$saw], expected the slot-absolute new-slot DB path"
+fi
+rm -f "$STUB_BIN/flask"
+
+# --------------------------------------------------------------------------
 printf '\n%d passed, %d failed, %d skipped\n\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]

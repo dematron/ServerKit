@@ -1,0 +1,55 @@
+name: Scripts CI
+
+# Static + unit checks for the shell scripts that install/update ServerKit on a
+# server. These ran nowhere before — so a bug like the 1.7.0 updater silently
+# dying on `set -euo pipefail` was only ever found on a real box. shellcheck
+# catches that whole class statically; test_update.sh exercises the update
+# logic against fixtures with no server.
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'scripts/**'
+      - 'install.sh'
+      - 'serverkit'
+      - '.github/workflows/scripts-ci.yml'
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'scripts/**'
+      - 'install.sh'
+      - 'serverkit'
+      - '.github/workflows/scripts-ci.yml'
+  workflow_call:
+
+jobs:
+  shell:
+    name: lint + unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check (bash -n)
+        run: |
+          status=0
+          for f in serverkit scripts/*.sh install.sh; do
+            [ -f "$f" ] || continue
+            if bash -n "$f"; then
+              echo "ok   $f"
+            else
+              echo "FAIL $f"; status=1
+            fi
+          done
+          exit $status
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          # -x follows `source`d files; the updater + installer are the critical
+          # ones. Warnings are advisory; errors fail the job.
+          shellcheck --severity=error scripts/update.sh scripts/install.sh install.sh serverkit
+
+      - name: Unit tests (test_update.sh)
+        run: bash scripts/test/test_update.sh

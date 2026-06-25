@@ -9,7 +9,9 @@
 #   bash /opt/serverkit/scripts/update.sh --release [v1.7.0]
 #   SERVERKIT_OFFLINE_TARBALL=/tmp/serverkit-v1.7.0-linux-amd64.tar.gz bash /opt/serverkit/scripts/update.sh
 #
-set -euo pipefail
+# -E (errtrace) makes the ERR trap fire for failures *inside* functions/subshells
+# too — without it a silent death deep in a helper would never be reported.
+set -Eeuo pipefail
 
 # ---------------------------------------------------------------------------
 # Configuration + argument parsing
@@ -82,7 +84,13 @@ DIR_B="$BASE_DIR/${BASE_NAME}-b"
 VENV_DIR="${SERVERKIT_VENV_DIR:-$INSTALL_DIR/venv}"
 BACKUP_DIR="/var/backups/serverkit"
 LOG_DIR="/var/log/serverkit"
-CONFIG_DIR="/etc/serverkit"
+CONFIG_DIR="${SERVERKIT_CONFIG_DIR:-/etc/serverkit}"
+
+# System integration dirs — overridable so the config-refresh logic can be
+# exercised against fixtures in tests instead of the host's real /etc.
+NGINX_DIR="${SERVERKIT_NGINX_DIR:-/etc/nginx}"
+LETSENCRYPT_DIR="${SERVERKIT_LETSENCRYPT_DIR:-/etc/letsencrypt}"
+SYSTEMD_DIR="${SERVERKIT_SYSTEMD_DIR:-/etc/systemd/system}"
 
 GITHUB_REPO="${GITHUB_REPO:-jhd3197/ServerKit}"
 SERVERKIT_OFFLINE_TARBALL="${SERVERKIT_OFFLINE_TARBALL:-}"
@@ -119,11 +127,43 @@ clock() {
     local secs=$(( $(date +%s) - STARTED_AT ))
     printf '%dm %02ds' "$((secs / 60))" "$((secs % 60))"
 }
+LAST_PHASE="startup"
 phase() {
     PHASE_N=$((PHASE_N + 1))
+    LAST_PHASE="$1"
     printf '\n  %s%s%02d%s  %s%s%s  %s%s%s\n' \
         "$BLD" "$V3" "$PHASE_N" "$RST" "$BLD" "$1" "$RST" "$FOG" "$(clock)" "$RST"
     printf '  %s%s%s\n\n' "$V4" "──────────────────────────────────────" "$RST"
+}
+
+# ---------------------------------------------------------------------------
+# L5 — Loud failures + always-on logging
+# ---------------------------------------------------------------------------
+# `set -euo pipefail` makes any unguarded command abort the script. Without this
+# layer that abort is *silent* — you just land back at the prompt with no idea
+# which phase, line, or command died (exactly the failure mode that made this
+# updater so hard to debug). init_logging mirrors everything to a timestamped
+# log; the ERR trap turns every abort into a labelled, actionable message.
+UPDATE_LOG=""
+init_logging() {
+    [ -n "${SERVERKIT_NO_LOG:-}" ] && return 0
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    if [ -d "$LOG_DIR" ] && [ -w "$LOG_DIR" ]; then
+        UPDATE_LOG="$LOG_DIR/update-$(date +%Y%m%d-%H%M%S).log"
+        # Keep output on the terminal *and* append it to the log. Colors were
+        # already resolved above from the real TTY, so they survive the pipe.
+        exec > >(tee -a "$UPDATE_LOG") 2>&1
+        info "Logging to $UPDATE_LOG"
+    fi
+}
+
+report_failure() {
+    local rc=$1 line=$2 cmd=$3
+    printf '\n  %s✘  Update aborted%s during %s%s%s\n' \
+        "$HUE_ERR" "$RST" "$BLD" "$LAST_PHASE" "$RST" >&2
+    printf '     %sexit %s · line %s · %s%s\n' "$FOG" "$rc" "$line" "$cmd" "$RST" >&2
+    [ -n "$UPDATE_LOG" ] && \
+        printf '     %sfull log: %s%s\n' "$FOG" "$UPDATE_LOG" "$RST" >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -525,35 +565,37 @@ refresh_config() {
         return 0
     fi
 
+    mkdir -p "$NGINX_DIR/sites-available" "$NGINX_DIR/sites-enabled"
+
     # Recover panel domain from live nginx config. The trailing `|| true` keeps a
     # no-match/missing-file grep (exit 1/2) from tripping `set -euo pipefail` and
     # silently killing the updater before the atomic switch — HTTP-only boxes have
     # no serverkit.conf, so this grep finds nothing.
     local prior_panel_domain=""
-    prior_panel_domain=$(grep -oE '/etc/letsencrypt/live/[^/]+/' \
-        /etc/nginx/sites-available/serverkit.conf 2>/dev/null | head -n1 | \
+    prior_panel_domain=$(grep -oE "$LETSENCRYPT_DIR/live/[^/]+/" \
+        "$NGINX_DIR/sites-available/serverkit.conf" 2>/dev/null | head -n1 | \
         sed -E 's|.*/live/([^/]+)/|\1|' || true)
     [ "$prior_panel_domain" = "YOUR_DOMAIN" ] && prior_panel_domain=""
 
     if [ -f "$target/nginx/sites-available/serverkit.conf" ]; then
-        cp "$target/nginx/sites-available/serverkit.conf" /etc/nginx/sites-available/
+        cp "$target/nginx/sites-available/serverkit.conf" "$NGINX_DIR/sites-available/"
     fi
     if [ -f "$target/nginx/sites-available/serverkit-insecure.conf" ]; then
-        cp "$target/nginx/sites-available/serverkit-insecure.conf" /etc/nginx/sites-available/
+        cp "$target/nginx/sites-available/serverkit-insecure.conf" "$NGINX_DIR/sites-available/"
     fi
 
     # TLS floor
-    if [ -f /etc/nginx/nginx.conf ]; then
+    if [ -f "$NGINX_DIR/nginx.conf" ]; then
         local ciphers='ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384'
-        if grep -qE '^[[:space:]]*ssl_protocols[[:space:]]' /etc/nginx/nginx.conf; then
-            sed -i -E 's|^([[:space:]]*)ssl_protocols[[:space:]].*|\1ssl_protocols TLSv1.2 TLSv1.3;|' /etc/nginx/nginx.conf
+        if grep -qE '^[[:space:]]*ssl_protocols[[:space:]]' "$NGINX_DIR/nginx.conf"; then
+            sed -i -E 's|^([[:space:]]*)ssl_protocols[[:space:]].*|\1ssl_protocols TLSv1.2 TLSv1.3;|' "$NGINX_DIR/nginx.conf"
         else
-            sed -i '/http {/a \    ssl_protocols TLSv1.2 TLSv1.3;' /etc/nginx/nginx.conf
+            sed -i '/http {/a \    ssl_protocols TLSv1.2 TLSv1.3;' "$NGINX_DIR/nginx.conf"
         fi
-        if grep -qE '^[[:space:]]*ssl_ciphers[[:space:]]' /etc/nginx/nginx.conf; then
-            sed -i -E "s|^([[:space:]]*)ssl_ciphers[[:space:]].*|\1ssl_ciphers ${ciphers};|" /etc/nginx/nginx.conf
+        if grep -qE '^[[:space:]]*ssl_ciphers[[:space:]]' "$NGINX_DIR/nginx.conf"; then
+            sed -i -E "s|^([[:space:]]*)ssl_ciphers[[:space:]].*|\1ssl_ciphers ${ciphers};|" "$NGINX_DIR/nginx.conf"
         else
-            sed -i "/http {/a \\    ssl_ciphers ${ciphers};" /etc/nginx/nginx.conf
+            sed -i "/http {/a \\    ssl_ciphers ${ciphers};" "$NGINX_DIR/nginx.conf"
         fi
     fi
 
@@ -562,28 +604,28 @@ refresh_config() {
     if [ -f "$CONFIG_DIR/ssl-mode" ]; then
         ssl_mode="$(cat "$CONFIG_DIR/ssl-mode")"
     fi
-    if [ "$ssl_mode" = "secure" ] && [ -f /etc/nginx/sites-available/serverkit.conf ]; then
+    if [ "$ssl_mode" = "secure" ] && [ -f "$NGINX_DIR/sites-available/serverkit.conf" ]; then
         local panel_domain=""
         if [ -f "$CONFIG_DIR/panel-domain" ]; then
             panel_domain="$(cat "$CONFIG_DIR/panel-domain" 2>/dev/null || true)"
         fi
         [ -z "$panel_domain" ] && panel_domain="$prior_panel_domain"
 
-        if [ -n "$panel_domain" ] && [ -d "/etc/letsencrypt/live/$panel_domain" ]; then
-            sed -i "s|/etc/letsencrypt/live/YOUR_DOMAIN/|/etc/letsencrypt/live/$panel_domain/|g" \
-                /etc/nginx/sites-available/serverkit.conf
-            ln -sf /etc/nginx/sites-available/serverkit.conf /etc/nginx/sites-enabled/serverkit.conf
+        if [ -n "$panel_domain" ] && [ -d "$LETSENCRYPT_DIR/live/$panel_domain" ]; then
+            sed -i "s|/etc/letsencrypt/live/YOUR_DOMAIN/|$LETSENCRYPT_DIR/live/$panel_domain/|g" \
+                "$NGINX_DIR/sites-available/serverkit.conf"
+            ln -sf "$NGINX_DIR/sites-available/serverkit.conf" "$NGINX_DIR/sites-enabled/serverkit.conf"
         else
             warn "SSL mode is 'secure' but no certificate found for '${panel_domain:-unknown}'"
-            ln -sf /etc/nginx/sites-available/serverkit-insecure.conf /etc/nginx/sites-enabled/serverkit.conf
+            ln -sf "$NGINX_DIR/sites-available/serverkit-insecure.conf" "$NGINX_DIR/sites-enabled/serverkit.conf"
         fi
     else
-        ln -sf /etc/nginx/sites-available/serverkit-insecure.conf /etc/nginx/sites-enabled/serverkit.conf
+        ln -sf "$NGINX_DIR/sites-available/serverkit-insecure.conf" "$NGINX_DIR/sites-enabled/serverkit.conf"
     fi
 
     # Service unit
     if [ -f "$target/serverkit-backend.service" ]; then
-        cp "$target/serverkit-backend.service" /etc/systemd/system/serverkit.service
+        cp "$target/serverkit-backend.service" "$SYSTEMD_DIR/serverkit.service"
     fi
     systemctl daemon-reload
     good "Configuration refreshed"
@@ -723,6 +765,79 @@ backup_docker_db() {
     fi
 }
 
+# L6 — Heal layout left by an interrupted or legacy (hybrid) run before the
+# docker update touches anything.
+heal_layout_for_docker() {
+    # Pin the compose project name. A blue/green symlink otherwise makes compose
+    # derive the project name from the link target and warn — worse, a changed
+    # name would orphan the running containers.
+    export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$BASE_NAME}"
+
+    [ "$DRY_RUN" = "1" ] && return 0
+
+    # On an all-Docker box the blue/green slots are vestigial. If the install is
+    # a symlink (a prior hybrid run migrated it), reclaim the *inactive* slot it
+    # left behind — the live tree + DB volume are elsewhere, so this is safe.
+    if [ -L "$INSTALL_DIR" ]; then
+        local active inactive
+        active="$(active_real_dir)"
+        inactive="$DIR_A"; [ "$active" = "$DIR_A" ] && inactive="$DIR_B"
+        if [ -d "$inactive" ]; then
+            warn "Reclaiming stale slot from a prior run: $inactive"
+            rm -rf "$inactive"
+        fi
+    fi
+}
+
+# L4 — Snapshot the current docker deployment so a bad upgrade can be reverted.
+DOCKER_PREV_SHA=""
+DOCKER_ROLLBACK_READY=0
+snapshot_docker_state() {
+    [ "$DRY_RUN" = "1" ] && return 0
+    DOCKER_PREV_SHA="$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null || true)"
+    # Tag the currently-running images so we can re-point :latest back to them,
+    # and stash the host-built bundle that the new build is about to overwrite.
+    local img
+    for img in serverkit-backend serverkit-frontend; do
+        docker image inspect "$img:latest" >/dev/null 2>&1 && \
+            docker tag "$img:latest" "$img:rollback" 2>/dev/null || true
+    done
+    if [ -d "$INSTALL_DIR/frontend/dist" ]; then
+        rm -rf "$INSTALL_DIR/frontend/dist.rollback"
+        cp -a "$INSTALL_DIR/frontend/dist" "$INSTALL_DIR/frontend/dist.rollback" 2>/dev/null || true
+    fi
+    DOCKER_ROLLBACK_READY=1
+}
+
+rollback_docker() {
+    [ "$DOCKER_ROLLBACK_READY" = "1" ] || halt "New version is unhealthy and no rollback snapshot exists — inspect: cd $INSTALL_DIR && docker compose logs backend"
+    warn "New version unhealthy — rolling back to the previous deployment..."
+
+    [ -n "$DOCKER_PREV_SHA" ] && git -C "$INSTALL_DIR" reset --hard "$DOCKER_PREV_SHA" 2>&1 | tail -n2 || true
+    if [ -d "$INSTALL_DIR/frontend/dist.rollback" ]; then
+        rm -rf "$INSTALL_DIR/frontend/dist"
+        mv "$INSTALL_DIR/frontend/dist.rollback" "$INSTALL_DIR/frontend/dist"
+    fi
+    local img
+    for img in serverkit-backend serverkit-frontend; do
+        docker image inspect "$img:rollback" >/dev/null 2>&1 && \
+            docker tag "$img:rollback" "$img:latest" 2>/dev/null || true
+    done
+    dc up -d 2>&1 | tail -n10 || true
+    halt "Rolled back to previous version (${DOCKER_PREV_SHA:-unknown}). Logs: cd $INSTALL_DIR && docker compose logs backend"
+}
+
+# Drop rollback artifacts once an upgrade is confirmed healthy.
+clear_docker_rollback() {
+    [ "$DRY_RUN" = "1" ] && return 0
+    rm -rf "$INSTALL_DIR/frontend/dist.rollback" 2>/dev/null || true
+    local img
+    for img in serverkit-backend serverkit-frontend; do
+        docker image inspect "$img:rollback" >/dev/null 2>&1 && \
+            docker rmi "$img:rollback" >/dev/null 2>&1 || true
+    done
+}
+
 update_docker_compose() {
     printf '\n  %s%sServerKit Updater — Docker deployment%s\n' "$BLD" "$PAPER" "$RST"
     STARTED_AT=$(date +%s)
@@ -730,6 +845,8 @@ update_docker_compose() {
 
     command -v docker &>/dev/null || halt "docker is required but not installed"
     command -v git &>/dev/null || halt "git is required but not installed"
+
+    heal_layout_for_docker
 
     # Resolve the git ref to update to (branch / release tag / main).
     local ref="origin/main"
@@ -742,6 +859,11 @@ update_docker_compose() {
 
     phase "Database Backup"
     backup_docker_db
+
+    # Snapshot the current (still-running, last-known-good) deployment before we
+    # mutate the tree, rebuild the bundle, or rebuild images — so an unhealthy
+    # upgrade can be reverted.
+    snapshot_docker_state
 
     phase "Syncing Source"
     if [ "$DRY_RUN" = "1" ]; then
@@ -810,9 +932,12 @@ update_docker_compose() {
         done
         if [ "$status" != "healthy" ] && [ "$status" != "none" ]; then
             warn "Backend did not report healthy within 90s (status: $status)"
-            warn "Inspect logs: cd $INSTALL_DIR && docker compose logs backend"
+            rollback_docker   # L4 — revert to the snapshot; this halts the script
         fi
     fi
+
+    # Healthy (or no healthcheck defined): the upgrade stuck, drop the snapshot.
+    clear_docker_rollback
 
     local new_version
     new_version="$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '\n\r ' || echo unknown)"
@@ -829,6 +954,16 @@ update_docker_compose() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+# Sourcing this file (e.g. from scripts/test/test_update.sh) exposes every
+# function above for unit testing without running an update. Only a direct
+# execution falls through to the run below.
+[ "${BASH_SOURCE[0]}" = "${0}" ] || return 0
+
+init_logging
+# L5 — turn any unguarded failure (in the main flow OR a helper, thanks to -E)
+# into a labelled report instead of a silent drop back to the prompt.
+trap 'report_failure "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 # All-Docker deployments don't use the host venv / systemd / blue-green flow —
 # route them to the compose path. This is what prevents the missing-venv crash.
